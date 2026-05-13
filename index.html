@@ -5,6 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="style.css">
 </head>
+<!-- Güncelleme Bildirim Kutusu (Modern Tasarım) -->
+<div id="update-banner" style="display: none; position: fixed; top: 20px; right: 20px; width: 300px; background: #1e1e2e; color: white; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 99999; border: 1px solid #313244; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; animation: slideIn 0.5s ease-out;">
+    <div style="display: flex; align-items: center; margin-bottom: 12px;">
+        <div style="background: #fab387; width: 12px; height: 12px; border-radius: 50%; margin-right: 12px; box-shadow: 0 0 10px #fab387;"></div>
+        <strong style="font-size: 15px; letter-spacing: 0.5px;">Anka Web Güncelleme</strong>
+    </div>
+    <p id="update-version" style="margin: 0; font-size: 13px; color: #a6adc8; line-height: 1.4;"></p>
+    <button id="update-btn" style="margin-top: 15px; width: 100%; padding: 10px; background: #a6e3a1; border: none; color: #11111b; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 13px; transition: all 0.2s ease;">
+        Şimdi Güncelle
+    </button>
+</div>
+
+<style>
+    @keyframes slideIn {
+        from { transform: translateX(120%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    #update-btn:hover { background: #94e2d5; transform: translateY(-2px); }
+    #update-btn:active { transform: translateY(0); }
+</style>
+
+<script>
+    const { ipcRenderer, shell } = require('electron');
+
+    // Arka plandan (main.js) gelen 'update-available' mesajını dinle
+    ipcRenderer.on('update-available', (event, data) => {
+        const banner = document.getElementById('update-banner');
+        const versionText = document.getElementById('update-version');
+        const updateBtn = document.getElementById('update-btn');
+
+        // Kutuyu görünür yap ve bilgileri yaz
+        versionText.innerText = "Yeni Sürüm: " + data.version + "\nNotlar: " + (data.notes || "Hata düzeltmeleri yapıldı.");
+        banner.style.display = 'block';
+
+        // Butona tıklandığında GitHub linkini aç
+        updateBtn.onclick = () => {
+            shell.openExternal(data.url);
+        };
+    });
+</script>
 <body>
     <div id="sidebar">
         <!-- Logo yolu düzeltildi: assets/icons/logo.png -->

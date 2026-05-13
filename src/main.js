@@ -1,11 +1,12 @@
 const { app, BrowserWindow, session } = require('electron');
 const path = require('path');
+const { checkUpdates } = require('./updater');
 
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
-    title: "Anka Web - V2.0.0",
+    title: "Anka Web - V1.0.0",
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -13,6 +14,12 @@ function createWindow() {
       enableRemoteModule: true
     }
   });
+
+win.loadFile(path.join(__dirname, '../index.html'));
+
+win.webContents.once('did-finish-load', () => {
+    checkUpdates(win);
+});
 
   const filter = {
     urls: [

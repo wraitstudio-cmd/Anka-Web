@@ -3,7 +3,7 @@ const yaml = require('js-yaml');
 const { ipcMain, shell } = require('electron');
 
 const CURRENT_VERSION = "2.0.0"; 
-const UPDATE_CONFIG_URL = "https://raw.githubusercontent.com/wraitstudio-cmd/Anka-Web/main/latest.yml";
+const UPDATE_CONFIG_URL = "https://raw.githubusercontent.com/wraitstudio-cmd/Anka-Web/refs/heads/main/latest.yml";
 
 async function checkUpdates(mainWindow) {
     try {
