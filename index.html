@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="sidebar">
+        <!-- Logo yolu düzeltildi: assets/icons/logo.png -->
+        <img src="assets/icons/logo.png" class="logo" onclick="location.reload()">
+        
+        <div class="side-btn" id="btn-draw" onclick="togglePaintMenu()"><i>✏️</i><span>KALEM</span></div>
+        <div class="side-btn" onclick="toggleKeyboard()"><i>⌨️</i><span>KLAVYE</span></div>
+        <div class="side-btn" onclick="createNewTab('https://www.google.com')"><i>➕</i><span>SEKME</span></div>
+        <div class="side-btn" onclick="clearCanvas()"><i>🧹</i><span>TEMİZLE</span></div>
+        <div class="side-btn" onclick="captureScreen()"><i>📸</i><span>SS AL</span></div>
+        <div style="flex:1"></div>
+        <div class="side-btn" onclick="toggleSettings()"><i>⚙️</i><span>AYARLAR</span></div>
+    </div>
+
+    <div id="main-view">
+        <div id="tab-bar"></div>
+        <div id="toolbar">
+            <div class="c-btn" onclick="goBack()" style="font-size:20px;">⬅️</div>
+            <input type="text" id="url-input" placeholder="Okul ağında güvenli arama...">
+            <div class="c-btn" onclick="reloadTab()" style="font-size:20px;">🔄</div>
+        </div>
+        <div id="wv-container" style="flex:1; display:flex;"></div>
+    </div>
+
+<div id="paint-menu">
+    <!-- Sürükleme Tutamacı -->
+    <div id="paint-handle" style="cursor: move; background: var(--accent); margin: -15px -15px 10px -15px; padding: 8px; border-radius: 23px 23px 0 0; display: flex; justify-content: center; align-items: center; gap: 5px;">
+        <span style="width: 4px; height: 4px; background: white; border-radius: 50%;"></span>
+        <span style="width: 4px; height: 4px; background: white; border-radius: 50%;"></span>
+        <span style="width: 4px; height: 4px; background: white; border-radius: 50%;"></span>
+    </div>
+
+    <!-- Sayfa Modları -->
+    <div class="tool-row" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 5px;">
+        <div class="t-btn" onclick="setBoardMode('transparent')" title="Site">🌐</div>
+        <div class="t-btn" onclick="setBoardMode('white')" title="Beyaz">⬜</div>
+        <div class="t-btn" onclick="setBoardMode('lined')" title="Çizgili">📝</div>
+        <div class="t-btn" onclick="setBoardMode('grid')" title="Kareli">🏁</div>
+    </div>
+
+    <!-- Araçlar -->
+    <div class="tool-row">
+        <div class="t-btn active" id="t-pen" onclick="setTool('pen')">🖊️</div>
+        <div class="t-btn" id="t-neon" onclick="setTool('neon')">✨</div>
+        <div class="t-btn" id="t-eraser" onclick="setTool('eraser')">🧽</div>
+    </div>
+
+    <div class="tool-row">
+        <div class="t-btn" onclick="toggleMathTool('ruler')">📏</div>
+        <div class="t-btn" onclick="toggleMathTool('protractor')">📐</div>
+        <div class="t-btn" onclick="undo()">↩️</div>
+    </div>
+
+    <!-- Renk ve Kalınlık -->
+    <div style="display:flex; flex-direction:column; gap:8px; background:rgba(0,0,0,0.3); padding:10px; border-radius:15px;">
+        <div style="display:flex; gap:10px; align-items:center;">
+            <input type="color" id="p-color" value="#2ecc71" style="width:40px; height:30px; border:none; background:none; cursor:pointer;">
+            <input type="range" id="p-width" min="1" max="50" value="4" style="flex:1; accent-color:var(--accent);">
+        </div>
+        <button onclick="clearCanvas()" style="background:#ff4757; border:none; color:white; padding:5px; border-radius:8px; cursor:pointer; font-weight:bold; font-size:10px;">TEMİZLE</button>
+    </div>
+</div>
+    <!-- Geometri araçları yolları düzeltildi -->
+    <div id="ruler" class="math-tool" style="width:550px; height:90px; top:200px; left:300px;">
+        <div class="tool-ctrl">
+            <div class="c-btn" onmousedown="toolRotate(event, 'ruler')">🔄</div>
+            <div class="c-btn" onmousedown="toolScale(event, 'ruler')">↔️</div>
+            <div class="c-btn" onclick="this.parentElement.parentElement.style.display='none'">❌</div>
+        </div>
+        <img src="assets/icons/cetvel.png" style="width:100%; height:100%; -webkit-user-drag: none;">
+    </div>
+
+    <div id="protractor" class="math-tool" style="width:350px; height:175px; top:400px; left:400px;">
+        <div class="tool-ctrl">
+            <div class="c-btn" onmousedown="toolRotate(event, 'protractor')">🔄</div>
+            <div class="c-btn" onmousedown="toolScale(event, 'protractor')">↔️</div>
+            <div class="c-btn" onclick="this.parentElement.parentElement.style.display='none'">❌</div>
+        </div>
+        <img src="assets/icons/açıölçer.png" style="width:100%; height:100%; -webkit-user-drag: none;">
+    </div>
+
+    <div id="keyboard">
+        <div class="kb-row" id="row1"></div>
+        <div class="kb-row" id="row2"></div>
+        <div class="kb-row" id="row3"></div>
+        <div class="kb-row">
+            <div class="kb-key" style="width:400px" onclick="typeChar(' ')">BOŞLUK</div>
+            <div class="kb-key" style="background:#e74c3c" onclick="toggleKeyboard()">KAPAT</div>
+        </div>
+    </div>
+
+  <<div id="settings-panel">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <h2 style="color: var(--accent);">⚙️ Ayarlar</h2>
+        <button onclick="toggleSettings()" style="background:none; border:none; color:white; cursor:pointer; font-size:20px;">✕</button>
+    </div>
+    <!-- 1. Tema Seçimi -->
+    <div class="set-item">
+        <span>Görünüm Teması (Sadece Sekme Görünümü)</span>
+        <select id="theme-select" onchange="updateSetting('theme', this.value)">
+            <option value="dark">Koyu Tema</option>
+            <option value="light">Açık Tema</option>
+            <option value="system">Sistem Varsayılanı</option>
+        </select>
+    </div>
+
+    <!-- 2. FPS Göstergesi -->
+    <div class="set-item">
+        <span>FPS Göstergesini Aç</span>
+        <input type="checkbox" id="fps-toggle" onchange="updateSetting('fpsCounter', this.checked)">
+    </div>
+
+    <!-- 3. Donanım Hızlandırma -->
+    <div class="set-item">
+        <span>GPU Hızlandırma</span>
+        <input type="checkbox" onchange="updateSetting('hardwareAccel', this.checked)" checked>
+    </div>
+
+    <!-- 4. İmleç Stili -->
+    <div class="set-item">
+        <span>Çizim İmleci</span>
+        <select onchange="updateSetting('cursorStyle', this.value)">
+            <option value="crosshair">Hedef (Artı)</option>
+            <option value="pointer">El İkonu</option>
+            <option value="default">Ok</option>
+        </select>
+    </div>
+
+    <!-- 5. Çizgi Yumuşatma (Antialiasing) -->
+    <div class="set-item">
+        <span>Pürüzsüz Çizim</span>
+        <input type="checkbox" onchange="updateSetting('lineSmoothing', this.checked)" checked>
+    </div>
+
+    <!-- 6. Performans Modu -->
+    <div class="set-item">
+        <span>Düşük Gecikme Modu</span>
+        <input type="checkbox" onchange="updateSetting('performanceMode', this.checked)">
+    </div>
+
+    <!-- 7. Panel Şeffaflığı -->
+    <div class="set-item">
+        <span>Panel Opaklığı</span>
+        <input type="range" min="50" max="100" value="95" onchange="updateSetting('transparency', this.value/100)">
+    </div>
+
+    <!-- 8. Otomatik Kayıt -->
+    <div class="set-item">
+        <span>Çizimleri Otomatik Yedekle</span>
+        <input type="checkbox" onchange="updateSetting('autoSave', this.checked)" checked>
+    </div>
+
+    <!-- 9. Kısayol Tuşları -->
+    <div class="set-item">
+        <span>Klavye Kısayolları</span>
+        <input type="checkbox" onchange="updateSetting('shortcuts', this.checked)" checked>
+    </div>
+
+    <!-- 10. Başlangıç Sayfası -->
+    <div class="set-item" style="flex-direction: column; align-items: flex-start; gap: 10px;">
+        <span>Ana Sayfa URL</span>
+        <input type="text" style="width: 100%; background:#000; border:1px solid #333; color:white; padding:5px;" 
+               placeholder="https://..." onchange="updateSetting('startupPage', this.value)">
+    </div>
+</div>
+    <div id="draw-layer"><canvas id="main-canvas"></canvas></div>
+
+    <script src="src/browser.js"></script>
+    <script src="src/paint.js"></script>
+    <script src="src/keyboard.js"></script>
+    <script src="src/settings.js"></script>
+    <script src="src/app.js"></script>
+</body>
+</html>

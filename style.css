@@ -1,0 +1,77 @@
+:root { 
+    --accent: #2ecc71; --bg: #0a0a0a; --sidebar: #121212; --panel: #1a1a1a; 
+    --text: #ffffff; --border: #333; --neon: 0 0 15px rgba(46, 204, 113, 0.4);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; outline: none; user-select: none; }
+body { font-family: 'Segoe UI', sans-serif; height: 100vh; background: var(--bg); color: var(--text); overflow: hidden; display: flex; }
+#sidebar { width: 100px; background: var(--sidebar); border-right: 2px solid var(--border); display: flex; flex-direction: column; align-items: center; padding: 15px 0; gap: 12px; z-index: 10000; }
+.logo { width: 70px; height: 70px; object-fit: contain; margin-bottom: 15px; cursor: pointer; transition: 0.4s; }
+.logo:hover { transform: scale(1.1) rotate(5deg); }
+.side-btn { width: 75px; height: 70px; border-radius: 15px; background: #1e1e1e; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; border: 1px solid #333; transition: 0.3s; position: relative; }
+.side-btn i { font-size: 24px; margin-bottom: 5px; }
+.side-btn span { font-size: 10px; font-weight: bold; color: #aaa; text-align: center; }
+.side-btn:hover, .side-btn.active { background: var(--accent); border-color: #fff; box-shadow: var(--neon); }
+.side-btn:hover span, .side-btn.active span { color: #fff; }
+#main-view { flex: 1; display: flex; flex-direction: column; background: #000; position: relative; }
+#tab-bar { display: flex; background: #080808; padding: 10px 15px 0; gap: 8px; height: 50px; border-bottom: 1px solid var(--border); }
+.tab { min-width: 150px; height: 40px; background: #1a1a1a; border-radius: 10px 10px 0 0; display: flex; align-items: center; padding: 0 12px; font-size: 12px; cursor: pointer; border: 1px solid #333; border-bottom: none; color: #888; }
+.tab.active { background: var(--panel); border-top: 3px solid var(--accent); color: #fff; font-weight: bold; }
+.close-tab { margin-left: auto; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.close-tab:hover { background: #ff4757; color: white; }
+#toolbar { background: var(--sidebar); padding: 10px 20px; display: flex; align-items: center; gap: 15px; border-bottom: 1px solid var(--border); }
+#url-input { flex: 1; padding: 12px 20px; border-radius: 25px; border: 1px solid #444; background: #000; color: #fff; font-size: 14px; border-left: 5px solid var(--accent); }
+#paint-menu { position: absolute; top: 80px; left: 120px; width: 240px; background: rgba(20,20,20,0.95); border: 2px solid var(--accent); border-radius: 25px; display: none; flex-direction: column; padding: 15px; gap: 12px; z-index: 50000; backdrop-filter: blur(15px); box-shadow: 0 20px 40px rgba(0,0,0,0.7); }
+.tool-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.t-btn { height: 45px; background: #222; border-radius: 12px; border: 1px solid #333; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; font-size: 18px; }
+.t-btn:hover { background: #333; transform: scale(1.05); }
+.t-btn.active { background: var(--accent); border-color: #fff; }
+.math-tool { position: absolute; z-index: 45000; cursor: move; display: none; }
+.tool-ctrl { position: absolute; top: -45px; left: 50%; transform: translateX(-50%); display: flex; gap: 5px; background: #000; padding: 5px; border-radius: 10px; border: 1px solid var(--accent); }
+.c-btn { width: 30px; height: 30px; background: #1a1a1a; border-radius: 5px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; }
+#keyboard { position: fixed; bottom: -400px; left: 50%; transform: translateX(-50%); width: 850px; background: #111; padding: 20px; border-radius: 20px 20px 0 0; border: 2px solid var(--accent); transition: 0.5s cubic-bezier(0.4, 0, 0.2, 1); z-index: 999999; }
+#keyboard.open { bottom: 0; }
+.kb-row { display: flex; justify-content: center; gap: 6px; margin-bottom: 6px; }
+.kb-key { min-width: 60px; height: 50px; background: #222; border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-weight: bold; border-bottom: 3px solid #000; }
+.kb-key:active { transform: translateY(2px); border-bottom: none; background: var(--accent); }
+#settings-panel { position: fixed; right: -450px; top: 0; width: 400px; height: 100%; background: var(--panel); z-index: 100000; border-left: 3px solid var(--accent); transition: 0.4s; padding: 30px; overflow-y: auto; }
+#settings-panel.open { right: 0; }
+.set-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #2a2a2a; font-size: 14px; }
+#draw-layer { position: fixed; inset: 0 0 0 100px; z-index: 40000; pointer-events: none; }
+#draw-layer.active { pointer-events: all; }
+
+#settings-panel {
+    position: fixed;
+    right: -400px; /* Panel genişliği kadar dışarıda başlar */
+    top: 0;
+    width: 350px;
+    height: 100vh;
+    background: #121212;
+    z-index: 1000000; /* En üstte olmalı */
+    padding: 20px;
+    transition: 0.4s cubic-bezier(0.075, 0.82, 0.165, 1);
+    border-left: 2px solid var(--accent);
+    overflow-y: auto;
+}
+
+#settings-panel.open {
+    right: 0; /* JS ile .open eklenince içeri girer */
+}
+
+.set-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #222;
+    color: #eee;
+}
+.math-tool img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    -webkit-user-drag: none;
+}
+canvas { width: 100%; height: 100%; }
+webview { flex: 1; display: none; background: #fff; }
+webview.active { display: flex; }
