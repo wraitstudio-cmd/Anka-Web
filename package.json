@@ -1,6 +1,6 @@
 {
   "name": "anka-web",
-  "version": "2.1.0",
+  "version": "2.3.0",
   "description": "Anka Web Browser",
   "main": "src/main.js",
   "author": "Wrait Studio",
