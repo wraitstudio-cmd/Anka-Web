@@ -17,7 +17,6 @@
         Şimdi Güncelle
     </button>
 </div>
-
 <script>
     const { ipcRenderer } = require('electron');
 
@@ -28,28 +27,58 @@
         const progressContainer = document.getElementById('progress-container');
         const progressBar = document.getElementById('progress-bar');
 
-        banner.style.display = 'block';
-        infoText.innerText = "Sürüm: " + data.version + " hazır.";
+        banner.style.display = 'flex';
+        banner.style.flexDirection = 'column';
+        infoText.innerHTML = `<strong>Yeni Sürüm: ${data.version}</strong><br><small style="color: #a6adc8;">Otomatik yükleme hazırlandı.</small>`;
 
         updateBtn.onclick = () => {
-            updateBtn.style.display = 'none';
-            progressContainer.style.display = 'block';
-            infoText.innerText = "İndiriliyor... %0";
+            updateBtn.style.pointerEvents = 'none';
+            updateBtn.style.opacity = '0.5';
+            updateBtn.innerText = "Bağlanılıyor...";
             
             ipcRenderer.send('start-download', data.url);
         };
 
         ipcRenderer.on('download-progress', (event, percent) => {
+            if (updateBtn.style.display !== 'none') {
+                updateBtn.style.display = 'none';
+                progressContainer.style.display = 'block';
+            }
+            
             progressBar.style.width = percent + "%";
-            infoText.innerText = "İndiriliyor... %" + percent;
+            infoText.innerHTML = `Güncelleniyor: <strong>%${percent}</strong><br><small style="color: #a6adc8;">Lütfen uygulamayı kapatmayın.</small>`;
+            
+            if (percent > 99) {
+                progressBar.style.boxShadow = "0 0 15px #a6e3a1";
+            }
         });
 
         ipcRenderer.on('download-complete', () => {
-            infoText.innerText = "İndirme tamamlandı! Kuruluyor...";
-            progressBar.style.background = "#89b4fa";
+            infoText.innerHTML = `<span style="color: #a6e3a1;">✓ İndirme Tamamlandı</span><br><small>Sessiz kurulum başlıyor...</small>`;
+            progressBar.style.background = "#94e2d5";
+            progressBar.classList.add('pulse-animation');
+        });
+
+        ipcRenderer.on('download-error', (event, message) => {
+            banner.style.border = "1px solid #f38ba8";
+            infoText.innerHTML = `<span style="color: #f38ba8;">Hata: İndirme başarısız.</span><br><small>${message}</small>`;
+            updateBtn.style.display = 'block';
+            updateBtn.style.background = "#f38ba8";
+            updateBtn.innerText = "Tekrar Dene";
+            progressContainer.style.display = 'none';
         });
     });
 </script>
+<style>
+    .pulse-animation {
+        animation: progressPulse 1.5s infinite;
+    }
+    @keyframes progressPulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
+</style>
 <body>
     <div id="sidebar">
         <!-- Logo yolu düzeltildi: assets/icons/logo.png -->
