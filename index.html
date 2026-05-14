@@ -5,26 +5,49 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="style.css">
 </head>
+<div id="update-banner" style="display: none; position: fixed; top: 20px; right: 20px; width: 320px; background: #1e1e2e; color: white; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 99999; border: 1px solid #313244; font-family: sans-serif;">
+    <strong style="display: block; margin-bottom: 10px;">Yeni Güncelleme Mevcut!</strong>
+    <p id="update-info" style="font-size: 13px; color: #a6adc8; margin-bottom: 15px;">Yeni sürüm indiriliyor...</p>
+    
+    <div id="progress-container" style="display: none; width: 100%; background: #313244; height: 10px; border-radius: 5px; overflow: hidden; margin-bottom: 10px;">
+        <div id="progress-bar" style="width: 0%; height: 100%; background: #a6e3a1; transition: width 0.2s;"></div>
+    </div>
+
+    <button id="update-btn" style="width: 100%; padding: 10px; background: #a6e3a1; border: none; color: #11111b; border-radius: 8px; cursor: pointer; font-weight: bold;">
+        Şimdi Güncelle
+    </button>
+</div>
+
 <script>
     const { ipcRenderer } = require('electron');
 
     ipcRenderer.on('update-available', (event, data) => {
         const banner = document.getElementById('update-banner');
-        const versionText = document.getElementById('update-version');
         const updateBtn = document.getElementById('update-btn');
+        const infoText = document.getElementById('update-info');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
 
-        versionText.innerText = "Yeni Sürüm: " + data.version + "\nOtomatik indiriliyor ve kurulacak.";
         banner.style.display = 'block';
+        infoText.innerText = "Sürüm: " + data.version + " hazır.";
 
         updateBtn.onclick = () => {
-            updateBtn.innerText = "İndiriliyor...";
-            updateBtn.disabled = true;
-            updateBtn.style.background = "#585b70";
-            updateBtn.style.color = "#a6adc8";
-            updateBtn.style.cursor = "not-allowed";
+            updateBtn.style.display = 'none';
+            progressContainer.style.display = 'block';
+            infoText.innerText = "İndiriliyor... %0";
             
             ipcRenderer.send('start-download', data.url);
         };
+
+        ipcRenderer.on('download-progress', (event, percent) => {
+            progressBar.style.width = percent + "%";
+            infoText.innerText = "İndiriliyor... %" + percent;
+        });
+
+        ipcRenderer.on('download-complete', () => {
+            infoText.innerText = "İndirme tamamlandı! Kuruluyor...";
+            progressBar.style.background = "#89b4fa";
+        });
     });
 </script>
 <body>

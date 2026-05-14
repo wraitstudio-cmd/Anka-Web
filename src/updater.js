@@ -7,7 +7,6 @@ const CURRENT_VERSION = "2.1.0";
 
 function checkUpdates(win) {
     const request = net.request('https://raw.githubusercontent.com/wraitstudio-cmd/Anka-Web/main/latest.yml');
-    
     request.on('response', (response) => {
         let data = '';
         response.on('data', (chunk) => { data += chunk; });
@@ -18,12 +17,9 @@ function checkUpdates(win) {
                 const downloadUrl = lines[2].split(': ')[1].replace(/"/g, '').trim();
 
                 if (latestVersion !== CURRENT_VERSION) {
-                    win.webContents.send('update-available', { 
-                        version: latestVersion, 
-                        url: downloadUrl 
-                    });
+                    win.webContents.send('update-available', { version: latestVersion, url: downloadUrl });
                 }
-            } catch (e) {}
+            } catch (e) { console.error("Güncelleme kontrol hatası:", e); }
         });
     });
     request.end();
@@ -32,14 +28,24 @@ function checkUpdates(win) {
 ipcMain.on('start-download', (event, url) => {
     const filePath = path.join(app.getPath('temp'), 'anka-setup.exe');
     const file = fs.createWriteStream(filePath);
-
     const request = net.request(url);
+
     request.on('response', (response) => {
+        const totalBytes = parseInt(response.headers['content-length'], 10);
+        let downloadedBytes = 0;
+
         response.on('data', (chunk) => {
+            downloadedBytes += chunk.length;
             file.write(chunk);
+            
+            const progress = Math.round((downloadedBytes / totalBytes) * 100);
+            event.sender.send('download-progress', progress);
         });
+
         response.on('end', () => {
             file.end();
+            event.sender.send('download-complete');
+            
             setTimeout(() => {
                 exec(`"${filePath}" /S`, (err) => {
                     if (!err) {
@@ -47,7 +53,7 @@ ipcMain.on('start-download', (event, url) => {
                         app.quit();
                     }
                 });
-            }, 1000);
+            }, 2000);
         });
     });
     request.end();
