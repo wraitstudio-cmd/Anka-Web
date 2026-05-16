@@ -1,4 +1,4 @@
-version: "1.1.0"
+version: "1.2.0"
 url_win: "https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.1.0/Anka.Web.Setup.1.1.0.exe"
 url_linux: "https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.1.0/anka-web_1.1.0_amd64.deb"
 notes: "Genel Sorunlar Düzeltildi. Yeni Özellikler Eklendi. Buglar Fixlendi. Linux Platformu Eklendi."
