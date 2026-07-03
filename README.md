@@ -13,12 +13,13 @@ En güncel sürümü resmi web sitemizden hemen indirebilirsin:
 ---
 
 ### ⚡ Son Güncellemeler (v1.4.1)
-[MİMARİ]   -> Ana süreç ve tarayıcı süreçleri birbirinden ayrıldı. "document is not defined" hatası tamamen çözüldü.
-[TASARIM]  -> Standart Windows çerçevesi ve butonları kaldırıldı (frame: false). Tamamen özel tasarım arayüze geçildi.
-[SİSTEM]   -> Özel pencere kontrol butonları (Kapat, Küçült, Büyüt) IPC kanalları üzerinden ana sürece başarıyla bağlandı.
-[BAĞLANTI] -> Cloudflare WARP/VPN kullanımında oluşan -3 (ERR_FAILED) webview bağlantı hatası sandbox ayarlarıyla düzeltildi.
-[GÜVENLİK] -> Adres çubuğuna girilen metinlerin http/https protokol kontrolleri ve Google arama motoru yönlendirmeleri sıfırdan güvenli hale getirildi.
-[KORUMA]   -> Kaynak kodların çalınmasını ve geri açılmasını engellemek için derleme (build) süreçlerine otomatik kod karıştırma (Obfuscation) sistemi entegre edildi.
+
++ [MİMARİ]  -> Ana süreç ve tarayıcı süreçleri ayrıldı. "document is not defined" hatası çözüldü.
++ [TASARIM] -> Standart çerçeve kaldırıldı (frame: false). Modern, özel arayüze geçildi.
++ [SİSTEM]  -> Kapat, Küçült, Büyüt butonları IPC kanalları ile ana sürece bağlandı.
++ [BAĞLANTI]-> Cloudflare WARP/VPN kaynaklı -3 (ERR_FAILED) webview hatası sandbox ile düzeltildi.
++ [GÜVENLİK]-> Adres çubuğu http/https protokol kontrolü ve akıllı Google arama motoru sıfırdan yazıldı.
++ [KORUMA]  -> Kod çalınmasını (asar extract) engellemek için derleme süreçlerine Obfuscation eklendi.
 
 ---
 
