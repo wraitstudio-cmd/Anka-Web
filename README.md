@@ -8,7 +8,7 @@ Anka Web, kullanıcı deneyimini en üst seviyeye çıkarmak için tasarlanmış
 
 ### 📥 İndir
 En güncel sürümü resmi web sitemizden hemen indirebilirsin:
-👉 **[WraitGame]([https://wraitgame.netlify.app](https://wraitgame.vercel.app/#anka-web))**
+👉 **[WraitGame]([https://wraitgame.netlify.app](https://wraitgame.vercel.app/#anka-web)**
 
 ---
 
