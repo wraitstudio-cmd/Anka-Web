@@ -12,11 +12,13 @@ En güncel sürümü resmi web sitemizden hemen indirebilirsin:
 
 ---
 
-### ⚡ Son Güncellemeler (v1.4.0)
-* **Performans İyileştirmesi:** Sayfa yükleme süreleri %30 daha hızlı.
-* **Arayüz Güncellemesi:** Yepyeni ve modern bir tasarım dili eklendi.
-* **Hata Gidermeleri:** Kullanıcı raporlarına dayalı stabilite düzeltmeleri yapıldı.
-* **Yeni Özellik:** Ayarlara yeni seçenekler eklendi.
+### ⚡ Son Güncellemeler (v1.4.1)
+[MİMARİ]   -> Ana süreç ve tarayıcı süreçleri birbirinden ayrıldı. "document is not defined" hatası tamamen çözüldü.
+[TASARIM]  -> Standart Windows çerçevesi ve butonları kaldırıldı (frame: false). Tamamen özel tasarım arayüze geçildi.
+[SİSTEM]   -> Özel pencere kontrol butonları (Kapat, Küçült, Büyüt) IPC kanalları üzerinden ana sürece başarıyla bağlandı.
+[BAĞLANTI] -> Cloudflare WARP/VPN kullanımında oluşan -3 (ERR_FAILED) webview bağlantı hatası sandbox ayarlarıyla düzeltildi.
+[GÜVENLİK] -> Adres çubuğuna girilen metinlerin http/https protokol kontrolleri ve Google arama motoru yönlendirmeleri sıfırdan güvenli hale getirildi.
+[KORUMA]   -> Kaynak kodların çalınmasını ve geri açılmasını engellemek için derleme (build) süreçlerine otomatik kod karıştırma (Obfuscation) sistemi entegre edildi.
 
 ---
 
