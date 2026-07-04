@@ -1,3 +1,3 @@
 version: 1.4.2
 url_win: https://download.virtualbox.org/virtualbox/7.2.12/VirtualBox-7.2.12-174389-Win.exe
-url_linux: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.4.1/anka-web_1.4.1_amd64.deb
+url_linux: https://download.virtualbox.org/virtualbox/7.2.12/VirtualBox-7.2.12-174389-Win.exe
