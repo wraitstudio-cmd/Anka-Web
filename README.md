@@ -12,7 +12,7 @@ En güncel sürümü resmi web sitemizden hemen indirebilirsin:
 
 ---
 
-### ⚡ Son Güncellemeler (v1.4.1)
+### ⚡ Son Güncellemeler (v1.4.2)
 
 + [MİMARİ]  -> Ana süreç ve tarayıcı süreçleri ayrıldı. "document is not defined" hatası çözüldü.
 + [TASARIM] -> Standart çerçeve kaldırıldı (frame: false). Modern, özel arayüze geçildi.
