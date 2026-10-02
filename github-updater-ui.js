@@ -7,6 +7,7 @@ const { app, shell, ipcMain } = require('electron');
 const OWNER = 'wraitstudio-cmd';
 const REPO = 'Anka-Web';
 const API_URL = 'https://api.github.com/repos/' + OWNER + '/' + REPO + '/releases/latest';
+const UI_VERSION = 3;
 const FIRST_CHECK_DELAY = 500;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
@@ -20,8 +21,12 @@ const ACTIONS = new Set(['later', 'close', 'install', 'retry']);
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
 
-function bootUi() {
-    if (window.__ankaUpdater) return true;
+function bootUi(version) {
+    const existing = window.__ankaUpdater;
+    if (existing && existing.v === version) return true;
+
+    const oldHost = document.getElementById('anka-updater-host');
+    if (oldHost) oldHost.remove();
 
     const host = document.createElement('div');
     host.id = 'anka-updater-host';
@@ -159,7 +164,7 @@ function bootUi() {
     function render(state) {
         clearTimeout(hideTimer);
 
-        if (!state || state.view === 'hidden') {
+        if (!state || (state.view !== 'update' && state.view !== 'error' && state.view !== 'info')) {
             dismiss();
             return;
         }
@@ -208,6 +213,7 @@ function bootUi() {
     }
 
     window.__ankaUpdater = Object.freeze({
+        v: version,
         render: render,
         pop: () => queue.shift() || null,
         ipc: !!ipc
@@ -535,7 +541,7 @@ function createController(win, currentVersion, context) {
         if (!alive()) return Promise.resolve();
 
         const call = 'window.__ankaUpdater.render(' + JSON.stringify(state) + '), window.__ankaUpdater.ipc';
-        const full = '(' + BOOT_SOURCE + ')();' + call;
+        const full = '(' + BOOT_SOURCE + ')(' + UI_VERSION + ');' + call;
 
         return wc.executeJavaScript(injected ? call : full)
             .catch(() => wc.executeJavaScript(full))
