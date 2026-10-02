@@ -1,4 +1,4 @@
-# Anka-Web
+# Anka Web
 
 Anka-Web projesinin kaynak kodları, sürüm yönetimleri ve dağıtım konfigürasyonları bu depo üzerinden yönetilmektedir.
 
