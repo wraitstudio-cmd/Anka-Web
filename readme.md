@@ -4,8 +4,8 @@ Anka-Web projesinin kaynak kodları, sürüm yönetimleri ve dağıtım konfigü
 
 Proje hakkında detaylı bilgi almak, kullanım kılavuzunu incelemek ve canlı demoya ulaşmak için resmi web sitemizi ziyaret edebilirsiniz:
 
-🌐 **Resmi Web Sitesi:** [ankasite.vercel.app](https://ankasite.vercel.app)  
-🐙 **Açık Kaynak Reposu:** [github.com](https://github.com/wraitstudio-cmd/Anka-Web-Reseurce)
+🌐 **Resmi Web Sitesi:** [Linke Gitmek İçin Tıkla](https://ankasite.vercel.app)  
+🐙 **Açık Kaynak Reposu:** [Linke Gitmek İçin Tıkla](https://github.com/wraitstudio-cmd/Anka-Web-Reseurce)
 
 ---
 
