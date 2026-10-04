@@ -2,22 +2,30 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { app, shell, ipcMain } = require('electron');
 
 const OWNER = 'wraitstudio-cmd';
 const REPO = 'Anka-Web';
-const API_URL = 'https://api.github.com/repos/' + OWNER + '/' + REPO + '/releases/latest';
+const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO + '/main/latest.yml';
+const MANIFEST_PATH = '/' + OWNER + '/' + REPO + '/main/latest.yml';
+const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const UI_VERSION = 4;
 const FIRST_CHECK_DELAY = 500;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
 const REQUEST_TIMEOUT = 8000;
+const DOWNLOAD_IDLE_TIMEOUT = 30000;
 const MAX_REDIRECTS = 5;
-const MAX_JSON_BYTES = 2 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 64 * 1024;
+const MAX_DOWNLOAD_BYTES = 600 * 1024 * 1024;
 const POLL_MS = 250;
 const PROGRESS_MS = 100;
 const ACTION_CHANNEL = 'anka-updater:action';
 const ACTIONS = new Set(['later', 'close', 'install', 'retry', 'update']);
+const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
+const FILE_RE = /^[A-Za-z0-9._-]{1,120}$/;
+const HASH_RE = /^[a-f0-9]{64}$/;
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
 
@@ -225,91 +233,21 @@ function bootUi(version) {
 
 const BOOT_SOURCE = bootUi.toString();
 
-function isTrustedUrl(value) {
-    try {
-        const url = new URL(value);
-        if (url.protocol !== 'https:') return false;
-        const host = url.hostname;
-        return host === 'api.github.com' || host === 'github.com' || host.endsWith('.githubusercontent.com');
-    } catch (err) {
-        return false;
-    }
-}
+const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
+    phase: 'idle',
+    version: '',
+    percent: 0,
+    file: '',
+    hash: '',
+    kind: '',
+    snoozed: ''
+});
 
-function request(url, headers, depth) {
-    return new Promise((resolve, reject) => {
-        if (!isTrustedUrl(url)) {
-            reject(new Error('Güvenilmeyen adres engellendi'));
-            return;
-        }
-
-        const req = https.get(url, {
-            agent: agent,
-            headers: Object.assign({ 'User-Agent': 'AnkaWeb-Updater', Accept: 'application/vnd.github+json, application/octet-stream' }, headers || {}),
-            timeout: REQUEST_TIMEOUT
-        }, (res) => {
-            const code = res.statusCode;
-            if ([301, 302, 303, 307, 308].includes(code) && res.headers.location) {
-                res.resume();
-                if ((depth || 0) >= MAX_REDIRECTS) {
-                    reject(new Error('Çok fazla yönlendirme'));
-                    return;
-                }
-                resolve(request(new URL(res.headers.location, url).toString(), {}, (depth || 0) + 1));
-                return;
-            }
-            if (code !== 200 && code !== 304) {
-                res.resume();
-                reject(new Error('Sunucu yanıtı: ' + code));
-                return;
-            }
-            resolve(res);
-        });
-
-        req.on('timeout', () => req.destroy(new Error('Bağlantı zaman aşımına uğradı')));
-        req.on('error', reject);
-    });
-}
-
-function readJson(res) {
-    return new Promise((resolve, reject) => {
-        const chunks = [];
-        let size = 0;
-        res.on('data', (chunk) => {
-            size += chunk.length;
-            if (size > MAX_JSON_BYTES) {
-                res.destroy(new Error('Yanıt çok büyük'));
-                return;
-            }
-            chunks.push(chunk);
-        });
-        res.on('end', () => {
-            try {
-                resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-            } catch (err) {
-                reject(new Error('Sürüm bilgisi okunamadı'));
-            }
-        });
-        res.on('error', reject);
-    });
-}
-
-async function fetchRelease() {
-    const cache = global.__ankaReleaseCache || (global.__ankaReleaseCache = { etag: '', data: null });
-    const headers = cache.etag && cache.data ? { 'If-None-Match': cache.etag } : {};
-    const res = await request(API_URL, headers, 0);
-
-    if (res.statusCode === 304 && cache.data) {
-        res.resume();
-        return cache.data;
-    }
-
-    const data = await readJson(res);
-    if (res.headers.etag) {
-        cache.etag = res.headers.etag;
-        cache.data = data;
-    }
-    return data;
+function safeJson(value) {
+    return JSON.stringify(value)
+        .replace(/</g, '\\u003c')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
 }
 
 function parseVersion(value) {
@@ -327,22 +265,558 @@ function compareVersions(a, b) {
     return 0;
 }
 
-function archScore(name) {
-    const isArm = /arm64|aarch64/.test(name);
-    const isX64 = /x86_64|amd64|x64/.test(name);
-    if (process.arch === 'arm64') return isArm ? 2 : isX64 ? -2 : 0;
-    return isX64 ? 2 : isArm ? -3 : 0;
+function parseManifest(text) {
+    const out = Object.create(null);
+    String(text).split(/\r?\n/).forEach((line) => {
+        const match = /^([A-Za-z0-9_]+):[ \t]*(.*)$/.exec(line);
+        if (!match) return;
+        let value = match[2].trim();
+        if (value.length > 1 && ((value[0] === '"' && value.endsWith('"')) || (value[0] === "'" && value.endsWith("'")))) {
+            value = value.slice(1, -1).trim();
+        }
+        out[match[1]] = value;
+    });
+    return out;
 }
 
-function pickAsset(assets) {
-    let extensions;
-    if (process.platform === 'win32') extensions = ['.exe'];
-    else if (process.platform === 'linux') extensions = process.env.APPIMAGE ? ['.appimage'] : ['.deb', '.appimage'];
-    else return null;
+function isAssetHost(host) {
+    return host === 'github.com' || (host.endsWith('.githubusercontent.com') && host !== 'raw.githubusercontent.com');
+}
 
-    let best = null;
-    let bestScore = -Infinity;
+function manifestAllow(url) {
+    return url.hostname === 'raw.githubusercontent.com' && url.pathname === MANIFEST_PATH;
+}
 
-    for (const asset of assets) {
-        if (!asset || !asset.name || !asset.browser_download_url) continue;
-        const name =
+function downloadAllow(url, redirected) {
+    if (redirected) return isAssetHost(url.hostname);
+    return url.hostname === 'github.com' && url.pathname.startsWith(DOWNLOAD_PATH_PREFIX);
+}
+
+function networkError(err) {
+    if (err && (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' || err.code === 'EAI_AGAIN')) {
+        return new Error('İnternet bağlantısı yok');
+    }
+    return err;
+}
+
+function get(url, options, depth) {
+    return new Promise((resolve, reject) => {
+        let target;
+        try {
+            target = new URL(url);
+        } catch (err) {
+            reject(new Error('Geçersiz adres'));
+            return;
+        }
+
+        if (target.protocol !== 'https:' || target.username || target.password || !options.allow(target, depth > 0)) {
+            reject(new Error('Güvenilmeyen adres engellendi'));
+            return;
+        }
+
+        const req = https.get(target, {
+            agent: agent,
+            headers: { 'User-Agent': 'AnkaWeb-Updater', 'Cache-Control': 'no-cache', Accept: '*/*' },
+            timeout: options.timeout,
+            signal: options.signal
+        }, (res) => {
+            const code = res.statusCode;
+            if ([301, 302, 303, 307, 308].includes(code) && res.headers.location) {
+                res.resume();
+                if (!options.redirects || depth >= MAX_REDIRECTS) {
+                    reject(new Error('Çok fazla yönlendirme'));
+                    return;
+                }
+                let next;
+                try {
+                    next = new URL(res.headers.location, target).toString();
+                } catch (err) {
+                    reject(new Error('Geçersiz yönlendirme'));
+                    return;
+                }
+                resolve(get(next, options, depth + 1));
+                return;
+            }
+            if (code !== 200) {
+                res.resume();
+                reject(new Error('Sunucu yanıtı: ' + code));
+                return;
+            }
+            resolve(res);
+        });
+
+        req.on('timeout', () => req.destroy(new Error('Bağlantı zaman aşımına uğradı')));
+        req.on('error', (err) => reject(networkError(err)));
+    });
+}
+
+function readLimited(res, max) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        let size = 0;
+        res.on('data', (chunk) => {
+            size += chunk.length;
+            if (size > max) {
+                res.destroy(new Error('Yanıt çok büyük'));
+                return;
+            }
+            chunks.push(chunk);
+        });
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+    });
+}
+
+function pickTarget(manifest, version) {
+    let order;
+    if (process.platform === 'win32') {
+        order = [['msi', '.msi'], ['exe', '.exe']];
+    } else if (process.platform === 'linux') {
+        if (process.arch !== 'x64') throw new Error('Bu işlemci mimarisi için paket yok');
+        order = [['deb', '.deb']];
+    } else {
+        return null;
+    }
+
+    for (const entry of order) {
+        const kind = entry[0];
+        const ext = entry[1];
+        const raw = manifest['url_' + kind];
+        if (!raw) continue;
+
+        let url;
+        try {
+            url = new URL(raw);
+        } catch (err) {
+            throw new Error('Manifestteki url_' + kind + ' geçersiz');
+        }
+
+        const expectedPrefix = DOWNLOAD_PATH_PREFIX + 'v' + version + '/';
+        const name = url.pathname.slice(expectedPrefix.length);
+        const valid = url.protocol === 'https:'
+            && url.hostname === 'github.com'
+            && !url.username
+            && !url.password
+            && !url.port
+            && !url.search
+            && !url.hash
+            && url.pathname.startsWith(expectedPrefix)
+            && FILE_RE.test(name)
+            && name.toLowerCase().endsWith(ext);
+        if (!valid) throw new Error('Manifestteki url_' + kind + ' güvenilir değil');
+
+        const hash = String(manifest['sha256_' + kind] || '').trim().toLowerCase();
+        if (!HASH_RE.test(hash)) throw new Error('Manifestte sha256_' + kind + ' eksik veya geçersiz');
+
+        return { kind: kind, ext: ext, url: url.toString(), hash: hash };
+    }
+
+    throw new Error('Bu platform için indirme adresi yok');
+}
+
+function updatesDir() {
+    return path.join(app.getPath('userData'), 'updates');
+}
+
+function prepareDir() {
+    const dir = updatesDir();
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return dir;
+}
+
+function cleanDir(keep) {
+    const dir = updatesDir();
+    let names = [];
+    try {
+        names = fs.readdirSync(dir);
+    } catch (err) {
+        return;
+    }
+    for (const name of names) {
+        if (name === keep) continue;
+        try {
+            fs.rmSync(path.join(dir, name), { force: true, recursive: true });
+        } catch (err) {}
+    }
+}
+
+function resetState() {
+    cleanDir('');
+    state.phase = 'idle';
+    state.percent = 0;
+    state.file = '';
+    state.hash = '';
+    state.kind = '';
+}
+
+function sameHash(a, b) {
+    const x = Buffer.from(String(a), 'hex');
+    const y = Buffer.from(String(b), 'hex');
+    return x.length === 32 && y.length === 32 && crypto.timingSafeEqual(x, y);
+}
+
+function hashFile(file) {
+    return new Promise((resolve, reject) => {
+        const hash = crypto.createHash('sha256');
+        const stream = fs.createReadStream(file);
+        stream.on('data', (chunk) => hash.update(chunk));
+        stream.on('error', reject);
+        stream.on('end', () => resolve(hash.digest('hex')));
+    });
+}
+
+async function download(target, version, signal, onProgress) {
+    const dir = prepareDir();
+    cleanDir('');
+    const finalPath = path.join(dir, 'anka-web-' + version + target.ext);
+    const partPath = path.join(dir, crypto.randomBytes(8).toString('hex') + '.part');
+
+    const res = await get(target.url, { allow: downloadAllow, timeout: DOWNLOAD_IDLE_TIMEOUT, redirects: true, signal: signal }, 0);
+    const total = Number(res.headers['content-length']) || 0;
+    if (total > MAX_DOWNLOAD_BYTES) {
+        res.destroy();
+        throw new Error('Dosya çok büyük');
+    }
+
+    const hash = crypto.createHash('sha256');
+    const out = fs.createWriteStream(partPath, { flags: 'wx', mode: 0o600 });
+
+    try {
+        await new Promise((resolve, reject) => {
+            let received = 0;
+            let last = 0;
+            let settled = false;
+
+            const fail = (err) => {
+                if (settled) return;
+                settled = true;
+                res.destroy();
+                out.destroy();
+                reject(err);
+            };
+
+            res.on('data', (chunk) => {
+                received += chunk.length;
+                if (received > MAX_DOWNLOAD_BYTES) {
+                    fail(new Error('Dosya çok büyük'));
+                    return;
+                }
+                hash.update(chunk);
+                if (!out.write(chunk)) {
+                    res.pause();
+                    out.once('drain', () => res.resume());
+                }
+                const now = Date.now();
+                if (total && now - last >= PROGRESS_MS) {
+                    last = now;
+                    onProgress(Math.min(99, Math.floor((received / total) * 100)));
+                }
+            });
+
+            res.on('error', fail);
+            res.on('close', () => {
+                if (!res.complete) fail(new Error('İndirme yarıda kesildi'));
+            });
+            out.on('error', fail);
+            res.on('end', () => {
+                if (settled) return;
+                if (total && received !== total) {
+                    fail(new Error('İndirilen dosya eksik'));
+                    return;
+                }
+                out.end(() => {
+                    if (settled) return;
+                    settled = true;
+                    resolve();
+                });
+            });
+        });
+
+        if (!sameHash(hash.digest('hex'), target.hash)) throw new Error('Dosya doğrulaması başarısız');
+        fs.renameSync(partPath, finalPath);
+        return finalPath;
+    } catch (err) {
+        try {
+            fs.rmSync(partPath, { force: true });
+        } catch (cleanupErr) {}
+        throw err;
+    }
+}
+
+function init(win, currentVersion, options) {
+    if (!win || win.isDestroyed()) return;
+
+    const previous = global.__ankaUpdaterInstance;
+    if (previous) previous.destroy();
+
+    const contents = win.webContents;
+    const installed = String(currentVersion || app.getVersion());
+    const startManual = !!(options && options.manual);
+
+    let destroyed = false;
+    let busy = false;
+    let installing = false;
+    let uiReady = false;
+    let lastCheck = 0;
+    let firstTimer = null;
+    let intervalTimer = null;
+    let pollTimer = null;
+    let abortCtl = null;
+
+    async function ensureUi() {
+        if (destroyed || win.isDestroyed()) return false;
+        if (uiReady) return true;
+        try {
+            await contents.executeJavaScript('(' + BOOT_SOURCE + ')(' + UI_VERSION + ')');
+            uiReady = true;
+            if (!pollTimer) {
+                const hasIpc = await contents.executeJavaScript('Boolean(window.__ankaUpdater && window.__ankaUpdater.ipc)');
+                if (!hasIpc) startPoll();
+            }
+            return true;
+        } catch (err) {
+            return false;
+        }
+    }
+
+    async function send(view) {
+        if (!(await ensureUi())) return;
+        try {
+            await contents.executeJavaScript('window.__ankaUpdater&&window.__ankaUpdater.render(' + safeJson(view) + ')');
+        } catch (err) {}
+    }
+
+    function paint() {
+        if (state.phase === 'idle' || state.snoozed === state.version) return;
+        send({ view: 'update', version: state.version, percent: state.percent, ready: state.phase === 'ready' });
+    }
+
+    function startPoll() {
+        pollTimer = setInterval(async () => {
+            if (destroyed || win.isDestroyed()) return;
+            try {
+                const action = await contents.executeJavaScript('window.__ankaUpdater?window.__ankaUpdater.pop():null');
+                if (typeof action === 'string') handle(action);
+            } catch (err) {}
+        }, POLL_MS);
+        if (typeof pollTimer.unref === 'function') pollTimer.unref();
+    }
+
+    async function check(manual) {
+        if (destroyed) return;
+        if (busy) {
+            if (manual) {
+                state.snoozed = '';
+                paint();
+            }
+            return;
+        }
+
+        busy = true;
+        lastCheck = Date.now();
+        if (manual) state.snoozed = '';
+        const ctl = new AbortController();
+        abortCtl = ctl;
+
+        try {
+            const url = MANIFEST_URL + '?t=' + Date.now();
+            const res = await get(url, { allow: manifestAllow, timeout: REQUEST_TIMEOUT, redirects: false, signal: ctl.signal }, 0);
+            const manifest = parseManifest((await readLimited(res, MAX_MANIFEST_BYTES)).toString('utf8'));
+            const version = String(manifest.version || '').trim();
+            if (!VERSION_RE.test(version)) throw new Error('Manifestteki sürüm geçersiz');
+
+            if (compareVersions(version, installed) <= 0) {
+                if (state.phase !== 'idle') resetState();
+                if (manual) await send({ view: 'info', title: 'Anka Web', message: 'Uygulama güncel (v' + installed + ')' });
+                return;
+            }
+
+            if (state.phase === 'ready' && state.version === version && state.file && fs.existsSync(state.file)) {
+                paint();
+                return;
+            }
+
+            const target = pickTarget(manifest, version);
+            if (!target) {
+                if (manual) await send({ view: 'info', title: 'Anka Web', message: 'Bu platformda otomatik güncelleme desteklenmiyor' });
+                return;
+            }
+
+            state.phase = 'downloading';
+            state.version = version;
+            state.percent = 0;
+            state.file = '';
+            state.hash = '';
+            state.kind = target.kind;
+            paint();
+
+            const file = await download(target, version, ctl.signal, (percent) => {
+                state.percent = percent;
+                paint();
+            });
+
+            if (destroyed) return;
+            state.file = file;
+            state.hash = target.hash;
+            state.kind = target.kind;
+            state.percent = 100;
+            state.phase = 'ready';
+            state.snoozed = '';
+            paint();
+        } catch (err) {
+            if (ctl.signal.aborted || destroyed) return;
+            const visible = manual || state.phase === 'downloading';
+            if (state.phase === 'downloading') {
+                cleanDir('');
+                state.phase = 'idle';
+                state.percent = 0;
+            }
+            if (visible) await send({ view: 'error', message: err && err.message ? err.message : 'Bilinmeyen hata' });
+        } finally {
+            busy = false;
+            if (abortCtl === ctl) abortCtl = null;
+        }
+    }
+
+    async function install() {
+        if (installing || destroyed) return;
+        if (state.phase !== 'ready' || !state.file) return;
+        installing = true;
+
+        try {
+            const file = state.file;
+            if (path.dirname(file) !== updatesDir()) throw new Error('Güncelleme dosyası geçersiz konumda');
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Güncelleme dosyası geçersiz');
+
+            const digest = await hashFile(file);
+            if (!sameHash(digest, state.hash)) {
+                resetState();
+                throw new Error('Dosya doğrulaması başarısız, yeniden indirilecek');
+            }
+
+            if (process.platform === 'win32') {
+                let child;
+                if (state.kind === 'msi') {
+                    const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+                    const msiexec = path.join(root, 'System32', 'msiexec.exe');
+                    child = spawn(msiexec, ['/i', file, '/passive', '/norestart'], { detached: true, stdio: 'ignore', shell: false });
+                } else {
+                    child = spawn(file, [], { detached: true, stdio: 'ignore', shell: false });
+                }
+                await new Promise((resolve, reject) => {
+                    child.once('error', reject);
+                    child.once('spawn', resolve);
+                });
+                child.unref();
+                setTimeout(() => app.quit(), 300);
+                const force = setTimeout(() => app.exit(0), 5000);
+                if (typeof force.unref === 'function') force.unref();
+            } else if (process.platform === 'linux') {
+                const failure = await shell.openPath(file);
+                if (failure) throw new Error('Kurulum paketi açılamadı');
+                await send({ view: 'info', title: 'Anka Web', message: 'Kurulum penceresi açıldı' });
+            } else {
+                throw new Error('Bu platformda kurulum desteklenmiyor');
+            }
+        } catch (err) {
+            await send({ view: 'error', message: err && err.message ? err.message : 'Kurulum başlatılamadı' });
+        } finally {
+            installing = false;
+        }
+    }
+
+    function handle(action) {
+        if (typeof action !== 'string' || !ACTIONS.has(action) || destroyed) return;
+
+        if (action === 'later') {
+            state.snoozed = state.version;
+            send(null);
+        } else if (action === 'close') {
+            send(null);
+        } else if (action === 'install') {
+            install();
+        } else if (action === 'retry') {
+            if (state.phase === 'ready') install();
+            else check(true);
+        } else if (action === 'update') {
+            if (state.phase === 'idle') check(true);
+            else {
+                state.snoozed = '';
+                paint();
+            }
+        }
+    }
+
+    function onAction(event, action) {
+        if (destroyed || win.isDestroyed() || !event || !event.sender) return;
+        if (event.sender.id !== contents.id) return;
+        if (event.senderFrame && contents.mainFrame && event.senderFrame !== contents.mainFrame) return;
+        handle(action);
+    }
+
+    function onFocus() {
+        if (Date.now() - lastCheck >= FOCUS_CHECK_GAP) check(false);
+    }
+
+    function onStartLoading() {
+        uiReady = false;
+    }
+
+    function onFinishLoad() {
+        uiReady = false;
+        paint();
+    }
+
+    function destroy() {
+        if (destroyed) return;
+        destroyed = true;
+        clearTimeout(firstTimer);
+        clearInterval(intervalTimer);
+        clearInterval(pollTimer);
+        if (abortCtl) abortCtl.abort();
+        if (state.phase === 'downloading') {
+            cleanDir('');
+            state.phase = 'idle';
+            state.percent = 0;
+        }
+        try {
+            ipcMain.removeListener(ACTION_CHANNEL, onAction);
+        } catch (err) {}
+        try {
+            contents.removeListener('did-start-loading', onStartLoading);
+            contents.removeListener('did-finish-load', onFinishLoad);
+            win.removeListener('focus', onFocus);
+        } catch (err) {}
+        if (win.__ankaUpdater && win.__ankaUpdater.owner === destroy) {
+            try {
+                delete win.__ankaUpdater;
+            } catch (err) {}
+        }
+        if (global.__ankaUpdaterInstance && global.__ankaUpdaterInstance.destroy === destroy) {
+            global.__ankaUpdaterInstance = null;
+        }
+    }
+
+    ipcMain.on(ACTION_CHANNEL, onAction);
+    contents.on('did-start-loading', onStartLoading);
+    contents.on('did-finish-load', onFinishLoad);
+    win.on('focus', onFocus);
+    win.once('closed', destroy);
+
+    win.__ankaUpdater = Object.freeze({
+        owner: destroy,
+        check: (manual) => check(!!manual),
+        destroy: destroy
+    });
+    global.__ankaUpdaterInstance = { destroy: destroy };
+
+    firstTimer = setTimeout(() => check(startManual), FIRST_CHECK_DELAY);
+    intervalTimer = setInterval(() => check(false), CHECK_INTERVAL);
+    if (typeof firstTimer.unref === 'function') firstTimer.unref();
+    if (typeof intervalTimer.unref === 'function') intervalTimer.unref();
+
+    paint();
+}
+
+module.exports = { init };
