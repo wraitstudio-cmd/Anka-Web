@@ -10,6 +10,7 @@ const REPO = 'Anka-Web';
 const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO + '/main/latest.yml';
 const MANIFEST_PATH = '/' + OWNER + '/' + REPO + '/main/latest.yml';
 const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
+const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
 const UI_VERSION = 4;
 const FIRST_CHECK_DELAY = 500;
 const CHECK_INTERVAL = 5 * 60 * 1000;
@@ -18,6 +19,7 @@ const REQUEST_TIMEOUT = 8000;
 const DOWNLOAD_IDLE_TIMEOUT = 30000;
 const MAX_REDIRECTS = 5;
 const MAX_MANIFEST_BYTES = 64 * 1024;
+const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES = 600 * 1024 * 1024;
 const POLL_MS = 250;
 const PROGRESS_MS = 100;
@@ -26,6 +28,7 @@ const ACTIONS = new Set(['later', 'close', 'install', 'retry', 'update']);
 const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 const FILE_RE = /^[A-Za-z0-9._-]{1,120}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
+const DIGEST_RE = /^sha256:([A-Fa-f0-9]{64})$/;
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
 
@@ -292,6 +295,12 @@ function downloadAllow(url, redirected) {
     return url.hostname === 'github.com' && url.pathname.startsWith(DOWNLOAD_PATH_PREFIX);
 }
 
+function releaseAllow(version) {
+    return (url, redirected) => !redirected
+        && url.hostname === 'api.github.com'
+        && url.pathname === RELEASE_API_PREFIX + 'v' + version;
+}
+
 function networkError(err) {
     if (err && (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' || err.code === 'EAI_AGAIN')) {
         return new Error('İnternet bağlantısı yok');
@@ -316,7 +325,7 @@ function get(url, options, depth) {
 
         const req = https.get(target, {
             agent: agent,
-            headers: { 'User-Agent': 'AnkaWeb-Updater', 'Cache-Control': 'no-cache', Accept: '*/*' },
+            headers: { 'User-Agent': 'AnkaWeb-Updater', 'Cache-Control': 'no-cache', Accept: options.accept || '*/*' },
             timeout: options.timeout,
             signal: options.signal
         }, (res) => {
@@ -335,6 +344,11 @@ function get(url, options, depth) {
                     return;
                 }
                 resolve(get(next, options, depth + 1));
+                return;
+            }
+            if (code === 403 || code === 429) {
+                res.resume();
+                reject(new Error('GitHub istek sınırı aşıldı, biraz sonra tekrar deneyin'));
                 return;
             }
             if (code !== 200) {
@@ -405,13 +419,39 @@ function pickTarget(manifest, version) {
             && name.toLowerCase().endsWith(ext);
         if (!valid) throw new Error('Manifestteki url_' + kind + ' güvenilir değil');
 
-        const hash = String(manifest['sha256_' + kind] || '').trim().toLowerCase();
-        if (!HASH_RE.test(hash)) throw new Error('Manifestte sha256_' + kind + ' eksik veya geçersiz');
-
-        return { kind: kind, ext: ext, url: url.toString(), hash: hash };
+        return { kind: kind, ext: ext, url: url.toString(), name: name, hash: '' };
     }
 
     throw new Error('Bu platform için indirme adresi yok');
+}
+
+async function fetchDigest(target, version, signal) {
+    const url = 'https://api.github.com' + RELEASE_API_PREFIX + 'v' + version;
+    const res = await get(url, {
+        allow: releaseAllow(version),
+        accept: 'application/vnd.github+json',
+        timeout: REQUEST_TIMEOUT,
+        redirects: false,
+        signal: signal
+    }, 0);
+
+    let release;
+    try {
+        release = JSON.parse((await readLimited(res, MAX_JSON_BYTES)).toString('utf8'));
+    } catch (err) {
+        throw new Error('Sürüm bilgisi okunamadı');
+    }
+
+    const assets = release && Array.isArray(release.assets) ? release.assets : [];
+    const asset = assets.find((item) => item && item.name === target.name && item.browser_download_url === target.url);
+    if (!asset || asset.state !== 'uploaded') throw new Error('Sürüm dosyası GitHub\'da bulunamadı');
+
+    const match = DIGEST_RE.exec(String(asset.digest || ''));
+    if (!match) throw new Error('GitHub dosya özeti (digest) bulunamadı');
+
+    const hash = match[1].toLowerCase();
+    if (!HASH_RE.test(hash)) throw new Error('GitHub dosya özeti geçersiz');
+    return hash;
 }
 
 function updatesDir() {
@@ -641,6 +681,8 @@ function init(win, currentVersion, options) {
                 if (manual) await send({ view: 'info', title: 'Anka Web', message: 'Bu platformda otomatik güncelleme desteklenmiyor' });
                 return;
             }
+
+            target.hash = await fetchDigest(target, version, ctl.signal);
 
             state.phase = 'downloading';
             state.version = version;
