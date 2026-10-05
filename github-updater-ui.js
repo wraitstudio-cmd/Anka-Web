@@ -3,7 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { app, shell, ipcMain } = require('electron');
+const { app, ipcMain } = require('electron');
+
+const fsp = fs.promises;
 
 const OWNER = 'wraitstudio-cmd';
 const REPO = 'Anka-Web';
@@ -11,7 +13,7 @@ const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO +
 const MANIFEST_PATH = '/' + OWNER + '/' + REPO + '/main/latest.yml';
 const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
-const UI_VERSION = 4;
+const UI_VERSION = 5;
 const FIRST_CHECK_DELAY = 500;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
@@ -29,6 +31,11 @@ const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 const FILE_RE = /^[A-Za-z0-9._-]{1,120}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const DIGEST_RE = /^sha256:([A-Fa-f0-9]{64})$/;
+const PLATFORM_TARGETS = {
+    win32: { kind: 'msi', ext: '.msi' },
+    linux: { kind: 'appimage', ext: '.AppImage' }
+};
+const STRIPPED_ENV = ['APPIMAGE', 'APPDIR', 'ARGV0', 'OWD'];
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
 
@@ -242,7 +249,6 @@ const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
     percent: 0,
     file: '',
     hash: '',
-    kind: '',
     snoozed: ''
 });
 
@@ -382,47 +388,35 @@ function readLimited(res, max) {
 }
 
 function pickTarget(manifest, version) {
-    let order;
-    if (process.platform === 'win32') {
-        order = [['msi', '.msi'], ['exe', '.exe']];
-    } else if (process.platform === 'linux') {
-        if (process.arch !== 'x64') throw new Error('Bu işlemci mimarisi için paket yok');
-        order = [['deb', '.deb']];
-    } else {
-        return null;
+    const spec = PLATFORM_TARGETS[process.platform];
+    if (!spec) return null;
+    if (process.platform === 'linux' && process.arch !== 'x64') throw new Error('Bu işlemci mimarisi için paket yok');
+
+    const raw = manifest['url_' + spec.kind];
+    if (!raw) throw new Error('Bu platform için indirme adresi yok');
+
+    let url;
+    try {
+        url = new URL(raw);
+    } catch (err) {
+        throw new Error('Manifestteki url_' + spec.kind + ' geçersiz');
     }
 
-    for (const entry of order) {
-        const kind = entry[0];
-        const ext = entry[1];
-        const raw = manifest['url_' + kind];
-        if (!raw) continue;
+    const expectedPrefix = DOWNLOAD_PATH_PREFIX + 'v' + version + '/';
+    const name = url.pathname.slice(expectedPrefix.length);
+    const valid = url.protocol === 'https:'
+        && url.hostname === 'github.com'
+        && !url.username
+        && !url.password
+        && !url.port
+        && !url.search
+        && !url.hash
+        && url.pathname.startsWith(expectedPrefix)
+        && FILE_RE.test(name)
+        && name.toLowerCase().endsWith(spec.ext.toLowerCase());
+    if (!valid) throw new Error('Manifestteki url_' + spec.kind + ' güvenilir değil');
 
-        let url;
-        try {
-            url = new URL(raw);
-        } catch (err) {
-            throw new Error('Manifestteki url_' + kind + ' geçersiz');
-        }
-
-        const expectedPrefix = DOWNLOAD_PATH_PREFIX + 'v' + version + '/';
-        const name = url.pathname.slice(expectedPrefix.length);
-        const valid = url.protocol === 'https:'
-            && url.hostname === 'github.com'
-            && !url.username
-            && !url.password
-            && !url.port
-            && !url.search
-            && !url.hash
-            && url.pathname.startsWith(expectedPrefix)
-            && FILE_RE.test(name)
-            && name.toLowerCase().endsWith(ext);
-        if (!valid) throw new Error('Manifestteki url_' + kind + ' güvenilir değil');
-
-        return { kind: kind, ext: ext, url: url.toString(), name: name, hash: '' };
-    }
-
-    throw new Error('Bu platform için indirme adresi yok');
+    return { kind: spec.kind, ext: spec.ext, url: url.toString(), name: name, hash: '' };
 }
 
 async function fetchDigest(target, version, signal) {
@@ -486,7 +480,6 @@ function resetState() {
     state.percent = 0;
     state.file = '';
     state.hash = '';
-    state.kind = '';
 }
 
 function sameHash(a, b) {
@@ -498,30 +491,38 @@ function sameHash(a, b) {
 function hashFile(file) {
     return new Promise((resolve, reject) => {
         const hash = crypto.createHash('sha256');
-        const stream = fs.createReadStream(file);
+        const stream = fs.createReadStream(file, { highWaterMark: 1024 * 1024 });
         stream.on('data', (chunk) => hash.update(chunk));
         stream.on('error', reject);
         stream.on('end', () => resolve(hash.digest('hex')));
     });
 }
 
-async function download(target, version, signal, onProgress) {
+function cleanEnv() {
+    const env = Object.assign({}, process.env);
+    STRIPPED_ENV.forEach((key) => {
+        delete env[key];
+    });
+    return env;
+}
+
+async function download(target, version, signal, onProgress, expectedHash) {
     const dir = prepareDir();
     cleanDir('');
     const finalPath = path.join(dir, 'anka-web-' + version + target.ext);
     const partPath = path.join(dir, crypto.randomBytes(8).toString('hex') + '.part');
 
-    const res = await get(target.url, { allow: downloadAllow, timeout: DOWNLOAD_IDLE_TIMEOUT, redirects: true, signal: signal }, 0);
-    const total = Number(res.headers['content-length']) || 0;
-    if (total > MAX_DOWNLOAD_BYTES) {
-        res.destroy();
-        throw new Error('Dosya çok büyük');
-    }
-
-    const hash = crypto.createHash('sha256');
-    const out = fs.createWriteStream(partPath, { flags: 'wx', mode: 0o600 });
-
     try {
+        const res = await get(target.url, { allow: downloadAllow, timeout: DOWNLOAD_IDLE_TIMEOUT, redirects: true, signal: signal }, 0);
+        const total = Number(res.headers['content-length']) || 0;
+        if (total > MAX_DOWNLOAD_BYTES) {
+            res.destroy();
+            throw new Error('Dosya çok büyük');
+        }
+
+        const hash = crypto.createHash('sha256');
+        const out = fs.createWriteStream(partPath, { flags: 'wx', mode: 0o600 });
+
         await new Promise((resolve, reject) => {
             let received = 0;
             let last = 0;
@@ -572,7 +573,8 @@ async function download(target, version, signal, onProgress) {
             });
         });
 
-        if (!sameHash(hash.digest('hex'), target.hash)) throw new Error('Dosya doğrulaması başarısız');
+        const expected = await expectedHash;
+        if (!sameHash(hash.digest('hex'), expected)) throw new Error('Dosya doğrulaması başarısız');
         fs.renameSync(partPath, finalPath);
         return finalPath;
     } catch (err) {
@@ -581,6 +583,50 @@ async function download(target, version, signal, onProgress) {
         } catch (cleanupErr) {}
         throw err;
     }
+}
+
+async function placeFile(source, destination) {
+    const temp = destination + '.' + crypto.randomBytes(6).toString('hex') + '.new';
+    try {
+        await fsp.copyFile(source, temp, fs.constants.COPYFILE_EXCL);
+        await fsp.chmod(temp, 0o755);
+        await fsp.rename(temp, destination);
+    } catch (err) {
+        try {
+            await fsp.rm(temp, { force: true });
+        } catch (cleanupErr) {}
+        throw err;
+    }
+}
+
+async function placeAppImage(source, version) {
+    const current = process.env.APPIMAGE;
+    if (current && path.isAbsolute(current)) {
+        try {
+            await placeFile(source, current);
+            return current;
+        } catch (err) {}
+    }
+    const fallback = path.join(app.getPath('downloads'), 'Anka_Web_' + version + '.AppImage');
+    await placeFile(source, fallback);
+    return fallback;
+}
+
+function launchDetached(command, args, cwd) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, { detached: true, stdio: 'ignore', shell: false, cwd: cwd, env: cleanEnv() });
+        child.once('error', reject);
+        child.once('spawn', () => {
+            child.unref();
+            resolve();
+        });
+    });
+}
+
+function quitSoon() {
+    setTimeout(() => app.quit(), 300);
+    const force = setTimeout(() => app.exit(0), 5000);
+    if (typeof force.unref === 'function') force.unref();
 }
 
 function init(win, currentVersion, options) {
@@ -656,6 +702,9 @@ function init(win, currentVersion, options) {
         lastCheck = Date.now();
         if (manual) state.snoozed = '';
         const ctl = new AbortController();
+        const downloadCtl = new AbortController();
+        const forwardAbort = () => downloadCtl.abort();
+        ctl.signal.addEventListener('abort', forwardAbort, { once: true });
         abortCtl = ctl;
 
         try {
@@ -682,25 +731,30 @@ function init(win, currentVersion, options) {
                 return;
             }
 
-            target.hash = await fetchDigest(target, version, ctl.signal);
-
             state.phase = 'downloading';
             state.version = version;
             state.percent = 0;
             state.file = '';
             state.hash = '';
-            state.kind = target.kind;
             paint();
 
-            const file = await download(target, version, ctl.signal, (percent) => {
-                state.percent = percent;
-                paint();
+            const digestPromise = fetchDigest(target, version, downloadCtl.signal).catch((err) => {
+                downloadCtl.abort();
+                throw err;
             });
 
+            const downloadPromise = download(target, version, downloadCtl.signal, (percent) => {
+                state.percent = percent;
+                paint();
+            }, digestPromise);
+
+            const results = await Promise.allSettled([digestPromise, downloadPromise]);
+            if (results[0].status === 'rejected') throw results[0].reason;
+            if (results[1].status === 'rejected') throw results[1].reason;
+
             if (destroyed) return;
-            state.file = file;
-            state.hash = target.hash;
-            state.kind = target.kind;
+            state.file = results[1].value;
+            state.hash = results[0].value;
             state.percent = 100;
             state.phase = 'ready';
             state.snoozed = '';
@@ -715,6 +769,7 @@ function init(win, currentVersion, options) {
             }
             if (visible) await send({ view: 'error', message: err && err.message ? err.message : 'Bilinmeyen hata' });
         } finally {
+            ctl.signal.removeEventListener('abort', forwardAbort);
             busy = false;
             if (abortCtl === ctl) abortCtl = null;
         }
@@ -738,26 +793,14 @@ function init(win, currentVersion, options) {
             }
 
             if (process.platform === 'win32') {
-                let child;
-                if (state.kind === 'msi') {
-                    const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
-                    const msiexec = path.join(root, 'System32', 'msiexec.exe');
-                    child = spawn(msiexec, ['/i', file, '/passive', '/norestart'], { detached: true, stdio: 'ignore', shell: false });
-                } else {
-                    child = spawn(file, [], { detached: true, stdio: 'ignore', shell: false });
-                }
-                await new Promise((resolve, reject) => {
-                    child.once('error', reject);
-                    child.once('spawn', resolve);
-                });
-                child.unref();
-                setTimeout(() => app.quit(), 300);
-                const force = setTimeout(() => app.exit(0), 5000);
-                if (typeof force.unref === 'function') force.unref();
+                const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+                const msiexec = path.join(root, 'System32', 'msiexec.exe');
+                await launchDetached(msiexec, ['/i', file, '/passive', '/norestart'], path.dirname(file));
+                quitSoon();
             } else if (process.platform === 'linux') {
-                const failure = await shell.openPath(file);
-                if (failure) throw new Error('Kurulum paketi açılamadı');
-                await send({ view: 'info', title: 'Anka Web', message: 'Kurulum penceresi açıldı' });
+                const destination = await placeAppImage(file, state.version);
+                await launchDetached(destination, [], path.dirname(destination));
+                quitSoon();
             } else {
                 throw new Error('Bu platformda kurulum desteklenmiyor');
             }
