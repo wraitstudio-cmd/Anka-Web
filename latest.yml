@@ -1,8 +1,7 @@
-version: 1.4.9
-url_win: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.4.9/Anka_Web_1.4.9.exe
-url_exe: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.4.9/Anka_Web_1.4.9.exe
-url_msi: 
-url_linux: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.4.9/anka-web_1.4.9_amd64.deb
-url_deb: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.4.9/anka-web_1.4.9_amd64.deb
-url_rpm:
-url_targz:
+version: 1.5.0
+url_exe: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.0/Anka_Web_1.5.0.exe
+url_msi: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.0/Anka.Web.1.5.0.msi
+url_deb: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.0/Anka_Web_1.5.0_amd64.deb
+url_rpm: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.0/Anka_Web_1.5.0_x86_64.rpm
+url_appimage: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.0/Anka_Web_1.5.0_x86_64.AppImage
+url_targz: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.0/Anka_Web_1.5.0_x64.tar.gz
