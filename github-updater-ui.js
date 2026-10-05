@@ -5,8 +5,6 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { app, ipcMain } = require('electron');
 
-const fsp = fs.promises;
-
 const OWNER = 'wraitstudio-cmd';
 const REPO = 'Anka-Web';
 const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO + '/main/latest.yml';
@@ -23,6 +21,7 @@ const MAX_REDIRECTS = 5;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES = 600 * 1024 * 1024;
+const MAX_OUTPUT_BYTES = 256 * 1024;
 const POLL_MS = 250;
 const PROGRESS_MS = 100;
 const ACTION_CHANNEL = 'anka-updater:action';
@@ -31,11 +30,19 @@ const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 const FILE_RE = /^[A-Za-z0-9._-]{1,120}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const DIGEST_RE = /^sha256:([A-Fa-f0-9]{64})$/;
+const PKG_RE = /^[a-z0-9][a-z0-9+.-]{0,100}$/;
+const SKIP_BIN_RE = /(chrome-sandbox|chrome_crashpad_handler|\.so(\.|$)|\.sh$|\.pak$|\.bin$|\.dat$|\.json$)/i;
 const PLATFORM_TARGETS = {
     win32: { kind: 'msi', ext: '.msi' },
-    linux: { kind: 'appimage', ext: '.AppImage' }
+    linux: { kind: 'deb', ext: '.deb' }
 };
 const STRIPPED_ENV = ['APPIMAGE', 'APPDIR', 'ARGV0', 'OWD'];
+const PKEXEC = '/usr/bin/pkexec';
+const APT_GET = '/usr/bin/apt-get';
+const DPKG = '/usr/bin/dpkg';
+const DPKG_DEB = '/usr/bin/dpkg-deb';
+const ENV_BIN = '/usr/bin/env';
+const SH_BIN = '/bin/sh';
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
 
@@ -224,7 +231,7 @@ function bootUi(version) {
             track.hidden = true;
             setButtons([]);
             animate('swap');
-            hideTimer = setTimeout(dismiss, 6000);
+            if (!state.sticky) hideTimer = setTimeout(dismiss, 6000);
         }
 
         show();
@@ -491,7 +498,7 @@ function sameHash(a, b) {
 function hashFile(file) {
     return new Promise((resolve, reject) => {
         const hash = crypto.createHash('sha256');
-        const stream = fs.createReadStream(file, { highWaterMark: 1024 * 1024 });
+        const stream = fs.createReadStream(file, { highWaterMark: 4 * 1024 * 1024 });
         stream.on('data', (chunk) => hash.update(chunk));
         stream.on('error', reject);
         stream.on('end', () => resolve(hash.digest('hex')));
@@ -521,7 +528,7 @@ async function download(target, version, signal, onProgress, expectedHash) {
         }
 
         const hash = crypto.createHash('sha256');
-        const out = fs.createWriteStream(partPath, { flags: 'wx', mode: 0o600 });
+        const out = fs.createWriteStream(partPath, { flags: 'wx', mode: 0o600, highWaterMark: 1024 * 1024 });
 
         await new Promise((resolve, reject) => {
             let received = 0;
@@ -585,31 +592,20 @@ async function download(target, version, signal, onProgress, expectedHash) {
     }
 }
 
-async function placeFile(source, destination) {
-    const temp = destination + '.' + crypto.randomBytes(6).toString('hex') + '.new';
-    try {
-        await fsp.copyFile(source, temp, fs.constants.COPYFILE_EXCL);
-        await fsp.chmod(temp, 0o755);
-        await fsp.rename(temp, destination);
-    } catch (err) {
-        try {
-            await fsp.rm(temp, { force: true });
-        } catch (cleanupErr) {}
-        throw err;
-    }
-}
-
-async function placeAppImage(source, version) {
-    const current = process.env.APPIMAGE;
-    if (current && path.isAbsolute(current)) {
-        try {
-            await placeFile(source, current);
-            return current;
-        } catch (err) {}
-    }
-    const fallback = path.join(app.getPath('downloads'), 'Anka_Web_' + version + '.AppImage');
-    await placeFile(source, fallback);
-    return fallback;
+function runProcess(command, args) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: cleanEnv() });
+        let out = '';
+        let err = '';
+        child.stdout.on('data', (chunk) => {
+            if (out.length < MAX_OUTPUT_BYTES) out += chunk;
+        });
+        child.stderr.on('data', (chunk) => {
+            if (err.length < MAX_OUTPUT_BYTES) err += chunk;
+        });
+        child.once('error', reject);
+        child.once('close', (code) => resolve({ code: code, out: out, err: err }));
+    });
 }
 
 function launchDetached(command, args, cwd) {
@@ -621,6 +617,60 @@ function launchDetached(command, args, cwd) {
             resolve();
         });
     });
+}
+
+function isLaunchable(file) {
+    if (SKIP_BIN_RE.test(path.basename(file))) return false;
+    const inBin = path.dirname(file) === '/usr/bin';
+    const inOpt = path.dirname(path.dirname(file)) === '/opt';
+    if (!inBin && !inOpt) return false;
+    try {
+        const stat = fs.statSync(file);
+        return stat.isFile() && (stat.mode & 0o111) !== 0 && (stat.mode & 0o6000) === 0;
+    } catch (err) {
+        return false;
+    }
+}
+
+async function installDeb(file) {
+    if (!fs.existsSync(DPKG) || !fs.existsSync(DPKG_DEB)) throw new Error('Bu sistem .deb paketlerini desteklemiyor');
+    if (!fs.existsSync(PKEXEC)) throw new Error('pkexec bulunamadı, polkit kurulu olmalı');
+
+    const info = await runProcess(DPKG_DEB, ['-f', file, 'Package']);
+    const name = info.out.trim();
+    if (info.code !== 0 || !PKG_RE.test(name)) throw new Error('Geçersiz .deb paketi');
+
+    const installer = fs.existsSync(APT_GET)
+        ? [APT_GET, 'install', '-y', '--allow-downgrades', file]
+        : [DPKG, '-i', file];
+
+    const result = await runProcess(PKEXEC, [ENV_BIN, 'DEBIAN_FRONTEND=noninteractive'].concat(installer));
+    if (result.code === 126 || result.code === 127) throw new Error('Yetkilendirme iptal edildi');
+    if (result.code !== 0) throw new Error('Kurulum başarısız (kod ' + result.code + ')');
+
+    return name;
+}
+
+async function findInstalledBinary(name) {
+    const listed = await runProcess(DPKG, ['-L', name]);
+    if (listed.code !== 0) return null;
+
+    const files = listed.out.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('/'));
+    if (files.includes(process.execPath) && isLaunchable(process.execPath)) return process.execPath;
+
+    const candidates = files.filter(isLaunchable).sort((a, b) => {
+        const x = path.dirname(a) === '/usr/bin' ? 0 : 1;
+        const y = path.dirname(b) === '/usr/bin' ? 0 : 1;
+        return x - y;
+    });
+    return candidates[0] || null;
+}
+
+async function installAndRelaunchLinux(file) {
+    const name = await installDeb(file);
+    const binary = await findInstalledBinary(name);
+    if (!binary) throw new Error('Kurulum tamamlandı ancak uygulama başlatılamadı, elle açın');
+    await launchDetached(SH_BIN, ['-c', 'sleep 2; exec "$0"', binary], path.dirname(binary));
 }
 
 function quitSoon() {
@@ -798,8 +848,8 @@ function init(win, currentVersion, options) {
                 await launchDetached(msiexec, ['/i', file, '/passive', '/norestart'], path.dirname(file));
                 quitSoon();
             } else if (process.platform === 'linux') {
-                const destination = await placeAppImage(file, state.version);
-                await launchDetached(destination, [], path.dirname(destination));
+                await send({ view: 'info', title: 'Anka Web', message: 'Güncelleme kuruluyor, lütfen bekleyin…', sticky: true });
+                await installAndRelaunchLinux(file);
                 quitSoon();
             } else {
                 throw new Error('Bu platformda kurulum desteklenmiyor');
