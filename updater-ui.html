@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file:; style-src 'unsafe-inline'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anka Web Güncelleme</title>
+<style>
+:root {
+    color-scheme: dark;
+    --bg: #0b0b0f;
+    --panel: #141419;
+    --border: #26262e;
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --accent: #ff4757;
+    --accent-2: #ff7a45;
+    --ok: #22c55e;
+    --err: #ef4444;
+    --warn: #f59e0b;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; user-select: none; -webkit-user-select: none; -webkit-app-region: drag; }
+body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(520px 260px at 50% -40px, rgba(255, 71, 87, .22), transparent 70%), radial-gradient(360px 220px at 100% 110%, rgba(255, 122, 69, .12), transparent 70%); pointer-events: none; }
+.shell { position: relative; height: 100%; display: flex; flex-direction: column; padding: 26px 28px 24px; animation: enter .6s cubic-bezier(.16, 1, .3, 1) both; }
+.head { display: flex; align-items: center; gap: 16px; }
+.badge { position: relative; flex: 0 0 52px; width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 10px 28px rgba(255, 71, 87, .35); transition: background .3s ease, box-shadow .3s ease; }
+.badge::after { content: ''; position: absolute; inset: 0; border-radius: 16px; border: 2px solid var(--accent); opacity: 0; animation: ring 1.9s ease-out infinite; }
+.badge svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.badge .glyph { display: none; }
+.badge .glyph.on { display: block; }
+.badge .glyph.spin.on { animation: bob 1.1s ease-in-out infinite; }
+.badge .glyph.pop.on { animation: pop .5s cubic-bezier(.34, 1.56, .64, 1) both; }
+.shell[data-mode="done"] .badge { background: linear-gradient(135deg, #16a34a, var(--ok)); box-shadow: 0 10px 28px rgba(34, 197, 94, .3); }
+.shell[data-mode="done"] .badge::after { border-color: var(--ok); animation: none; }
+.shell[data-mode="failed"] .badge { background: linear-gradient(135deg, #dc2626, var(--err)); box-shadow: 0 10px 28px rgba(239, 68, 68, .3); }
+.shell[data-mode="failed"] .badge::after { border-color: var(--err); animation: none; }
+.titles { min-width: 0; }
+.title { font-size: 19px; font-weight: 750; letter-spacing: -.01em; }
+.sub { margin-top: 2px; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.steps { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
+.step { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 600; transition: color .3s ease; }
+.step i { width: 9px; height: 9px; border-radius: 50%; background: var(--border); box-shadow: 0 0 0 3px transparent; transition: background .3s ease, box-shadow .3s ease; }
+.step.active { color: var(--text); }
+.step.active i { background: var(--accent); box-shadow: 0 0 0 4px rgba(255, 71, 87, .22); animation: blink 1.4s ease-in-out infinite; }
+.step.done { color: var(--text); }
+.step.done i { background: var(--ok); }
+.shell[data-mode="failed"] .step.active i { background: var(--err); box-shadow: 0 0 0 4px rgba(239, 68, 68, .22); animation: none; }
+.line { flex: 1; height: 1px; min-width: 14px; background: var(--border); }
+.spacer { flex: 1; }
+.note { min-height: 20px; color: var(--muted); font-size: 12.5px; transition: color .3s ease; }
+.note.warn { color: var(--warn); }
+.note.bad { color: var(--err); }
+.meter { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; font-size: 13px; font-weight: 600; }
+.meter .percent { font-variant-numeric: tabular-nums; color: var(--muted); }
+.track { height: 8px; border-radius: 4px; background: #1d1d24; overflow: hidden; }
+.bar { height: 100%; width: 100%; border-radius: 4px; transform-origin: left; transform: scaleX(.02); transition: transform .5s cubic-bezier(.22, 1, .36, 1); background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent)); background-size: 200% 100%; animation: shimmer 1.3s linear infinite; }
+.shell[data-mode="done"] .bar { background: var(--ok); animation: none; }
+.shell[data-mode="failed"] .bar { background: var(--err); animation: none; }
+.foot { display: flex; justify-content: flex-end; margin-top: 14px; min-height: 36px; }
+.btn { -webkit-app-region: no-drag; min-width: 110px; height: 36px; padding: 0 18px; border-radius: 9px; border: 1px solid var(--border); background: var(--panel); color: var(--text); font: inherit; font-weight: 650; cursor: pointer; transition: background-color .15s ease, transform .1s ease; }
+.btn:hover { background: #1d1d24; }
+.btn:active { transform: scale(.96); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+@keyframes enter { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes ring { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(1.5); opacity: 0; } }
+@keyframes bob { 0%, 100% { transform: translateY(-2px); } 50% { transform: translateY(2px); } }
+@keyframes pop { from { transform: scale(.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@keyframes shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+    .shell, .badge::after, .badge .glyph, .step i, .bar { animation: none !important; }
+    .bar { transition: none; }
+}
+</style>
+</head>
+<body>
+<main class="shell" data-mode="preparing" role="status" aria-live="polite">
+    <section class="head">
+        <div class="badge" aria-hidden="true">
+            <svg class="glyph spin on" id="g-busy" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>
+            <svg class="glyph pop" id="g-done" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+            <svg class="glyph pop" id="g-fail" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/></svg>
+        </div>
+        <div class="titles">
+            <h1 class="title" id="title">Arka Planda Güncelleniyor</h1>
+            <p class="sub" id="sub">Anka Web güncellemesi hazırlanıyor</p>
+        </div>
+    </section>
+
+    <section class="steps" aria-hidden="true">
+        <div class="step active" id="s0"><i></i><span>Hazırlık</span></div>
+        <div class="line"></div>
+        <div class="step" id="s1"><i></i><span>Kurulum</span></div>
+        <div class="line"></div>
+        <div class="step" id="s2"><i></i><span>Tamamlandı</span></div>
+    </section>
+
+    <div class="spacer"></div>
+
+    <p class="note" id="note">Lütfen bekleyin, işlem arka planda sürüyor.</p>
+    <section>
+        <div class="meter"><span id="label">Hazırlanıyor…</span><span class="percent" id="percent">%0</span></div>
+        <div class="track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="track"><div class="bar" id="bar"></div></div>
+    </section>
+    <footer class="foot"><button type="button" class="btn" id="close" hidden>Kapat</button></footer>
+</main>
+<script>
+(function () {
+    'use strict';
+
+    var POLL_MS = 400;
+    var TICK_MS = 250;
+    var WARN_MS = 120000;
+    var CLOSE_DELAY_MS = 3200;
+
+    var shell = document.querySelector('.shell');
+    var title = document.getElementById('title');
+    var sub = document.getElementById('sub');
+    var note = document.getElementById('note');
+    var label = document.getElementById('label');
+    var percent = document.getElementById('percent');
+    var track = document.getElementById('track');
+    var bar = document.getElementById('bar');
+    var closeBtn = document.getElementById('close');
+    var glyphs = { busy: document.getElementById('g-busy'), done: document.getElementById('g-done'), fail: document.getElementById('g-fail') };
+    var steps = [document.getElementById('s0'), document.getElementById('s1'), document.getElementById('s2')];
+
+    var current = { phase: 'preparing', version: '', message: '', startedAt: Date.now() };
+    var closeTimer = 0;
+    var polling = false;
+    var lastMode = '';
+    var lastShown = -1;
+
+    function setGlyph(name) {
+        Object.keys(glyphs).forEach(function (key) {
+            glyphs[key].classList.toggle('on', key === name);
+        });
+    }
+
+    function setSteps(index, failed) {
+        steps.forEach(function (node, i) {
+            node.classList.remove('active', 'done');
+            if (i < index) node.classList.add('done');
+            else if (i === index) node.classList.add(index === 2 && !failed ? 'done' : 'active');
+        });
+    }
+
+    function setProgress(value) {
+        var clamped = Math.max(0, Math.min(100, value));
+        var rounded = Math.round(clamped);
+        if (rounded === lastShown) return;
+        lastShown = rounded;
+        bar.style.transform = 'scaleX(' + Math.max(0.02, clamped / 100) + ')';
+        percent.textContent = '%' + rounded;
+        track.setAttribute('aria-valuenow', String(rounded));
+    }
+
+    function scheduleClose() {
+        if (closeTimer) return;
+        closeTimer = setTimeout(function () {
+            try { window.close(); } catch (err) {}
+        }, CLOSE_DELAY_MS);
+    }
+
+    function setMode(mode) {
+        if (mode === lastMode) return;
+        lastMode = mode;
+        shell.setAttribute('data-mode', mode);
+    }
+
+    function render() {
+        var s = current;
+        var version = typeof s.version === 'string' ? s.version : '';
+        var elapsed = Math.max(0, Date.now() - (Number(s.startedAt) || Date.now()));
+        var tag = version ? 'Anka Web v' + version : 'Anka Web';
+
+        if (s.phase === 'done') {
+            setMode('done');
+            setGlyph('done');
+            setSteps(2, false);
+            title.textContent = 'Güncelleme tamamlandı';
+            sub.textContent = tag + ' hazır';
+            note.textContent = 'Uygulama yeni sürümle açılıyor.';
+            note.className = 'note';
+            label.textContent = 'Tamamlandı';
+            setProgress(100);
+            closeBtn.hidden = false;
+            scheduleClose();
+            return;
+        }
+
+        if (s.phase === 'failed') {
+            setMode('failed');
+            setGlyph('fail');
+            setSteps(1, true);
+            title.textContent = 'Güncelleme tamamlanamadı';
+            sub.textContent = tag;
+            note.textContent = typeof s.message === 'string' && s.message ? s.message : 'Kurulum başarısız oldu. Anka Web\'i elle açıp tekrar deneyin.';
+            note.className = 'note bad';
+            label.textContent = 'Hata';
+            closeBtn.hidden = false;
+            return;
+        }
+
+        setMode('working');
+        setGlyph('busy');
+        title.textContent = 'Arka Planda Güncelleniyor';
+        sub.textContent = tag + ' kuruluyor';
+        closeBtn.hidden = true;
+
+        if (s.phase === 'preparing') {
+            setSteps(0, false);
+            label.textContent = 'Hazırlanıyor…';
+            note.textContent = 'Lütfen bekleyin, işlem arka planda sürüyor.';
+            note.className = 'note';
+            setProgress(8);
+            return;
+        }
+
+        setSteps(1, false);
+        var target = 12 + 80 * (1 - Math.exp(-elapsed / 30000));
+
+        if (s.phase === 'authorizing') {
+            label.textContent = 'Yönetici izni bekleniyor…';
+            note.textContent = typeof s.message === 'string' && s.message ? s.message : 'Açılan izin penceresini onaylayın.';
+            note.className = 'note';
+            setProgress(Math.min(target, 20));
+            return;
+        }
+
+        label.textContent = 'Kuruluyor…';
+        if (elapsed > WARN_MS) {
+            note.textContent = 'Kurulum beklenenden uzun sürüyor. Anka Web kendiliğinden açılmazsa elle başlatın.';
+            note.className = 'note warn';
+            closeBtn.hidden = false;
+        } else {
+            note.textContent = typeof s.message === 'string' && s.message ? s.message : 'Yeni sürüm kuruluyor, pencereyi kapatmanıza gerek yok.';
+            note.className = 'note';
+        }
+        setProgress(target);
+    }
+
+    function apply(next) {
+        if (!next || typeof next !== 'object' || typeof next.phase !== 'string') return;
+        current = next;
+        render();
+    }
+
+    function poll() {
+        if (polling) return;
+        polling = true;
+        var script = document.createElement('script');
+        script.async = true;
+        script.src = 'status.js?t=' + Date.now();
+        var finish = function () {
+            polling = false;
+            if (script.parentNode) script.parentNode.removeChild(script);
+        };
+        script.onload = function () {
+            try { apply(window.__ankaStatus); } catch (err) {}
+            finish();
+        };
+        script.onerror = finish;
+        document.head.appendChild(script);
+    }
+
+    closeBtn.addEventListener('click', function () {
+        try { window.close(); } catch (err) {}
+    });
+
+    render();
+    setInterval(poll, POLL_MS);
+    setInterval(render, TICK_MS);
+    poll();
+})();
+</script>
+</body>
+</html>
