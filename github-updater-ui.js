@@ -1,9 +1,10 @@
 const https = require('https');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { app, ipcMain, BrowserWindow, session } = require('electron');
+const { app, ipcMain } = require('electron');
 
 const OWNER = 'wraitstudio-cmd';
 const REPO = 'Anka-Web';
@@ -11,11 +12,11 @@ const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO +
 const MANIFEST_PATH = '/' + OWNER + '/' + REPO + '/main/latest.yml';
 const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
-const UI_VERSION = 7;
+const UI_VERSION = 8;
 const FIRST_CHECK_DELAY = 500;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
-const AUTO_INSTALL_DELAY = 2000;
+const AUTO_INSTALL_DELAY = 1500;
 const REQUEST_TIMEOUT = 8000;
 const DOWNLOAD_IDLE_TIMEOUT = 30000;
 const DOWNLOAD_ATTEMPTS = 3;
@@ -29,33 +30,32 @@ const MARKER_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const NOTES_MAX = 600;
 const POLL_MS = 250;
 const PROGRESS_MS = 100;
-const PANEL_WIDTH = 480;
-const PANEL_HEIGHT = 236;
-const PANEL_TITLE = 'Anka Web Güncelleme Yöneticisi';
-const PANEL_PARTITION = 'anka-updater-panel';
 const MARKER_FILE = 'anka-last-update.json';
-const HELPER_FILE = 'anka-update-manager.ps1';
 const ACTION_CHANNEL = 'anka-updater:action';
 const ACTIONS = new Set(['later', 'close', 'install', 'retry', 'update']);
 const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 const FILE_RE = /^[A-Za-z0-9._-]{1,120}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const DIGEST_RE = /^sha256:([A-Fa-f0-9]{64})$/;
-const PKG_RE = /^[a-z0-9][a-z0-9+.-]{0,100}$/;
+const PKG_RE = /^[a-z0-9][a-z0-9+._-]{0,100}$/i;
 const SKIP_BIN_RE = /(chrome-sandbox|chrome_crashpad_handler|\.so(\.|$)|\.sh$|\.pak$|\.bin$|\.dat$|\.json$)/i;
 const TRANSIENT_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET', 'EPIPE']);
-const PLATFORM_TARGETS = {
-    win32: { kind: 'exe', ext: '.exe' },
-    linux: { kind: 'deb', ext: '.deb' }
+const EXTENSIONS = { exe: '.exe', msi: '.msi', deb: '.deb', rpm: '.rpm', appimage: '.AppImage', targz: '.tar.gz' };
+const MAGIC = {
+    exe: [0x4d, 0x5a],
+    msi: [0xd0, 0xcf, 0x11, 0xe0],
+    deb: [0x21, 0x3c, 0x61, 0x72, 0x63, 0x68, 0x3e],
+    rpm: [0xed, 0xab, 0xee, 0xdb],
+    appimage: [0x7f, 0x45, 0x4c, 0x46],
+    targz: [0x1f, 0x8b]
 };
+const DEB_IDS = new Set(['debian', 'ubuntu', 'linuxmint', 'pop', 'elementary', 'kali', 'raspbian', 'zorin', 'mx', 'devuan', 'neon', 'tuxedo', 'deepin', 'parrot', 'pureos', 'lmde']);
+const RPM_IDS = new Set(['rhel', 'fedora', 'centos', 'rocky', 'almalinux', 'ol', 'suse', 'opensuse', 'opensuse-leap', 'opensuse-tumbleweed', 'sles', 'sled', 'mageia', 'openmandriva', 'pclinuxos', 'rosa', 'altlinux', 'alt', 'amzn', 'nobara', 'eurolinux', 'cloudlinux', 'scientific', 'redos', 'openeuler', 'euleros', 'tizen', 'qubes', 'berry', 'vine', 'turbolinux', 'asianux', 'clearos', 'geckolinux']);
 const STRIPPED_ENV = ['APPIMAGE', 'APPDIR', 'ARGV0', 'OWD'];
-const PKEXEC = '/usr/bin/pkexec';
-const APT_GET = '/usr/bin/apt-get';
-const DPKG = '/usr/bin/dpkg';
-const DPKG_DEB = '/usr/bin/dpkg-deb';
-const ENV_BIN = '/usr/bin/env';
+const BIN_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/local/bin'];
 const SH_BIN = '/bin/sh';
 const LINUX_RELAUNCH = 'n=0; while kill -0 "$1" 2>/dev/null && [ "$n" -lt 100 ]; do n=$((n+1)); sleep 0.3; done; sleep 1; exec "$0"';
+const WIN_PS_RUNAS = "Start-Process -FilePath $env:ANKA_UPDATE_FILE -ArgumentList '--updated','--force-run' -Verb RunAs";
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
 
@@ -223,7 +223,7 @@ function bootUi(version) {
                 animate('swap');
             }
             text.textContent = state.ready
-                ? 'Kurulum otomatik başlayacak, uygulama kurulumdan sonra yeniden açılacak.'
+                ? 'Kurulum penceresi birazdan açılacak, uygulama kapanıp kurulumdan sonra yeniden açılacak.'
                 : 'İndiriliyor… %' + percent + (state.detail ? ' · ' + state.detail : '');
             bar.style.transform = 'scaleX(' + percent / 100 + ')';
         } else if (state.view === 'error') {
@@ -261,360 +261,7 @@ function bootUi(version) {
     return true;
 }
 
-function paintPanel(s) {
-    const byId = (id) => document.getElementById(id);
-    const icons = {
-        install: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.55"/></svg>',
-        done: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
-        err: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/></svg>'
-    };
-    const phase = icons[s.phase] ? s.phase : 'install';
-    const percent = Math.max(0, Math.min(100, Number(s.percent) || 0));
-    const step = Number(s.step) || 0;
-    const steps = document.querySelectorAll('.step');
-
-    document.body.className = phase;
-    byId('badge').className = 'badge ' + phase;
-    byId('icon').innerHTML = icons[phase];
-    byId('title').textContent = s.title || '';
-    byId('sub').textContent = s.sub || '';
-    byId('ver').textContent = s.version ? 'v' + s.version : '';
-    byId('ver').hidden = !s.version;
-    byId('pct').textContent = '%' + Math.round(percent);
-    byId('fill').style.transform = 'scaleX(' + percent / 100 + ')';
-
-    for (let i = 0; i < steps.length; i += 1) {
-        steps[i].className = 'step' + (i + 1 < step ? ' ok' : i + 1 === step ? ' on' : '');
-    }
-    return true;
-}
-
 const BOOT_SOURCE = bootUi.toString();
-const PANEL_SCRIPT = paintPanel.toString();
-
-const PANEL_HTML = `<!doctype html>
-<html lang="tr">
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
-<title>Anka Web Güncelleme Yöneticisi</title>
-<style>
-:root { color-scheme: dark; --bg: #0b0b0e; --border: #26262c; --text: #f4f4f5; --muted: #9a9aa3; --accent: #ff4757; --accent-2: #ff7a45; --ok: #22c55e; --err: #ef4444; }
-* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; cursor: default; }
-html, body { height: 100%; overflow: hidden; }
-body { position: relative; background: linear-gradient(160deg, #15151b 0%, var(--bg) 60%); border: 1px solid var(--border); color: var(--text); font: 13px/1.5 'Segoe UI', system-ui, -apple-system, 'Ubuntu', sans-serif; -webkit-app-region: drag; }
-.glow { position: absolute; top: -45%; left: -15%; width: 80%; height: 90%; border-radius: 50%; background: radial-gradient(closest-side, rgba(255, 71, 87, .24), transparent); filter: blur(24px); animation: drift 7s ease-in-out infinite alternate; pointer-events: none; }
-body.done .glow { background: radial-gradient(closest-side, rgba(34, 197, 94, .22), transparent); }
-body.err .glow { background: radial-gradient(closest-side, rgba(239, 68, 68, .26), transparent); }
-@keyframes drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(40px, 24px) scale(1.15); } }
-.brand { position: absolute; top: 12px; left: 32px; z-index: 1; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
-.wrap { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 22px; padding: 34px 32px 34px; }
-.head { display: flex; align-items: center; gap: 18px; }
-.badge { position: relative; flex: 0 0 56px; width: 56px; height: 56px; border-radius: 18px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 10px 30px rgba(255, 71, 87, .35); transition: background .3s ease, box-shadow .3s ease; }
-.badge::after { content: ''; position: absolute; inset: 0; border-radius: 18px; border: 2px solid var(--accent); opacity: 0; animation: ring 1.9s ease-out infinite; }
-.badge.done { background: linear-gradient(135deg, #22c55e, #16a34a); box-shadow: 0 10px 30px rgba(34, 197, 94, .35); }
-.badge.done::after { border-color: var(--ok); animation: none; }
-.badge.err { background: var(--err); box-shadow: 0 10px 30px rgba(239, 68, 68, .35); }
-.badge.err::after { border-color: var(--err); animation: none; }
-.badge svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.badge.install svg { animation: spin 1.1s linear infinite; }
-.badge.done svg { animation: pop .45s cubic-bezier(.34, 1.56, .64, 1) both; }
-@keyframes ring { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(1.5); opacity: 0; } }
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes pop { from { transform: scale(.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-.txt { min-width: 0; flex: 1; }
-.row { display: flex; align-items: center; gap: 10px; }
-h1 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ver { flex: 0 0 auto; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255, 255, 255, .04); color: var(--muted); font-size: 11px; font-weight: 600; }
-p { margin-top: 4px; color: var(--muted); word-break: break-word; }
-.foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.steps { display: flex; gap: 18px; list-style: none; }
-.step { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 600; transition: color .3s ease; }
-.step::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #33333b; transition: background .3s ease; }
-.step.on { color: var(--text); }
-.step.on::before { background: var(--accent); box-shadow: 0 0 0 4px rgba(255, 71, 87, .2); animation: beat 1.4s ease-in-out infinite; }
-.step.ok { color: var(--text); }
-.step.ok::before { background: var(--ok); }
-body.err .step.on::before { background: var(--err); box-shadow: 0 0 0 4px rgba(239, 68, 68, .2); animation: none; }
-@keyframes beat { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.35); } }
-.pct { font-size: 12px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
-.rail { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: #1b1b21; overflow: hidden; }
-.fill { height: 100%; width: 100%; transform-origin: left; transform: scaleX(0); transition: transform .4s linear; background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent)); background-size: 200% 100%; animation: shimmer 1.3s linear infinite; }
-body.done .fill { background: var(--ok); animation: none; }
-body.err .fill { background: var(--err); animation: none; }
-@keyframes shimmer { to { background-position: -200% 0; } }
-[hidden] { display: none !important; }
-@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
-</style>
-</head>
-<body class="install">
-<div class="glow"></div>
-<div class="brand">Anka Web Güncelleme Yöneticisi</div>
-<main class="wrap">
-<div class="head">
-<div class="badge install" id="badge"><span id="icon"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.55"/></svg></span></div>
-<div class="txt">
-<div class="row"><h1 id="title">Arka Planda Güncelleniyor</h1><span class="ver" id="ver" hidden></span></div>
-<p id="sub">Güncelleme hazırlanıyor. Lütfen bekleyin.</p>
-</div>
-</div>
-<div class="foot">
-<ol class="steps">
-<li class="step ok">Doğrulama</li>
-<li class="step on">Kurulum</li>
-<li class="step">Yeniden başlatma</li>
-</ol>
-<span class="pct" id="pct">%0</span>
-</div>
-</main>
-<div class="rail"><div class="fill" id="fill"></div></div>
-</body>
-</html>`;
-
-const WIN_HELPER_SCRIPT = String.raw`param(
-    [string]$InstallerPath,
-    [int]$AppPid,
-    [string]$ExePath,
-    [string]$Version
-)
-
-$ErrorActionPreference = 'Stop'
-$script:installer = $InstallerPath
-$script:appPid = $AppPid
-$script:exe = $ExePath
-$script:version = $Version
-$script:installArgs = @('/S', '--updated', '--force-run')
-$script:stage = 'wait'
-$script:stamp = Get-Date
-$script:seenAt = $null
-$script:proc = $null
-$script:locked = $true
-$script:spin = $false
-$script:launched = $false
-$script:ui = @{}
-$script:window = $null
-$script:timer = $null
-$script:spinTimer = $null
-
-function Get-Brush([string]$hex) {
-    return (New-Object System.Windows.Media.BrushConverter).ConvertFromString($hex)
-}
-
-function Test-AppRunning {
-    $name = [System.IO.Path]::GetFileNameWithoutExtension($script:exe)
-    return [bool](Get-Process -Name $name -ErrorAction SilentlyContinue)
-}
-
-function Start-App {
-    if (-not (Test-Path -LiteralPath $script:exe)) { return }
-    Start-Process -FilePath $script:exe -WorkingDirectory (Split-Path -Parent $script:exe)
-}
-
-function Start-Installer {
-    $dir = Split-Path -Parent $script:installer
-    try {
-        $script:proc = Start-Process -FilePath $script:installer -ArgumentList $script:installArgs -WorkingDirectory $dir -PassThru
-    } catch {
-        $script:proc = Start-Process -FilePath $script:installer -ArgumentList $script:installArgs -WorkingDirectory $dir -Verb RunAs -PassThru
-    }
-}
-
-function Set-View([string]$phase, [int]$step, [string]$title, [string]$sub, [double]$percent) {
-    $accent = '#FF4757'
-    $glyph = [string][char]0x21BB
-    if ($phase -eq 'done') { $accent = '#22C55E'; $glyph = [string][char]0x2713 }
-    if ($phase -eq 'err') { $accent = '#EF4444'; $glyph = '!' }
-    $ui = $script:ui
-    $ui.Badge.Background = Get-Brush $accent
-    $ui.Fill.Background = Get-Brush $accent
-    $ui.Glyph.Text = $glyph
-    $ui.Title.Text = $title
-    $ui.Sub.Text = $sub
-    $ui.VerText.Text = 'v' + $script:version
-    $ui.Pct.Text = '%' + [int][Math]::Round($percent)
-    $ui.Fill.Width = [Math]::Max(0, $ui.Rail.ActualWidth * $percent / 100)
-    $script:spin = ($phase -eq 'install')
-    if (-not $script:spin) { $ui.Spin.Angle = 0 }
-    $names = @('S1', 'S2', 'S3')
-    for ($i = 0; $i -lt 3; $i++) {
-        $color = '#9A9AA3'
-        if (($i + 1) -lt $step) { $color = '#22C55E' }
-        elseif (($i + 1) -eq $step) {
-            if ($phase -eq 'err') { $color = '#EF4444' } else { $color = '#F4F4F5' }
-        }
-        $ui[$names[$i]].Foreground = Get-Brush $color
-    }
-}
-
-function Close-Panel {
-    $script:locked = $false
-    $script:timer.Stop()
-    $script:spinTimer.Stop()
-    $script:window.Close()
-}
-
-try {
-    Add-Type -AssemblyName PresentationFramework
-    Add-Type -AssemblyName PresentationCore
-    Add-Type -AssemblyName WindowsBase
-
-    [xml]$xaml = @'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Anka Web Güncelleme Yöneticisi" Width="480" Height="236"
-        WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterScreen"
-        Topmost="True" ShowInTaskbar="True" Background="#0B0B0E" UseLayoutRounding="True">
-  <Border BorderBrush="#26262C" BorderThickness="1" Background="#0B0B0E">
-    <Grid>
-      <Grid.RowDefinitions>
-        <RowDefinition Height="*"/>
-        <RowDefinition Height="6"/>
-      </Grid.RowDefinitions>
-      <TextBlock Grid.Row="0" Text="Anka Web Güncelleme Yöneticisi" Foreground="#9A9AA3" FontSize="11" FontWeight="SemiBold" FontFamily="Segoe UI" Margin="32,12,0,0" VerticalAlignment="Top" HorizontalAlignment="Left"/>
-      <StackPanel Grid.Row="0" VerticalAlignment="Center" Margin="32,14,32,0">
-        <Grid>
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="Auto"/>
-            <ColumnDefinition Width="*"/>
-          </Grid.ColumnDefinitions>
-          <Border x:Name="Badge" Grid.Column="0" Width="56" Height="56" CornerRadius="18" Background="#FF4757" VerticalAlignment="Top">
-            <TextBlock x:Name="Glyph" Text="" Foreground="White" FontSize="28" FontFamily="Segoe UI Symbol" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
-              <TextBlock.RenderTransform>
-                <RotateTransform x:Name="Spin" Angle="0"/>
-              </TextBlock.RenderTransform>
-            </TextBlock>
-          </Border>
-          <StackPanel Grid.Column="1" Margin="18,0,0,0" VerticalAlignment="Center">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock x:Name="Title" Text="" Foreground="#F4F4F5" FontSize="18" FontWeight="Bold" FontFamily="Segoe UI" VerticalAlignment="Center"/>
-              <Border BorderBrush="#26262C" BorderThickness="1" CornerRadius="10" Padding="9,1,9,1" Margin="10,0,0,0" Background="#0DFFFFFF" VerticalAlignment="Center">
-                <TextBlock x:Name="VerText" Text="" Foreground="#9A9AA3" FontSize="11" FontWeight="SemiBold" FontFamily="Segoe UI"/>
-              </Border>
-            </StackPanel>
-            <TextBlock x:Name="Sub" Text="" Foreground="#9A9AA3" FontSize="13" FontFamily="Segoe UI" TextWrapping="Wrap" MaxHeight="62" Margin="0,4,0,0"/>
-          </StackPanel>
-        </Grid>
-        <Grid Margin="0,22,0,0">
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="Auto"/>
-          </Grid.ColumnDefinitions>
-          <StackPanel Grid.Column="0" Orientation="Horizontal">
-            <TextBlock x:Name="S1" Text="● Doğrulama" FontSize="12" FontWeight="SemiBold" FontFamily="Segoe UI" Foreground="#22C55E" Margin="0,0,18,0"/>
-            <TextBlock x:Name="S2" Text="● Kurulum" FontSize="12" FontWeight="SemiBold" FontFamily="Segoe UI" Foreground="#F4F4F5" Margin="0,0,18,0"/>
-            <TextBlock x:Name="S3" Text="● Yeniden başlatma" FontSize="12" FontWeight="SemiBold" FontFamily="Segoe UI" Foreground="#9A9AA3"/>
-          </StackPanel>
-          <TextBlock x:Name="Pct" Grid.Column="1" Text="%0" FontSize="12" FontWeight="Bold" FontFamily="Segoe UI" Foreground="#9A9AA3"/>
-        </Grid>
-      </StackPanel>
-      <Grid x:Name="Rail" Grid.Row="1" Background="#1B1B21">
-        <Border x:Name="Fill" HorizontalAlignment="Left" Width="0" Background="#FF4757"/>
-      </Grid>
-    </Grid>
-  </Border>
-</Window>
-'@
-
-    $reader = New-Object System.Xml.XmlNodeReader $xaml
-    $script:window = [Windows.Markup.XamlReader]::Load($reader)
-    foreach ($n in @('Badge', 'Glyph', 'Spin', 'Title', 'Sub', 'VerText', 'Pct', 'Rail', 'Fill', 'S1', 'S2', 'S3')) {
-        $script:ui[$n] = $script:window.FindName($n)
-    }
-
-    $installText = 'Anka Web v' + $script:version + ' sessizce kuruluyor. Uygulama otomatik olarak yeniden açılacak.'
-
-    $script:window.Add_Closing({
-        param($sender, $e)
-        if ($script:locked) { $e.Cancel = $true }
-    })
-
-    $script:window.Add_MouseLeftButtonDown({
-        try { $script:window.DragMove() } catch {}
-    })
-
-    $script:spinTimer = New-Object System.Windows.Threading.DispatcherTimer
-    $script:spinTimer.Interval = [TimeSpan]::FromMilliseconds(30)
-    $script:spinTimer.Add_Tick({
-        if ($script:spin) { $script:ui.Spin.Angle = ($script:ui.Spin.Angle + 10) % 360 }
-    })
-
-    $script:timer = New-Object System.Windows.Threading.DispatcherTimer
-    $script:timer.Interval = [TimeSpan]::FromMilliseconds(250)
-    $script:timer.Add_Tick({
-        try {
-            $elapsed = ((Get-Date) - $script:stamp).TotalMilliseconds
-
-            if ($script:stage -eq 'wait') {
-                $alive = Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
-                if ((-not $alive) -or ($elapsed -gt 20000)) {
-                    Start-Installer
-                    $script:stage = 'install'
-                    $script:stamp = Get-Date
-                }
-            }
-            elseif ($script:stage -eq 'install') {
-                $pct = [Math]::Max(6, [Math]::Min(94, [Math]::Round(94 * (1 - [Math]::Exp(-$elapsed / 12000)))))
-                Set-View 'install' 2 'Arka Planda Güncelleniyor' $installText $pct
-                if ($script:proc.HasExited) {
-                    $code = $script:proc.ExitCode
-                    if ($code -eq 1) { throw 'Kurulum iptal edildi' }
-                    if ($code -ne 0) { throw ('Kurulum başarısız (kod ' + $code + ')') }
-                    $script:stage = 'finish'
-                    $script:stamp = Get-Date
-                }
-            }
-            elseif ($script:stage -eq 'finish') {
-                Set-View 'done' 4 'Güncelleme tamamlandı' 'Anka Web yeniden başlatılıyor…' 100
-                if (Test-AppRunning) {
-                    if ($null -eq $script:seenAt) { $script:seenAt = Get-Date }
-                    elseif (((Get-Date) - $script:seenAt).TotalMilliseconds -gt 1500) { Close-Panel }
-                }
-                elseif (($elapsed -gt 4000) -and (-not $script:launched)) {
-                    $script:launched = $true
-                    Start-App
-                }
-                if ($elapsed -gt 25000) { Close-Panel }
-            }
-            elseif ($script:stage -eq 'error') {
-                if ($elapsed -gt 4500) {
-                    if (-not (Test-AppRunning)) { Start-App }
-                    Close-Panel
-                }
-            }
-        } catch {
-            if ($script:stage -eq 'error') {
-                Close-Panel
-            } else {
-                $script:stage = 'error'
-                $script:stamp = Get-Date
-                Set-View 'err' 2 'Güncelleme başarısız' $_.Exception.Message 100
-            }
-        }
-    })
-
-    $script:window.Add_Loaded({
-        Set-View 'install' 2 'Arka Planda Güncelleniyor' 'Uygulama kapatılıyor, güncelleme hazırlanıyor…' 6
-        $script:stamp = Get-Date
-        $script:timer.Start()
-        $script:spinTimer.Start()
-    })
-
-    [void]$script:window.ShowDialog()
-} catch {
-    try {
-        $limit = (Get-Date).AddSeconds(20)
-        while ((Get-Process -Id $script:appPid -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $limit)) {
-            Start-Sleep -Milliseconds 300
-        }
-        if ($null -eq $script:proc) {
-            Start-Installer
-            $script:proc.WaitForExit()
-            Start-Sleep -Seconds 4
-        }
-        if (-not (Test-AppRunning)) { Start-App }
-    } catch {}
-}
-`;
 
 const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
     phase: 'idle',
@@ -622,6 +269,7 @@ const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
     percent: 0,
     file: '',
     hash: '',
+    kind: '',
     snoozed: '',
     notes: '',
     detail: '',
@@ -799,19 +447,66 @@ function readLimited(res, max) {
     });
 }
 
-function pickTarget(manifest, version) {
-    const spec = PLATFORM_TARGETS[process.platform];
-    if (!spec) return null;
-    if (process.platform === 'linux' && process.arch !== 'x64') throw new Error('Bu işlemci mimarisi için paket yok');
+function findBin(name) {
+    for (const dir of BIN_DIRS) {
+        const file = path.join(dir, name);
+        try {
+            fs.accessSync(file, fs.constants.X_OK);
+            return file;
+        } catch (err) {}
+    }
+    return null;
+}
 
-    const raw = manifest['url_' + spec.kind];
-    if (!raw) throw new Error('Bu platform için indirme adresi yok');
+function osIds() {
+    let text = '';
+    try {
+        text = fs.readFileSync('/etc/os-release', 'utf8');
+    } catch (err) {
+        try {
+            text = fs.readFileSync('/usr/lib/os-release', 'utf8');
+        } catch (inner) {}
+    }
+    const ids = [];
+    text.split('\n').forEach((line) => {
+        const match = /^(ID|ID_LIKE)=(.*)$/.exec(line.trim());
+        if (!match) return;
+        match[2].replace(/^["']|["']$/g, '').toLowerCase().split(/\s+/).forEach((value) => {
+            if (value) ids.push(value);
+        });
+    });
+    return ids;
+}
 
+function linuxKinds() {
+    const kinds = [];
+    if (process.env.APPIMAGE) kinds.push('appimage');
+
+    const ids = osIds();
+    const immutable = fs.existsSync('/run/ostree-booted');
+    const canDeb = !!(findBin('dpkg') && findBin('dpkg-deb'));
+    const canRpm = !!(findBin('rpm') && (findBin('dnf') || findBin('yum') || findBin('zypper') || findBin('rpm')));
+    const debLike = ids.some((id) => DEB_IDS.has(id));
+    const rpmLike = ids.some((id) => RPM_IDS.has(id));
+
+    if (!immutable && !process.env.APPIMAGE) {
+        if (debLike && canDeb) kinds.push('deb');
+        else if (rpmLike && canRpm) kinds.push('rpm');
+        else if (canDeb) kinds.push('deb');
+        else if (canRpm) kinds.push('rpm');
+    }
+
+    kinds.push('appimage', 'targz');
+    return kinds.filter((kind, index) => kinds.indexOf(kind) === index);
+}
+
+function buildTarget(kind, raw, version) {
+    const ext = EXTENSIONS[kind];
     let url;
     try {
         url = new URL(raw);
     } catch (err) {
-        throw new Error('Manifestteki url_' + spec.kind + ' geçersiz');
+        return null;
     }
 
     const expectedPrefix = DOWNLOAD_PATH_PREFIX + 'v' + version + '/';
@@ -825,10 +520,27 @@ function pickTarget(manifest, version) {
         && !url.hash
         && url.pathname.startsWith(expectedPrefix)
         && FILE_RE.test(name)
-        && name.toLowerCase().endsWith(spec.ext.toLowerCase());
-    if (!valid) throw new Error('Manifestteki url_' + spec.kind + ' güvenilir değil');
+        && name.toLowerCase().endsWith(ext.toLowerCase());
+    if (!valid) return null;
 
-    return { kind: spec.kind, ext: spec.ext, url: url.toString(), name: name, hash: '' };
+    return { kind: kind, ext: ext, url: url.toString(), name: name, hash: '' };
+}
+
+function pickTarget(manifest, version) {
+    let kinds;
+    if (process.platform === 'win32') kinds = ['exe', 'msi'];
+    else if (process.platform === 'linux') kinds = linuxKinds();
+    else return null;
+
+    if (process.platform === 'linux' && process.arch !== 'x64') throw new Error('Bu işlemci mimarisi için paket yok');
+
+    for (const kind of kinds) {
+        const raw = manifest['url_' + kind];
+        if (!raw) continue;
+        const target = buildTarget(kind, raw, version);
+        if (target) return target;
+    }
+    throw new Error('Bu sistem için uygun güncelleme paketi bulunamadı');
 }
 
 async function fetchRelease(target, version, signal) {
@@ -904,6 +616,7 @@ function resetState() {
     state.percent = 0;
     state.file = '';
     state.hash = '';
+    state.kind = '';
     state.notes = '';
     state.detail = '';
     state.attempted = '';
@@ -956,12 +669,15 @@ function hashFile(file) {
     });
 }
 
-function isPortableExecutable(file) {
+function validMagic(kind, file) {
+    const magic = MAGIC[kind];
+    if (!magic) return false;
     let fd;
     try {
         fd = fs.openSync(file, 'r');
-        const head = Buffer.alloc(2);
-        return fs.readSync(fd, head, 0, 2, 0) === 2 && head[0] === 0x4d && head[1] === 0x5a;
+        const head = Buffer.alloc(magic.length);
+        if (fs.readSync(fd, head, 0, magic.length, 0) !== magic.length) return false;
+        return magic.every((byte, index) => head[index] === byte);
     } catch (err) {
         return false;
     } finally {
@@ -1059,7 +775,7 @@ async function download(target, version, signal, onProgress, expectedHash) {
 
         const expected = await expectedHash;
         if (!sameHash(hash.digest('hex'), expected)) throw new Error('Dosya doğrulaması başarısız');
-        if (target.kind === 'exe' && !isPortableExecutable(partPath)) throw new Error('İndirilen dosya geçerli bir kurulum dosyası değil');
+        if (!validMagic(target.kind, partPath)) throw new Error('İndirilen dosya geçerli bir kurulum dosyası değil');
         fs.renameSync(partPath, finalPath);
         return finalPath;
     } catch (err) {
@@ -1085,9 +801,11 @@ async function downloadWithRetry(target, version, signal, onProgress, expectedHa
     throw lastError;
 }
 
-function runProcess(command, args) {
+function runProcess(command, args, extraEnv) {
     return new Promise((resolve, reject) => {
-        const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: false, windowsHide: true, env: cleanEnv() });
+        const env = cleanEnv();
+        if (extraEnv) Object.assign(env, extraEnv);
+        const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: false, windowsHide: true, env: env });
         let out = '';
         let err = '';
         child.stdout.on('data', (chunk) => {
@@ -1101,9 +819,18 @@ function runProcess(command, args) {
     });
 }
 
-function launchDetached(command, args, cwd) {
+function launchDetached(command, args, cwd, options) {
+    const extra = options || {};
     return new Promise((resolve, reject) => {
-        const child = spawn(command, args, { detached: true, stdio: 'ignore', shell: false, windowsHide: true, cwd: cwd, env: cleanEnv() });
+        const child = spawn(command, args, {
+            detached: true,
+            stdio: 'ignore',
+            shell: false,
+            windowsHide: !!extra.hide,
+            windowsVerbatimArguments: !!extra.verbatim,
+            cwd: cwd,
+            env: cleanEnv()
+        });
         child.once('error', reject);
         child.once('spawn', () => {
             child.unref();
@@ -1112,34 +839,36 @@ function launchDetached(command, args, cwd) {
     });
 }
 
-function launchWindowsManager(file, version) {
-    const dir = path.dirname(file);
-    const script = path.join(dir, HELPER_FILE);
-    fs.writeFileSync(script, '\ufeff' + WIN_HELPER_SCRIPT, { mode: 0o600 });
+function quitSoon() {
+    setTimeout(() => app.quit(), 300);
+    const force = setTimeout(() => app.exit(0), 3000);
+    if (typeof force.unref === 'function') force.unref();
+}
 
+function systemPath(...parts) {
     const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
-    const shell = path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const args = [
-        '-NoProfile',
-        '-NonInteractive',
-        '-STA',
-        '-ExecutionPolicy', 'Bypass',
-        '-WindowStyle', 'Hidden',
-        '-File', script,
-        '-InstallerPath', file,
-        '-AppPid', String(process.pid),
-        '-ExePath', process.execPath,
-        '-Version', String(version)
-    ];
+    return path.join(root, 'System32', ...parts);
+}
 
-    return new Promise((resolve, reject) => {
-        const child = spawn(shell, args, { detached: true, stdio: 'ignore', shell: false, cwd: dir, env: cleanEnv() });
-        child.once('error', reject);
-        child.once('spawn', () => {
-            child.unref();
-            resolve();
-        });
-    });
+async function launchWindows(file, kind) {
+    const dir = path.dirname(file);
+
+    if (kind === 'msi') {
+        const line = '/d /s /c ""' + systemPath('msiexec.exe') + '" /i "' + file + '" /passive /norestart & start "" "' + process.execPath + '""';
+        await launchDetached(systemPath('cmd.exe'), [line], dir, { verbatim: true, hide: true });
+        return;
+    }
+
+    try {
+        await launchDetached(file, ['--updated', '--force-run'], dir, { hide: false });
+    } catch (err) {
+        const result = await runProcess(
+            systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe'),
+            ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', WIN_PS_RUNAS],
+            { ANKA_UPDATE_FILE: file }
+        );
+        if (result.code !== 0) throw new Error('Kurulum başlatılamadı veya yetkilendirme iptal edildi');
+    }
 }
 
 function isLaunchable(file) {
@@ -1155,32 +884,8 @@ function isLaunchable(file) {
     }
 }
 
-async function installDeb(file) {
-    if (!fs.existsSync(DPKG) || !fs.existsSync(DPKG_DEB)) throw new Error('Bu sistem .deb paketlerini desteklemiyor');
-    if (!fs.existsSync(PKEXEC)) throw new Error('pkexec bulunamadı, polkit kurulu olmalı');
-
-    const info = await runProcess(DPKG_DEB, ['-f', file, 'Package']);
-    const name = info.out.trim();
-    if (info.code !== 0 || !PKG_RE.test(name)) throw new Error('Geçersiz .deb paketi');
-
-    const installer = fs.existsSync(APT_GET)
-        ? [APT_GET, 'install', '-y', '--allow-downgrades', file]
-        : [DPKG, '-i', file];
-
-    const result = await runProcess(PKEXEC, [ENV_BIN, 'DEBIAN_FRONTEND=noninteractive'].concat(installer));
-    if (result.code === 126 || result.code === 127) throw new Error('Yetkilendirme iptal edildi');
-    if (result.code !== 0) throw new Error('Kurulum başarısız (kod ' + result.code + ')');
-
-    return name;
-}
-
-async function findInstalledBinary(name) {
-    const listed = await runProcess(DPKG, ['-L', name]);
-    if (listed.code !== 0) return null;
-
-    const files = listed.out.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('/'));
+function pickLaunchable(files) {
     if (files.includes(process.execPath) && isLaunchable(process.execPath)) return process.execPath;
-
     const candidates = files.filter(isLaunchable).sort((a, b) => {
         const x = path.dirname(a) === '/usr/bin' ? 0 : 1;
         const y = path.dirname(b) === '/usr/bin' ? 0 : 1;
@@ -1189,111 +894,182 @@ async function findInstalledBinary(name) {
     return candidates[0] || null;
 }
 
-async function installAndRelaunchLinux(file) {
-    const name = await installDeb(file);
-    const binary = await findInstalledBinary(name);
-    if (!binary) throw new Error('Kurulum tamamlandı ancak uygulama başlatılamadı, elle açın');
-    await launchDetached(SH_BIN, ['-c', LINUX_RELAUNCH, binary, String(process.pid)], path.dirname(binary));
+function parseFileList(text) {
+    return text.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('/'));
 }
 
-function quitSoon() {
-    setTimeout(() => app.quit(), 300);
-    const force = setTimeout(() => app.exit(0), 3000);
-    if (typeof force.unref === 'function') force.unref();
+async function runPrivileged(command, args) {
+    const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+    let result;
+    if (isRoot) {
+        result = await runProcess(command, args);
+    } else {
+        const pkexec = findBin('pkexec');
+        const env = findBin('env');
+        if (!pkexec || !env) throw new Error('pkexec bulunamadı, polkit kurulu olmalı');
+        result = await runProcess(pkexec, [env, 'DEBIAN_FRONTEND=noninteractive', command].concat(args));
+    }
+    if (result.code === 126 || result.code === 127) throw new Error('Yetkilendirme iptal edildi');
+    if (result.code !== 0) throw new Error('Kurulum başarısız (kod ' + result.code + ')');
+    return result;
 }
 
-function openPanel() {
-    const panelWin = new BrowserWindow({
-        width: PANEL_WIDTH,
-        height: PANEL_HEIGHT,
-        useContentSize: true,
-        frame: false,
-        resizable: false,
-        movable: true,
-        minimizable: false,
-        maximizable: false,
-        fullscreenable: false,
-        alwaysOnTop: true,
-        center: true,
-        show: false,
-        backgroundColor: '#0b0b0e',
-        title: PANEL_TITLE,
-        webPreferences: {
-            partition: PANEL_PARTITION,
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true,
-            webSecurity: true,
-            devTools: false,
-            spellcheck: false,
-            webviewTag: false,
-            navigateOnDragDrop: false,
-            backgroundThrottling: false
-        }
-    });
+async function installDeb(file) {
+    const dpkg = findBin('dpkg');
+    const dpkgDeb = findBin('dpkg-deb');
+    if (!dpkg || !dpkgDeb) throw new Error('Bu sistem .deb paketlerini desteklemiyor');
 
-    const panelContents = panelWin.webContents;
-    const panelSession = session.fromPartition(PANEL_PARTITION);
-    let locked = false;
+    const info = await runProcess(dpkgDeb, ['-f', file, 'Package']);
+    const name = info.out.trim();
+    if (info.code !== 0 || !PKG_RE.test(name)) throw new Error('Geçersiz .deb paketi');
 
-    panelSession.setPermissionRequestHandler((wc, permission, callback) => callback(false));
-    panelSession.setPermissionCheckHandler(() => false);
-    panelContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    panelContents.on('will-navigate', (event) => event.preventDefault());
-    panelContents.on('will-attach-webview', (event) => event.preventDefault());
-    if (typeof panelWin.removeMenu === 'function') panelWin.removeMenu();
+    const aptGet = findBin('apt-get');
+    if (aptGet) await runPrivileged(aptGet, ['install', '-y', '--allow-downgrades', file]);
+    else await runPrivileged(dpkg, ['-i', file]);
 
-    panelWin.on('close', (event) => {
-        if (locked) event.preventDefault();
-    });
+    const listed = await runProcess(dpkg, ['-L', name]);
+    if (listed.code !== 0) return null;
+    return pickLaunchable(parseFileList(listed.out));
+}
 
-    const ready = new Promise((resolve) => {
-        panelContents.once('did-finish-load', resolve);
-        panelContents.once('did-fail-load', resolve);
-    });
+async function installRpm(file) {
+    const rpm = findBin('rpm');
+    if (!rpm) throw new Error('Bu sistem .rpm paketlerini desteklemiyor');
 
-    panelWin.once('ready-to-show', () => {
-        if (panelWin.isDestroyed()) return;
-        panelWin.show();
-        panelWin.focus();
-    });
+    const info = await runProcess(rpm, ['-qp', '--qf', '%{NAME}', file]);
+    const name = info.out.trim();
+    if (info.code !== 0 || !PKG_RE.test(name)) throw new Error('Geçersiz .rpm paketi');
 
-    panelWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(PANEL_HTML)).catch(() => {});
+    const dnf = findBin('dnf');
+    const yum = findBin('yum');
+    const zypper = findBin('zypper');
 
-    async function set(view) {
-        if (panelWin.isDestroyed()) return;
-        await Promise.race([ready, sleep(4000)]);
-        if (panelWin.isDestroyed()) return;
+    if (dnf) await runPrivileged(dnf, ['install', '-y', '--nogpgcheck', file]);
+    else if (zypper) await runPrivileged(zypper, ['--non-interactive', '--no-gpg-checks', 'install', '--allow-unsigned-rpm', '--allow-downgrade', file]);
+    else if (yum) await runPrivileged(yum, ['install', '-y', '--nogpgcheck', file]);
+    else await runPrivileged(rpm, ['-U', '--replacepkgs', '--nosignature', file]);
+
+    const listed = await runProcess(rpm, ['-ql', name]);
+    if (listed.code !== 0) return null;
+    return pickLaunchable(parseFileList(listed.out));
+}
+
+function installAppImage(file) {
+    const current = process.env.APPIMAGE;
+    let dest;
+    if (current && fs.existsSync(current)) {
+        dest = current;
+    } else {
+        const dir = path.join(os.homedir(), '.local', 'share', 'anka-web');
+        fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+        dest = path.join(dir, 'Anka_Web.AppImage');
+    }
+
+    const temp = dest + '.new-' + process.pid;
+    try {
+        fs.copyFileSync(file, temp);
+        fs.chmodSync(temp, 0o755);
+        fs.renameSync(temp, dest);
+    } catch (err) {
         try {
-            await panelContents.executeJavaScript('(' + PANEL_SCRIPT + ')(' + safeJson(view) + ')');
+            fs.rmSync(temp, { force: true });
+        } catch (cleanupErr) {}
+        throw new Error('AppImage dosyası değiştirilemedi: ' + (err && err.code ? err.code : 'hata'));
+    }
+    return dest;
+}
+
+function tarRoot() {
+    const exec = process.execPath;
+    const dir = path.dirname(exec);
+    const foreign = /^\/(usr|opt|snap|nix)\//.test(dir + '/') || /^electron/i.test(path.basename(exec));
+    if (!process.env.APPIMAGE && !foreign) {
+        try {
+            fs.accessSync(dir, fs.constants.W_OK);
+            fs.accessSync(path.dirname(dir), fs.constants.W_OK);
+            return dir;
         } catch (err) {}
     }
+    return path.join(os.homedir(), '.local', 'share', 'anka-web');
+}
 
-    function lock(value) {
-        locked = !!value;
+function findExecutable(dir) {
+    const preferred = path.basename(process.execPath);
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    let best = null;
+    let bestSize = -1;
+    for (const entry of entries) {
+        if (!entry.isFile() || SKIP_BIN_RE.test(entry.name)) continue;
+        const full = path.join(dir, entry.name);
+        const stat = fs.statSync(full);
+        if ((stat.mode & 0o111) === 0) continue;
+        if (entry.name === preferred) return entry.name;
+        if (stat.size > bestSize) {
+            best = entry.name;
+            bestSize = stat.size;
+        }
     }
+    return best;
+}
 
-    function close() {
-        locked = false;
-        if (!panelWin.isDestroyed()) panelWin.destroy();
+async function installTarGz(file) {
+    const tar = findBin('tar');
+    if (!tar) throw new Error('tar bulunamadı');
+
+    const root = tarRoot();
+    const parent = path.dirname(root);
+    fs.mkdirSync(parent, { recursive: true, mode: 0o755 });
+
+    const staging = root + '.new-' + process.pid;
+    const old = root + '.old-' + process.pid;
+    fs.rmSync(staging, { force: true, recursive: true });
+    fs.mkdirSync(staging, { mode: 0o755 });
+
+    try {
+        const result = await runProcess(tar, ['-xzf', file, '-C', staging, '--no-same-owner']);
+        if (result.code !== 0) throw new Error('Arşiv açılamadı');
+
+        let source = staging;
+        const entries = fs.readdirSync(staging, { withFileTypes: true });
+        if (entries.length === 1 && entries[0].isDirectory()) source = path.join(staging, entries[0].name);
+
+        const exeName = findExecutable(source);
+        if (!exeName) throw new Error('Arşivde çalıştırılabilir dosya bulunamadı');
+
+        const hadOld = fs.existsSync(root);
+        if (hadOld) fs.renameSync(root, old);
+        try {
+            fs.renameSync(source, root);
+        } catch (err) {
+            if (hadOld) fs.renameSync(old, root);
+            throw err;
+        }
+
+        fs.rmSync(staging, { force: true, recursive: true });
+        if (hadOld) {
+            try {
+                fs.rmSync(old, { force: true, recursive: true });
+            } catch (err) {}
+        }
+        return path.join(root, exeName);
+    } catch (err) {
+        try {
+            fs.rmSync(staging, { force: true, recursive: true });
+        } catch (cleanupErr) {}
+        throw err;
     }
-
-    return { set: set, lock: lock, close: close };
 }
 
-function installView(version, percent) {
-    const sub = process.platform === 'linux'
-        ? 'Anka Web v' + version + ' kuruluyor. Yetki penceresi açılırsa onaylayın, uygulama otomatik yeniden açılacak.'
-        : 'Anka Web v' + version + ' sessizce kuruluyor. Uygulama otomatik olarak yeniden açılacak.';
-    return { phase: 'install', step: 2, version: version, percent: percent, title: 'Arka Planda Güncelleniyor', sub: sub };
-}
+async function installAndRelaunchLinux(file, kind) {
+    let binary = null;
+    if (kind === 'deb') binary = await installDeb(file);
+    else if (kind === 'rpm') binary = await installRpm(file);
+    else if (kind === 'appimage') binary = installAppImage(file);
+    else if (kind === 'targz') binary = await installTarGz(file);
+    else throw new Error('Bu paket türü desteklenmiyor');
 
-function doneView(version) {
-    return { phase: 'done', step: 4, version: version, percent: 100, title: 'Güncelleme tamamlandı', sub: 'Anka Web yeniden başlatılıyor…' };
-}
-
-function errorView(version, message) {
-    return { phase: 'err', step: 2, version: version, percent: 100, title: 'Güncelleme başarısız', sub: message };
+    if (!binary) throw new Error('Kurulum tamamlandı ancak uygulama başlatılamadı, elle açın');
+    await launchDetached(SH_BIN, ['-c', LINUX_RELAUNCH, binary, String(process.pid)], path.dirname(binary), { hide: true });
 }
 
 function init(win, currentVersion, options) {
@@ -1318,7 +1094,6 @@ function init(win, currentVersion, options) {
     let pollTimer = null;
     let autoTimer = null;
     let abortCtl = null;
-    let panel = null;
 
     async function ensureUi() {
         if (destroyed || win.isDestroyed()) return false;
@@ -1432,6 +1207,7 @@ function init(win, currentVersion, options) {
             state.percent = 0;
             state.file = '';
             state.hash = '';
+            state.kind = target.kind;
             state.notes = '';
             state.detail = '';
             paint();
@@ -1486,8 +1262,8 @@ function init(win, currentVersion, options) {
         clearTimeout(autoTimer);
         autoTimer = null;
         installing = true;
-        let ticker = null;
         const version = state.version;
+        const kind = state.kind;
 
         try {
             const file = state.file;
@@ -1496,7 +1272,7 @@ function init(win, currentVersion, options) {
             if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Güncelleme dosyası geçersiz');
             if (process.platform !== 'win32' && process.platform !== 'linux') throw new Error('Bu platformda kurulum desteklenmiyor');
 
-            if (process.platform === 'win32' && !isPortableExecutable(file)) {
+            if (!validMagic(kind, file)) {
                 resetState();
                 throw new Error('Güncelleme dosyası geçersiz, yeniden indirilecek');
             }
@@ -1510,47 +1286,21 @@ function init(win, currentVersion, options) {
             writeMarker(installed, version);
 
             if (process.platform === 'win32') {
-                await launchWindowsManager(file, version);
-                if (!win.isDestroyed()) win.hide();
+                await send({ view: 'info', title: 'Anka Web', message: 'Kurulum penceresi açılıyor…', sticky: true });
+                await launchWindows(file, kind);
                 quitSoon();
                 return;
             }
 
-            panel = openPanel();
-            panel.lock(true);
-            if (!win.isDestroyed()) win.hide();
-            panel.set(installView(version, 6));
-
-            const startedAt = Date.now();
-            ticker = setInterval(() => {
-                const percent = Math.min(94, Math.round(94 * (1 - Math.exp(-(Date.now() - startedAt) / 12000))));
-                panel.set(installView(version, Math.max(6, percent)));
-            }, 400);
-
-            await installAndRelaunchLinux(file);
-
-            clearInterval(ticker);
-            ticker = null;
-            await panel.set(doneView(version));
-            await sleep(1800);
+            await send({ view: 'info', title: 'Anka Web', message: 'Kurulum başlıyor. Yetki penceresi açılırsa onaylayın.', sticky: true });
+            await installAndRelaunchLinux(file, kind);
+            await send({ view: 'info', title: 'Güncelleme tamamlandı', message: 'Anka Web yeniden başlatılıyor…', sticky: true });
+            await sleep(900);
             quitSoon();
         } catch (err) {
-            if (ticker) clearInterval(ticker);
             removeMarker();
-            const message = err && err.message ? err.message : 'Kurulum başlatılamadı';
-            if (panel) {
-                await panel.set(errorView(version, message));
-                panel.lock(false);
-                await sleep(2500);
-                panel.close();
-                panel = null;
-            }
-            if (!win.isDestroyed()) {
-                win.show();
-                win.focus();
-            }
             installing = false;
-            await send({ view: 'error', message: message });
+            await send({ view: 'error', message: err && err.message ? err.message : 'Kurulum başlatılamadı' });
         }
     }
 
@@ -1605,10 +1355,6 @@ function init(win, currentVersion, options) {
         clearInterval(intervalTimer);
         clearInterval(pollTimer);
         if (abortCtl) abortCtl.abort();
-        if (panel && !installing) {
-            panel.close();
-            panel = null;
-        }
         if (state.phase === 'downloading') {
             cleanDir('');
             state.phase = 'idle';
