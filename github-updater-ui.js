@@ -840,9 +840,45 @@ function launchDetached(command, args, cwd, options) {
 }
 
 function quitSoon() {
-    setTimeout(() => app.quit(), 300);
-    const force = setTimeout(() => app.exit(0), 3000);
-    if (typeof force.unref === 'function') force.unref();
+    try {
+        const { BrowserWindow } = require('electron');
+        const windows = BrowserWindow.getAllWindows();
+        for (const win of windows) {
+            if (win && !win.isDestroyed()) {
+                win.destroy();
+            }
+        }
+    } catch (e) {}
+
+    const quitTimeout = setTimeout(() => {
+        try {
+            app.quit();
+        } catch (e) {}
+        
+        const exitTimeout = setTimeout(() => {
+            try {
+                app.exit(0);
+            } catch (e) {}
+        }, 100);
+        
+        if (exitTimeout && typeof exitTimeout.unref === 'function') {
+            exitTimeout.unref();
+        }
+    }, 300);
+
+    if (quitTimeout && typeof quitTimeout.unref === 'function') {
+        quitTimeout.unref();
+    }
+
+    const forceTimeout = setTimeout(() => {
+        try {
+            app.exit(0);
+        } catch (e) {}
+    }, 3000);
+
+    if (forceTimeout && typeof forceTimeout.unref === 'function') {
+        forceTimeout.unref();
+    }
 }
 
 function systemPath(...parts) {
