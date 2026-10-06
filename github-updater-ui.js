@@ -11,10 +11,11 @@ const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO +
 const MANIFEST_PATH = '/' + OWNER + '/' + REPO + '/main/latest.yml';
 const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
-const UI_VERSION = 6;
+const UI_VERSION = 7;
 const FIRST_CHECK_DELAY = 500;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
+const AUTO_INSTALL_DELAY = 2000;
 const REQUEST_TIMEOUT = 8000;
 const DOWNLOAD_IDLE_TIMEOUT = 30000;
 const DOWNLOAD_ATTEMPTS = 3;
@@ -30,8 +31,10 @@ const POLL_MS = 250;
 const PROGRESS_MS = 100;
 const PANEL_WIDTH = 480;
 const PANEL_HEIGHT = 236;
+const PANEL_TITLE = 'Anka Web Güncelleme Yöneticisi';
 const PANEL_PARTITION = 'anka-updater-panel';
 const MARKER_FILE = 'anka-last-update.json';
+const HELPER_FILE = 'anka-update-manager.ps1';
 const ACTION_CHANNEL = 'anka-updater:action';
 const ACTIONS = new Set(['later', 'close', 'install', 'retry', 'update']);
 const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
@@ -39,10 +42,8 @@ const FILE_RE = /^[A-Za-z0-9._-]{1,120}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const DIGEST_RE = /^sha256:([A-Fa-f0-9]{64})$/;
 const PKG_RE = /^[a-z0-9][a-z0-9+.-]{0,100}$/;
-const SAFE_PATH_RE = /^[\p{L}\p{N} :\\._()\-]+$/u;
 const SKIP_BIN_RE = /(chrome-sandbox|chrome_crashpad_handler|\.so(\.|$)|\.sh$|\.pak$|\.bin$|\.dat$|\.json$)/i;
 const TRANSIENT_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET', 'EPIPE']);
-const WIN_INSTALL_ARGS = ['/S', '--updated', '--force-run'];
 const PLATFORM_TARGETS = {
     win32: { kind: 'exe', ext: '.exe' },
     linux: { kind: 'deb', ext: '.deb' }
@@ -54,6 +55,7 @@ const DPKG = '/usr/bin/dpkg';
 const DPKG_DEB = '/usr/bin/dpkg-deb';
 const ENV_BIN = '/usr/bin/env';
 const SH_BIN = '/bin/sh';
+const LINUX_RELAUNCH = 'n=0; while kill -0 "$1" 2>/dev/null && [ "$n" -lt 100 ]; do n=$((n+1)); sleep 0.3; done; sleep 1; exec "$0"';
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
 
@@ -217,13 +219,11 @@ function bootUi(version) {
                 notes.textContent = state.notes || '';
                 notes.hidden = !state.notes;
                 track.hidden = !!state.ready;
-                setButtons(state.ready
-                    ? [['Daha Sonra', 'later'], ['Kur ve Yeniden Başlat', 'install', true]]
-                    : [['Daha Sonra', 'later']]);
+                setButtons([]);
                 animate('swap');
             }
             text.textContent = state.ready
-                ? 'Arka planda sessizce kurulacak ve uygulama otomatik yeniden açılacak.'
+                ? 'Kurulum otomatik başlayacak, uygulama kurulumdan sonra yeniden açılacak.'
                 : 'İndiriliyor… %' + percent + (state.detail ? ' · ' + state.detail : '');
             bar.style.transform = 'scaleX(' + percent / 100 + ')';
         } else if (state.view === 'error') {
@@ -297,7 +297,7 @@ const PANEL_HTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
-<title>Anka Web Güncelleme</title>
+<title>Anka Web Güncelleme Yöneticisi</title>
 <style>
 :root { color-scheme: dark; --bg: #0b0b0e; --border: #26262c; --text: #f4f4f5; --muted: #9a9aa3; --accent: #ff4757; --accent-2: #ff7a45; --ok: #22c55e; --err: #ef4444; }
 * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; cursor: default; }
@@ -307,7 +307,8 @@ body { position: relative; background: linear-gradient(160deg, #15151b 0%, var(-
 body.done .glow { background: radial-gradient(closest-side, rgba(34, 197, 94, .22), transparent); }
 body.err .glow { background: radial-gradient(closest-side, rgba(239, 68, 68, .26), transparent); }
 @keyframes drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(40px, 24px) scale(1.15); } }
-.wrap { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 22px; padding: 26px 32px 34px; }
+.brand { position: absolute; top: 12px; left: 32px; z-index: 1; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.wrap { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 22px; padding: 34px 32px 34px; }
 .head { display: flex; align-items: center; gap: 18px; }
 .badge { position: relative; flex: 0 0 56px; width: 56px; height: 56px; border-radius: 18px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 10px 30px rgba(255, 71, 87, .35); transition: background .3s ease, box-shadow .3s ease; }
 .badge::after { content: ''; position: absolute; inset: 0; border-radius: 18px; border: 2px solid var(--accent); opacity: 0; animation: ring 1.9s ease-out infinite; }
@@ -348,6 +349,7 @@ body.err .fill { background: var(--err); animation: none; }
 </head>
 <body class="install">
 <div class="glow"></div>
+<div class="brand">Anka Web Güncelleme Yöneticisi</div>
 <main class="wrap">
 <div class="head">
 <div class="badge install" id="badge"><span id="icon"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.55"/></svg></span></div>
@@ -369,6 +371,251 @@ body.err .fill { background: var(--err); animation: none; }
 </body>
 </html>`;
 
+const WIN_HELPER_SCRIPT = String.raw`param(
+    [string]$InstallerPath,
+    [int]$AppPid,
+    [string]$ExePath,
+    [string]$Version
+)
+
+$ErrorActionPreference = 'Stop'
+$script:installer = $InstallerPath
+$script:appPid = $AppPid
+$script:exe = $ExePath
+$script:version = $Version
+$script:installArgs = @('/S', '--updated', '--force-run')
+$script:stage = 'wait'
+$script:stamp = Get-Date
+$script:seenAt = $null
+$script:proc = $null
+$script:locked = $true
+$script:spin = $false
+$script:launched = $false
+$script:ui = @{}
+$script:window = $null
+$script:timer = $null
+$script:spinTimer = $null
+
+function Get-Brush([string]$hex) {
+    return (New-Object System.Windows.Media.BrushConverter).ConvertFromString($hex)
+}
+
+function Test-AppRunning {
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($script:exe)
+    return [bool](Get-Process -Name $name -ErrorAction SilentlyContinue)
+}
+
+function Start-App {
+    if (-not (Test-Path -LiteralPath $script:exe)) { return }
+    Start-Process -FilePath $script:exe -WorkingDirectory (Split-Path -Parent $script:exe)
+}
+
+function Start-Installer {
+    $dir = Split-Path -Parent $script:installer
+    try {
+        $script:proc = Start-Process -FilePath $script:installer -ArgumentList $script:installArgs -WorkingDirectory $dir -PassThru
+    } catch {
+        $script:proc = Start-Process -FilePath $script:installer -ArgumentList $script:installArgs -WorkingDirectory $dir -Verb RunAs -PassThru
+    }
+}
+
+function Set-View([string]$phase, [int]$step, [string]$title, [string]$sub, [double]$percent) {
+    $accent = '#FF4757'
+    $glyph = [string][char]0x21BB
+    if ($phase -eq 'done') { $accent = '#22C55E'; $glyph = [string][char]0x2713 }
+    if ($phase -eq 'err') { $accent = '#EF4444'; $glyph = '!' }
+    $ui = $script:ui
+    $ui.Badge.Background = Get-Brush $accent
+    $ui.Fill.Background = Get-Brush $accent
+    $ui.Glyph.Text = $glyph
+    $ui.Title.Text = $title
+    $ui.Sub.Text = $sub
+    $ui.VerText.Text = 'v' + $script:version
+    $ui.Pct.Text = '%' + [int][Math]::Round($percent)
+    $ui.Fill.Width = [Math]::Max(0, $ui.Rail.ActualWidth * $percent / 100)
+    $script:spin = ($phase -eq 'install')
+    if (-not $script:spin) { $ui.Spin.Angle = 0 }
+    $names = @('S1', 'S2', 'S3')
+    for ($i = 0; $i -lt 3; $i++) {
+        $color = '#9A9AA3'
+        if (($i + 1) -lt $step) { $color = '#22C55E' }
+        elseif (($i + 1) -eq $step) {
+            if ($phase -eq 'err') { $color = '#EF4444' } else { $color = '#F4F4F5' }
+        }
+        $ui[$names[$i]].Foreground = Get-Brush $color
+    }
+}
+
+function Close-Panel {
+    $script:locked = $false
+    $script:timer.Stop()
+    $script:spinTimer.Stop()
+    $script:window.Close()
+}
+
+try {
+    Add-Type -AssemblyName PresentationFramework
+    Add-Type -AssemblyName PresentationCore
+    Add-Type -AssemblyName WindowsBase
+
+    [xml]$xaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Anka Web Güncelleme Yöneticisi" Width="480" Height="236"
+        WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterScreen"
+        Topmost="True" ShowInTaskbar="True" Background="#0B0B0E" UseLayoutRounding="True">
+  <Border BorderBrush="#26262C" BorderThickness="1" Background="#0B0B0E">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="6"/>
+      </Grid.RowDefinitions>
+      <TextBlock Grid.Row="0" Text="Anka Web Güncelleme Yöneticisi" Foreground="#9A9AA3" FontSize="11" FontWeight="SemiBold" FontFamily="Segoe UI" Margin="32,12,0,0" VerticalAlignment="Top" HorizontalAlignment="Left"/>
+      <StackPanel Grid.Row="0" VerticalAlignment="Center" Margin="32,14,32,0">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <Border x:Name="Badge" Grid.Column="0" Width="56" Height="56" CornerRadius="18" Background="#FF4757" VerticalAlignment="Top">
+            <TextBlock x:Name="Glyph" Text="" Foreground="White" FontSize="28" FontFamily="Segoe UI Symbol" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+              <TextBlock.RenderTransform>
+                <RotateTransform x:Name="Spin" Angle="0"/>
+              </TextBlock.RenderTransform>
+            </TextBlock>
+          </Border>
+          <StackPanel Grid.Column="1" Margin="18,0,0,0" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock x:Name="Title" Text="" Foreground="#F4F4F5" FontSize="18" FontWeight="Bold" FontFamily="Segoe UI" VerticalAlignment="Center"/>
+              <Border BorderBrush="#26262C" BorderThickness="1" CornerRadius="10" Padding="9,1,9,1" Margin="10,0,0,0" Background="#0DFFFFFF" VerticalAlignment="Center">
+                <TextBlock x:Name="VerText" Text="" Foreground="#9A9AA3" FontSize="11" FontWeight="SemiBold" FontFamily="Segoe UI"/>
+              </Border>
+            </StackPanel>
+            <TextBlock x:Name="Sub" Text="" Foreground="#9A9AA3" FontSize="13" FontFamily="Segoe UI" TextWrapping="Wrap" MaxHeight="62" Margin="0,4,0,0"/>
+          </StackPanel>
+        </Grid>
+        <Grid Margin="0,22,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <StackPanel Grid.Column="0" Orientation="Horizontal">
+            <TextBlock x:Name="S1" Text="● Doğrulama" FontSize="12" FontWeight="SemiBold" FontFamily="Segoe UI" Foreground="#22C55E" Margin="0,0,18,0"/>
+            <TextBlock x:Name="S2" Text="● Kurulum" FontSize="12" FontWeight="SemiBold" FontFamily="Segoe UI" Foreground="#F4F4F5" Margin="0,0,18,0"/>
+            <TextBlock x:Name="S3" Text="● Yeniden başlatma" FontSize="12" FontWeight="SemiBold" FontFamily="Segoe UI" Foreground="#9A9AA3"/>
+          </StackPanel>
+          <TextBlock x:Name="Pct" Grid.Column="1" Text="%0" FontSize="12" FontWeight="Bold" FontFamily="Segoe UI" Foreground="#9A9AA3"/>
+        </Grid>
+      </StackPanel>
+      <Grid x:Name="Rail" Grid.Row="1" Background="#1B1B21">
+        <Border x:Name="Fill" HorizontalAlignment="Left" Width="0" Background="#FF4757"/>
+      </Grid>
+    </Grid>
+  </Border>
+</Window>
+'@
+
+    $reader = New-Object System.Xml.XmlNodeReader $xaml
+    $script:window = [Windows.Markup.XamlReader]::Load($reader)
+    foreach ($n in @('Badge', 'Glyph', 'Spin', 'Title', 'Sub', 'VerText', 'Pct', 'Rail', 'Fill', 'S1', 'S2', 'S3')) {
+        $script:ui[$n] = $script:window.FindName($n)
+    }
+
+    $installText = 'Anka Web v' + $script:version + ' sessizce kuruluyor. Uygulama otomatik olarak yeniden açılacak.'
+
+    $script:window.Add_Closing({
+        param($sender, $e)
+        if ($script:locked) { $e.Cancel = $true }
+    })
+
+    $script:window.Add_MouseLeftButtonDown({
+        try { $script:window.DragMove() } catch {}
+    })
+
+    $script:spinTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $script:spinTimer.Interval = [TimeSpan]::FromMilliseconds(30)
+    $script:spinTimer.Add_Tick({
+        if ($script:spin) { $script:ui.Spin.Angle = ($script:ui.Spin.Angle + 10) % 360 }
+    })
+
+    $script:timer = New-Object System.Windows.Threading.DispatcherTimer
+    $script:timer.Interval = [TimeSpan]::FromMilliseconds(250)
+    $script:timer.Add_Tick({
+        try {
+            $elapsed = ((Get-Date) - $script:stamp).TotalMilliseconds
+
+            if ($script:stage -eq 'wait') {
+                $alive = Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
+                if ((-not $alive) -or ($elapsed -gt 20000)) {
+                    Start-Installer
+                    $script:stage = 'install'
+                    $script:stamp = Get-Date
+                }
+            }
+            elseif ($script:stage -eq 'install') {
+                $pct = [Math]::Max(6, [Math]::Min(94, [Math]::Round(94 * (1 - [Math]::Exp(-$elapsed / 12000)))))
+                Set-View 'install' 2 'Arka Planda Güncelleniyor' $installText $pct
+                if ($script:proc.HasExited) {
+                    $code = $script:proc.ExitCode
+                    if ($code -eq 1) { throw 'Kurulum iptal edildi' }
+                    if ($code -ne 0) { throw ('Kurulum başarısız (kod ' + $code + ')') }
+                    $script:stage = 'finish'
+                    $script:stamp = Get-Date
+                }
+            }
+            elseif ($script:stage -eq 'finish') {
+                Set-View 'done' 4 'Güncelleme tamamlandı' 'Anka Web yeniden başlatılıyor…' 100
+                if (Test-AppRunning) {
+                    if ($null -eq $script:seenAt) { $script:seenAt = Get-Date }
+                    elseif (((Get-Date) - $script:seenAt).TotalMilliseconds -gt 1500) { Close-Panel }
+                }
+                elseif (($elapsed -gt 4000) -and (-not $script:launched)) {
+                    $script:launched = $true
+                    Start-App
+                }
+                if ($elapsed -gt 25000) { Close-Panel }
+            }
+            elseif ($script:stage -eq 'error') {
+                if ($elapsed -gt 4500) {
+                    if (-not (Test-AppRunning)) { Start-App }
+                    Close-Panel
+                }
+            }
+        } catch {
+            if ($script:stage -eq 'error') {
+                Close-Panel
+            } else {
+                $script:stage = 'error'
+                $script:stamp = Get-Date
+                Set-View 'err' 2 'Güncelleme başarısız' $_.Exception.Message 100
+            }
+        }
+    })
+
+    $script:window.Add_Loaded({
+        Set-View 'install' 2 'Arka Planda Güncelleniyor' 'Uygulama kapatılıyor, güncelleme hazırlanıyor…' 6
+        $script:stamp = Get-Date
+        $script:timer.Start()
+        $script:spinTimer.Start()
+    })
+
+    [void]$script:window.ShowDialog()
+} catch {
+    try {
+        $limit = (Get-Date).AddSeconds(20)
+        while ((Get-Process -Id $script:appPid -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $limit)) {
+            Start-Sleep -Milliseconds 300
+        }
+        if ($null -eq $script:proc) {
+            Start-Installer
+            $script:proc.WaitForExit()
+            Start-Sleep -Seconds 4
+        }
+        if (-not (Test-AppRunning)) { Start-App }
+    } catch {}
+}
+`;
+
 const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
     phase: 'idle',
     version: '',
@@ -377,7 +624,8 @@ const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
     hash: '',
     snoozed: '',
     notes: '',
-    detail: ''
+    detail: '',
+    attempted: ''
 });
 
 function safeJson(value) {
@@ -658,6 +906,7 @@ function resetState() {
     state.hash = '';
     state.notes = '';
     state.detail = '';
+    state.attempted = '';
 }
 
 function markerPath() {
@@ -863,41 +1112,34 @@ function launchDetached(command, args, cwd) {
     });
 }
 
-function runInstaller(command, args, cwd, verbatim) {
-    return new Promise((resolve, reject) => {
-        const child = spawn(command, args, {
-            detached: true,
-            stdio: 'ignore',
-            shell: false,
-            windowsHide: true,
-            windowsVerbatimArguments: !!verbatim,
-            cwd: cwd,
-            env: cleanEnv()
-        });
-        child.once('error', reject);
-        child.once('spawn', () => child.unref());
-        child.once('close', (code) => resolve(typeof code === 'number' ? code : -1));
-    });
-}
+function launchWindowsManager(file, version) {
+    const dir = path.dirname(file);
+    const script = path.join(dir, HELPER_FILE);
+    fs.writeFileSync(script, '\ufeff' + WIN_HELPER_SCRIPT, { mode: 0o600 });
 
-function needsElevation(err) {
-    if (!err) return false;
-    return err.code === 'EACCES' || err.code === 'UNKNOWN' || /740|elevation/i.test(String(err.message));
-}
-
-async function installWindows(file) {
-    const cwd = path.dirname(file);
-    try {
-        return await runInstaller(file, WIN_INSTALL_ARGS, cwd, false);
-    } catch (err) {
-        if (!needsElevation(err)) throw err;
-    }
-
-    if (!SAFE_PATH_RE.test(file)) throw new Error('Güncelleme dosyasının yolu desteklenmiyor');
     const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
-    const cmd = path.join(root, 'System32', 'cmd.exe');
-    const line = '"start "" /wait "' + file + '" ' + WIN_INSTALL_ARGS.join(' ') + '"';
-    return runInstaller(cmd, ['/d', '/s', '/c', line], cwd, true);
+    const shell = path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const args = [
+        '-NoProfile',
+        '-NonInteractive',
+        '-STA',
+        '-ExecutionPolicy', 'Bypass',
+        '-WindowStyle', 'Hidden',
+        '-File', script,
+        '-InstallerPath', file,
+        '-AppPid', String(process.pid),
+        '-ExePath', process.execPath,
+        '-Version', String(version)
+    ];
+
+    return new Promise((resolve, reject) => {
+        const child = spawn(shell, args, { detached: true, stdio: 'ignore', shell: false, cwd: dir, env: cleanEnv() });
+        child.once('error', reject);
+        child.once('spawn', () => {
+            child.unref();
+            resolve();
+        });
+    });
 }
 
 function isLaunchable(file) {
@@ -951,12 +1193,12 @@ async function installAndRelaunchLinux(file) {
     const name = await installDeb(file);
     const binary = await findInstalledBinary(name);
     if (!binary) throw new Error('Kurulum tamamlandı ancak uygulama başlatılamadı, elle açın');
-    await launchDetached(SH_BIN, ['-c', 'sleep 2; exec "$0"', binary], path.dirname(binary));
+    await launchDetached(SH_BIN, ['-c', LINUX_RELAUNCH, binary, String(process.pid)], path.dirname(binary));
 }
 
 function quitSoon() {
     setTimeout(() => app.quit(), 300);
-    const force = setTimeout(() => app.exit(0), 5000);
+    const force = setTimeout(() => app.exit(0), 3000);
     if (typeof force.unref === 'function') force.unref();
 }
 
@@ -971,11 +1213,11 @@ function openPanel() {
         minimizable: false,
         maximizable: false,
         fullscreenable: false,
-        alwaysOnTop: process.platform === 'win32',
+        alwaysOnTop: true,
         center: true,
         show: false,
         backgroundColor: '#0b0b0e',
-        title: 'Anka Web Güncelleme',
+        title: PANEL_TITLE,
         webPreferences: {
             partition: PANEL_PARTITION,
             contextIsolation: true,
@@ -1074,6 +1316,7 @@ function init(win, currentVersion, options) {
     let firstTimer = null;
     let intervalTimer = null;
     let pollTimer = null;
+    let autoTimer = null;
     let abortCtl = null;
     let panel = null;
 
@@ -1130,6 +1373,16 @@ function init(win, currentVersion, options) {
         if (typeof pollTimer.unref === 'function') pollTimer.unref();
     }
 
+    function scheduleInstall() {
+        if (destroyed || installing || autoTimer) return;
+        if (state.phase !== 'ready' || !state.file || state.attempted === state.version) return;
+        state.attempted = state.version;
+        autoTimer = setTimeout(() => {
+            autoTimer = null;
+            install();
+        }, AUTO_INSTALL_DELAY);
+    }
+
     async function check(manual) {
         if (destroyed || installing) return;
         if (busy) {
@@ -1164,6 +1417,7 @@ function init(win, currentVersion, options) {
 
             if (state.phase === 'ready' && state.version === version && state.file && fs.existsSync(state.file)) {
                 paint();
+                scheduleInstall();
                 return;
             }
 
@@ -1208,6 +1462,7 @@ function init(win, currentVersion, options) {
             state.phase = 'ready';
             state.snoozed = '';
             paint();
+            scheduleInstall();
         } catch (err) {
             if (ctl.signal.aborted || destroyed) return;
             const visible = manual || state.phase === 'downloading';
@@ -1228,6 +1483,8 @@ function init(win, currentVersion, options) {
     async function install() {
         if (installing || destroyed) return;
         if (state.phase !== 'ready' || !state.file) return;
+        clearTimeout(autoTimer);
+        autoTimer = null;
         installing = true;
         let ticker = null;
         const version = state.version;
@@ -1251,6 +1508,14 @@ function init(win, currentVersion, options) {
             }
 
             writeMarker(installed, version);
+
+            if (process.platform === 'win32') {
+                await launchWindowsManager(file, version);
+                if (!win.isDestroyed()) win.hide();
+                quitSoon();
+                return;
+            }
+
             panel = openPanel();
             panel.lock(true);
             if (!win.isDestroyed()) win.hide();
@@ -1262,17 +1527,12 @@ function init(win, currentVersion, options) {
                 panel.set(installView(version, Math.max(6, percent)));
             }, 400);
 
-            if (process.platform === 'win32') {
-                const code = await installWindows(file);
-                if (code !== 0) throw new Error(code === 1 ? 'Kurulum iptal edildi' : 'Kurulum başarısız (kod ' + code + ')');
-            } else {
-                await installAndRelaunchLinux(file);
-            }
+            await installAndRelaunchLinux(file);
 
             clearInterval(ticker);
             ticker = null;
             await panel.set(doneView(version));
-            await sleep(1200);
+            await sleep(1800);
             quitSoon();
         } catch (err) {
             if (ticker) clearInterval(ticker);
@@ -1341,10 +1601,11 @@ function init(win, currentVersion, options) {
         if (destroyed) return;
         destroyed = true;
         clearTimeout(firstTimer);
+        clearTimeout(autoTimer);
         clearInterval(intervalTimer);
         clearInterval(pollTimer);
         if (abortCtl) abortCtl.abort();
-        if (panel) {
+        if (panel && !installing) {
             panel.close();
             panel = null;
         }
