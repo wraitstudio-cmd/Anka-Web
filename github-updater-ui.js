@@ -3,8 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { pathToFileURL } = require('url');
-const { app, ipcMain, BrowserWindow, screen } = require('electron');
+const { app, ipcMain, BrowserWindow, session } = require('electron');
 
 const OWNER = 'wraitstudio-cmd';
 const REPO = 'Anka-Web';
@@ -18,13 +17,21 @@ const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
 const REQUEST_TIMEOUT = 8000;
 const DOWNLOAD_IDLE_TIMEOUT = 30000;
+const DOWNLOAD_ATTEMPTS = 3;
 const MAX_REDIRECTS = 5;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES = 600 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 256 * 1024;
+const MAX_MARKER_BYTES = 4096;
+const MARKER_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+const NOTES_MAX = 600;
 const POLL_MS = 250;
 const PROGRESS_MS = 100;
+const PANEL_WIDTH = 480;
+const PANEL_HEIGHT = 236;
+const PANEL_PARTITION = 'anka-updater-panel';
+const MARKER_FILE = 'anka-last-update.json';
 const ACTION_CHANNEL = 'anka-updater:action';
 const ACTIONS = new Set(['later', 'close', 'install', 'retry', 'update']);
 const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
@@ -32,7 +39,10 @@ const FILE_RE = /^[A-Za-z0-9._-]{1,120}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const DIGEST_RE = /^sha256:([A-Fa-f0-9]{64})$/;
 const PKG_RE = /^[a-z0-9][a-z0-9+.-]{0,100}$/;
+const SAFE_PATH_RE = /^[\p{L}\p{N} :\\._()\-]+$/u;
 const SKIP_BIN_RE = /(chrome-sandbox|chrome_crashpad_handler|\.so(\.|$)|\.sh$|\.pak$|\.bin$|\.dat$|\.json$)/i;
+const TRANSIENT_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET', 'EPIPE']);
+const WIN_INSTALL_ARGS = ['/S', '--updated', '--force-run'];
 const PLATFORM_TARGETS = {
     win32: { kind: 'exe', ext: '.exe' },
     linux: { kind: 'deb', ext: '.deb' }
@@ -44,19 +54,6 @@ const DPKG = '/usr/bin/dpkg';
 const DPKG_DEB = '/usr/bin/dpkg-deb';
 const ENV_BIN = '/usr/bin/env';
 const SH_BIN = '/bin/sh';
-const SILENT_ARGS = ['/S'];
-const SILENT_RUN_ARGS = ['/S', '--force-run'];
-const ELEVATE_CODES = new Set(['EACCES', 'EPERM', 'UNKNOWN']);
-const UI_DIR_NAME = 'updater-ui';
-const UI_SOURCE = 'updater-ui.html';
-const UI_FILE = 'index.html';
-const STATUS_FILE = 'status.js';
-const ACTIVE_FILE = 'active.json';
-const UI_WIDTH = 480;
-const UI_HEIGHT = 300;
-const UI_CLEAN_DELAY = 20000;
-const ACTIVE_MAX_AGE = 30 * 60 * 1000;
-const DONE_LINGER = 1400;
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
 
@@ -225,7 +222,9 @@ function bootUi(version) {
                     : [['Daha Sonra', 'later']]);
                 animate('swap');
             }
-            text.textContent = state.ready ? 'Yeniden başlatıp kurmak için hazır.' : 'İndiriliyor… %' + percent;
+            text.textContent = state.ready
+                ? 'Arka planda sessizce kurulacak ve uygulama otomatik yeniden açılacak.'
+                : 'İndiriliyor… %' + percent + (state.detail ? ' · ' + state.detail : '');
             bar.style.transform = 'scaleX(' + percent / 100 + ')';
         } else if (state.view === 'error') {
             currentKey = 'error:' + Date.now();
@@ -262,7 +261,113 @@ function bootUi(version) {
     return true;
 }
 
+function paintPanel(s) {
+    const byId = (id) => document.getElementById(id);
+    const icons = {
+        install: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.55"/></svg>',
+        done: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+        err: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/></svg>'
+    };
+    const phase = icons[s.phase] ? s.phase : 'install';
+    const percent = Math.max(0, Math.min(100, Number(s.percent) || 0));
+    const step = Number(s.step) || 0;
+    const steps = document.querySelectorAll('.step');
+
+    document.body.className = phase;
+    byId('badge').className = 'badge ' + phase;
+    byId('icon').innerHTML = icons[phase];
+    byId('title').textContent = s.title || '';
+    byId('sub').textContent = s.sub || '';
+    byId('ver').textContent = s.version ? 'v' + s.version : '';
+    byId('ver').hidden = !s.version;
+    byId('pct').textContent = '%' + Math.round(percent);
+    byId('fill').style.transform = 'scaleX(' + percent / 100 + ')';
+
+    for (let i = 0; i < steps.length; i += 1) {
+        steps[i].className = 'step' + (i + 1 < step ? ' ok' : i + 1 === step ? ' on' : '');
+    }
+    return true;
+}
+
 const BOOT_SOURCE = bootUi.toString();
+const PANEL_SCRIPT = paintPanel.toString();
+
+const PANEL_HTML = `<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<title>Anka Web Güncelleme</title>
+<style>
+:root { color-scheme: dark; --bg: #0b0b0e; --border: #26262c; --text: #f4f4f5; --muted: #9a9aa3; --accent: #ff4757; --accent-2: #ff7a45; --ok: #22c55e; --err: #ef4444; }
+* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; cursor: default; }
+html, body { height: 100%; overflow: hidden; }
+body { position: relative; background: linear-gradient(160deg, #15151b 0%, var(--bg) 60%); border: 1px solid var(--border); color: var(--text); font: 13px/1.5 'Segoe UI', system-ui, -apple-system, 'Ubuntu', sans-serif; -webkit-app-region: drag; }
+.glow { position: absolute; top: -45%; left: -15%; width: 80%; height: 90%; border-radius: 50%; background: radial-gradient(closest-side, rgba(255, 71, 87, .24), transparent); filter: blur(24px); animation: drift 7s ease-in-out infinite alternate; pointer-events: none; }
+body.done .glow { background: radial-gradient(closest-side, rgba(34, 197, 94, .22), transparent); }
+body.err .glow { background: radial-gradient(closest-side, rgba(239, 68, 68, .26), transparent); }
+@keyframes drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(40px, 24px) scale(1.15); } }
+.wrap { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 22px; padding: 26px 32px 34px; }
+.head { display: flex; align-items: center; gap: 18px; }
+.badge { position: relative; flex: 0 0 56px; width: 56px; height: 56px; border-radius: 18px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 10px 30px rgba(255, 71, 87, .35); transition: background .3s ease, box-shadow .3s ease; }
+.badge::after { content: ''; position: absolute; inset: 0; border-radius: 18px; border: 2px solid var(--accent); opacity: 0; animation: ring 1.9s ease-out infinite; }
+.badge.done { background: linear-gradient(135deg, #22c55e, #16a34a); box-shadow: 0 10px 30px rgba(34, 197, 94, .35); }
+.badge.done::after { border-color: var(--ok); animation: none; }
+.badge.err { background: var(--err); box-shadow: 0 10px 30px rgba(239, 68, 68, .35); }
+.badge.err::after { border-color: var(--err); animation: none; }
+.badge svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.badge.install svg { animation: spin 1.1s linear infinite; }
+.badge.done svg { animation: pop .45s cubic-bezier(.34, 1.56, .64, 1) both; }
+@keyframes ring { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(1.5); opacity: 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pop { from { transform: scale(.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.txt { min-width: 0; flex: 1; }
+.row { display: flex; align-items: center; gap: 10px; }
+h1 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ver { flex: 0 0 auto; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255, 255, 255, .04); color: var(--muted); font-size: 11px; font-weight: 600; }
+p { margin-top: 4px; color: var(--muted); word-break: break-word; }
+.foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.steps { display: flex; gap: 18px; list-style: none; }
+.step { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 600; transition: color .3s ease; }
+.step::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #33333b; transition: background .3s ease; }
+.step.on { color: var(--text); }
+.step.on::before { background: var(--accent); box-shadow: 0 0 0 4px rgba(255, 71, 87, .2); animation: beat 1.4s ease-in-out infinite; }
+.step.ok { color: var(--text); }
+.step.ok::before { background: var(--ok); }
+body.err .step.on::before { background: var(--err); box-shadow: 0 0 0 4px rgba(239, 68, 68, .2); animation: none; }
+@keyframes beat { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.35); } }
+.pct { font-size: 12px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rail { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: #1b1b21; overflow: hidden; }
+.fill { height: 100%; width: 100%; transform-origin: left; transform: scaleX(0); transition: transform .4s linear; background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent)); background-size: 200% 100%; animation: shimmer 1.3s linear infinite; }
+body.done .fill { background: var(--ok); animation: none; }
+body.err .fill { background: var(--err); animation: none; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body class="install">
+<div class="glow"></div>
+<main class="wrap">
+<div class="head">
+<div class="badge install" id="badge"><span id="icon"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.55"/></svg></span></div>
+<div class="txt">
+<div class="row"><h1 id="title">Arka Planda Güncelleniyor</h1><span class="ver" id="ver" hidden></span></div>
+<p id="sub">Güncelleme hazırlanıyor. Lütfen bekleyin.</p>
+</div>
+</div>
+<div class="foot">
+<ol class="steps">
+<li class="step ok">Doğrulama</li>
+<li class="step on">Kurulum</li>
+<li class="step">Yeniden başlatma</li>
+</ol>
+<span class="pct" id="pct">%0</span>
+</div>
+</main>
+<div class="rail"><div class="fill" id="fill"></div></div>
+</body>
+</html>`;
 
 const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
     phase: 'idle',
@@ -270,21 +375,38 @@ const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
     percent: 0,
     file: '',
     hash: '',
-    snoozed: ''
+    snoozed: '',
+    notes: '',
+    detail: ''
 });
-
-const quitHook = { enabled: false, hooked: false, handled: false };
-const progress = { startedAt: 0 };
-
-function delay(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function safeJson(value) {
     return JSON.stringify(value)
         .replace(/</g, '\\u003c')
         .replace(/\u2028/g, '\\u2028')
         .replace(/\u2029/g, '\\u2029');
+}
+
+function sleep(ms, signal) {
+    return new Promise((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        if (signal) {
+            signal.addEventListener('abort', () => {
+                clearTimeout(timer);
+                resolve();
+            }, { once: true });
+        }
+    });
+}
+
+function transientError(message) {
+    const err = new Error(message);
+    err.transient = true;
+    return err;
+}
+
+function formatBytes(value) {
+    return (Number(value) / 1048576).toFixed(1) + ' MB';
 }
 
 function parseVersion(value) {
@@ -316,6 +438,16 @@ function parseManifest(text) {
     return out;
 }
 
+function cleanNotes(value) {
+    return String(value || '')
+        .replace(/\r/g, '')
+        .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+        .replace(/^#{1,6}\s*/gm, '')
+        .replace(/[*`_]/g, '')
+        .trim()
+        .slice(0, NOTES_MAX);
+}
+
 function isAssetHost(host) {
     return host === 'github.com' || (host.endsWith('.githubusercontent.com') && host !== 'raw.githubusercontent.com');
 }
@@ -336,8 +468,10 @@ function releaseAllow(version) {
 }
 
 function networkError(err) {
-    if (err && (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' || err.code === 'EAI_AGAIN')) {
-        return new Error('İnternet bağlantısı yok');
+    if (err && TRANSIENT_CODES.has(err.code)) {
+        const out = new Error(err.code === 'ECONNRESET' || err.code === 'EPIPE' ? 'Bağlantı koptu' : 'İnternet bağlantısı yok');
+        out.transient = true;
+        return out;
     }
     return err;
 }
@@ -387,13 +521,15 @@ function get(url, options, depth) {
             }
             if (code !== 200) {
                 res.resume();
-                reject(new Error('Sunucu yanıtı: ' + code));
+                const failure = new Error('Sunucu yanıtı: ' + code);
+                failure.transient = code >= 500;
+                reject(failure);
                 return;
             }
             resolve(res);
         });
 
-        req.on('timeout', () => req.destroy(new Error('Bağlantı zaman aşımına uğradı')));
+        req.on('timeout', () => req.destroy(transientError('Bağlantı zaman aşımına uğradı')));
         req.on('error', (err) => reject(networkError(err)));
     });
 }
@@ -411,7 +547,7 @@ function readLimited(res, max) {
             chunks.push(chunk);
         });
         res.on('end', () => resolve(Buffer.concat(chunks)));
-        res.on('error', reject);
+        res.on('error', (err) => reject(networkError(err)));
     });
 }
 
@@ -447,7 +583,7 @@ function pickTarget(manifest, version) {
     return { kind: spec.kind, ext: spec.ext, url: url.toString(), name: name, hash: '' };
 }
 
-async function fetchDigest(target, version, signal) {
+async function fetchRelease(target, version, signal) {
     const url = 'https://api.github.com' + RELEASE_API_PREFIX + 'v' + version;
     const res = await get(url, {
         allow: releaseAllow(version),
@@ -473,15 +609,11 @@ async function fetchDigest(target, version, signal) {
 
     const hash = match[1].toLowerCase();
     if (!HASH_RE.test(hash)) throw new Error('GitHub dosya özeti geçersiz');
-    return hash;
+    return { hash: hash, notes: cleanNotes(release.body) };
 }
 
 function updatesDir() {
     return path.join(app.getPath('userData'), 'updates');
-}
-
-function uiDir() {
-    return path.join(app.getPath('userData'), UI_DIR_NAME);
 }
 
 function prepareDir() {
@@ -506,12 +638,57 @@ function cleanDir(keep) {
     }
 }
 
+function ensureSpace(dir, needed) {
+    if (!needed || typeof fs.statfsSync !== 'function') return;
+    let free = 0;
+    try {
+        const stats = fs.statfsSync(dir);
+        free = Number(stats.bavail) * Number(stats.bsize);
+    } catch (err) {
+        return;
+    }
+    if (free > 0 && free < needed * 2) throw new Error('Diskte yeterli boş alan yok');
+}
+
 function resetState() {
     cleanDir('');
     state.phase = 'idle';
     state.percent = 0;
     state.file = '';
     state.hash = '';
+    state.notes = '';
+    state.detail = '';
+}
+
+function markerPath() {
+    return path.join(app.getPath('userData'), MARKER_FILE);
+}
+
+function writeMarker(from, to) {
+    try {
+        fs.writeFileSync(markerPath(), JSON.stringify({ from: String(from), to: String(to), at: Date.now() }), { mode: 0o600 });
+    } catch (err) {}
+}
+
+function removeMarker() {
+    try {
+        fs.rmSync(markerPath(), { force: true });
+    } catch (err) {}
+}
+
+function takeMarker(installed) {
+    const file = markerPath();
+    let data = null;
+    try {
+        if (fs.statSync(file).size <= MAX_MARKER_BYTES) data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (err) {
+        data = null;
+    }
+    removeMarker();
+    if (!data || typeof data.to !== 'string' || !VERSION_RE.test(data.to)) return '';
+    if (compareVersions(installed, data.to) < 0) return '';
+    if (!(Date.now() - Number(data.at) < MARKER_MAX_AGE)) return '';
+    return data.to;
 }
 
 function sameHash(a, b) {
@@ -530,47 +707,21 @@ function hashFile(file) {
     });
 }
 
-function hasExeMagic(file) {
-    let fd = -1;
+function isPortableExecutable(file) {
+    let fd;
     try {
         fd = fs.openSync(file, 'r');
         const head = Buffer.alloc(2);
-        const read = fs.readSync(fd, head, 0, 2, 0);
-        return read === 2 && head[0] === 0x4d && head[1] === 0x5a;
+        return fs.readSync(fd, head, 0, 2, 0) === 2 && head[0] === 0x4d && head[1] === 0x5a;
     } catch (err) {
         return false;
     } finally {
-        if (fd >= 0) {
+        if (fd !== undefined) {
             try {
                 fs.closeSync(fd);
             } catch (err) {}
         }
     }
-}
-
-async function verifiedFile() {
-    const file = state.file;
-    if (!file || path.dirname(file) !== updatesDir()) throw new Error('Güncelleme dosyası geçersiz konumda');
-
-    let stat;
-    try {
-        stat = fs.lstatSync(file);
-    } catch (err) {
-        resetState();
-        throw new Error('Güncelleme dosyası bulunamadı, yeniden indirilecek');
-    }
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Güncelleme dosyası geçersiz');
-
-    const digest = await hashFile(file);
-    if (!sameHash(digest, state.hash)) {
-        resetState();
-        throw new Error('Dosya doğrulaması başarısız, yeniden indirilecek');
-    }
-    if (process.platform === 'win32' && !hasExeMagic(file)) {
-        resetState();
-        throw new Error('Kurulum dosyası geçersiz, yeniden indirilecek');
-    }
-    return file;
 }
 
 function cleanEnv() {
@@ -594,6 +745,15 @@ async function download(target, version, signal, onProgress, expectedHash) {
             res.destroy();
             throw new Error('Dosya çok büyük');
         }
+
+        try {
+            ensureSpace(dir, total);
+        } catch (err) {
+            res.destroy();
+            throw err;
+        }
+
+        onProgress(0, 0, total);
 
         const hash = crypto.createHash('sha256');
         const out = fs.createWriteStream(partPath, { flags: 'wx', mode: 0o600, highWaterMark: 1024 * 1024 });
@@ -625,19 +785,19 @@ async function download(target, version, signal, onProgress, expectedHash) {
                 const now = Date.now();
                 if (total && now - last >= PROGRESS_MS) {
                     last = now;
-                    onProgress(Math.min(99, Math.floor((received / total) * 100)));
+                    onProgress(Math.min(99, Math.floor((received / total) * 100)), received, total);
                 }
             });
 
-            res.on('error', fail);
+            res.on('error', (err) => fail(networkError(err)));
             res.on('close', () => {
-                if (!res.complete) fail(new Error('İndirme yarıda kesildi'));
+                if (!res.complete) fail(transientError('İndirme yarıda kesildi'));
             });
             out.on('error', fail);
             res.on('end', () => {
                 if (settled) return;
                 if (total && received !== total) {
-                    fail(new Error('İndirilen dosya eksik'));
+                    fail(transientError('İndirilen dosya eksik'));
                     return;
                 }
                 out.end(() => {
@@ -650,6 +810,7 @@ async function download(target, version, signal, onProgress, expectedHash) {
 
         const expected = await expectedHash;
         if (!sameHash(hash.digest('hex'), expected)) throw new Error('Dosya doğrulaması başarısız');
+        if (target.kind === 'exe' && !isPortableExecutable(partPath)) throw new Error('İndirilen dosya geçerli bir kurulum dosyası değil');
         fs.renameSync(partPath, finalPath);
         return finalPath;
     } catch (err) {
@@ -660,9 +821,24 @@ async function download(target, version, signal, onProgress, expectedHash) {
     }
 }
 
-function runProcess(command, args, env) {
+async function downloadWithRetry(target, version, signal, onProgress, expectedHash) {
+    let lastError = null;
+    for (let attempt = 0; attempt < DOWNLOAD_ATTEMPTS; attempt += 1) {
+        try {
+            return await download(target, version, signal, onProgress, expectedHash);
+        } catch (err) {
+            lastError = err;
+            if (signal.aborted || !err || !err.transient || attempt === DOWNLOAD_ATTEMPTS - 1) throw err;
+            await sleep(1500 * (attempt + 1), signal);
+            if (signal.aborted) throw err;
+        }
+    }
+    throw lastError;
+}
+
+function runProcess(command, args) {
     return new Promise((resolve, reject) => {
-        const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: false, windowsHide: true, env: env || cleanEnv() });
+        const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: false, windowsHide: true, env: cleanEnv() });
         let out = '';
         let err = '';
         child.stdout.on('data', (chunk) => {
@@ -676,9 +852,9 @@ function runProcess(command, args, env) {
     });
 }
 
-function launchDetached(command, args, cwd, hide) {
+function launchDetached(command, args, cwd) {
     return new Promise((resolve, reject) => {
-        const child = spawn(command, args, { detached: true, stdio: 'ignore', shell: false, windowsHide: !!hide, cwd: cwd, env: cleanEnv() });
+        const child = spawn(command, args, { detached: true, stdio: 'ignore', shell: false, windowsHide: true, cwd: cwd, env: cleanEnv() });
         child.once('error', reject);
         child.once('spawn', () => {
             child.unref();
@@ -687,241 +863,41 @@ function launchDetached(command, args, cwd, hide) {
     });
 }
 
-async function launchWindowsInstaller(file, args, onElevate) {
-    try {
-        await launchDetached(file, args, path.dirname(file), true);
-        return;
-    } catch (err) {
-        const needsElevation = err && (ELEVATE_CODES.has(err.code) || err.errno === 740 || err.errno === -740);
-        if (!needsElevation) throw err;
-    }
-
-    if (typeof onElevate === 'function') onElevate();
-
-    const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
-    const powershell = path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    if (!fs.existsSync(powershell)) throw new Error('Yönetici izni istenemedi');
-
-    const list = args.map((item) => "'" + item + "'").join(',');
-    const command = "$ErrorActionPreference='Stop';Start-Process -FilePath $env:ANKA_UPDATE_FILE -ArgumentList @(" + list + ') -Verb RunAs';
-    const env = cleanEnv();
-    env.ANKA_UPDATE_FILE = file;
-
-    const result = await runProcess(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command], env);
-    if (result.code !== 0) throw new Error('Yetkilendirme iptal edildi');
-}
-
-function findBrowser() {
-    const roots = [process.env['ProgramFiles(x86)'], process.env.ProgramFiles, process.env.LocalAppData].filter(Boolean);
-    const relatives = [
-        ['Microsoft', 'Edge', 'Application', 'msedge.exe'],
-        ['Google', 'Chrome', 'Application', 'chrome.exe']
-    ];
-    for (const relative of relatives) {
-        for (const root of roots) {
-            const candidate = path.join.apply(path, [root].concat(relative));
-            try {
-                if (fs.statSync(candidate).isFile()) return candidate;
-            } catch (err) {}
-        }
-    }
-    return null;
-}
-
-function uiBounds() {
-    const area = screen.getPrimaryDisplay().workArea;
-    return {
-        x: Math.round(area.x + (area.width - UI_WIDTH) / 2),
-        y: Math.round(area.y + (area.height - UI_HEIGHT) / 2)
-    };
-}
-
-async function launchStandaloneUi(page, dir) {
-    const browser = findBrowser();
-    if (!browser) return false;
-    const pos = uiBounds();
-    const args = [
-        '--app=' + pathToFileURL(page).toString(),
-        '--user-data-dir=' + path.join(dir, 'profile'),
-        '--window-size=' + UI_WIDTH + ',' + UI_HEIGHT,
-        '--window-position=' + pos.x + ',' + pos.y,
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-extensions',
-        '--disable-sync',
-        '--disable-background-networking',
-        '--disable-features=Translate,msEdgeSidebar,msUndersideButton'
-    ];
-    try {
-        await launchDetached(browser, args, dir, false);
-        return true;
-    } catch (err) {
-        return false;
-    }
-}
-
-function openWindowUi(page) {
-    const ui = new BrowserWindow({
-        width: UI_WIDTH,
-        height: UI_HEIGHT,
-        frame: false,
-        resizable: false,
-        minimizable: false,
-        maximizable: false,
-        fullscreenable: false,
-        show: false,
-        center: true,
-        alwaysOnTop: true,
-        backgroundColor: '#0b0b0f',
-        title: 'Anka Web Güncelleme',
-        webPreferences: {
-            contextIsolation: true,
-            sandbox: true,
-            nodeIntegration: false,
-            webSecurity: true,
-            devTools: false
-        }
-    });
-    ui.setMenu(null);
-    ui.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    ui.webContents.on('will-navigate', (event) => event.preventDefault());
-    ui.once('ready-to-show', () => {
-        if (!ui.isDestroyed()) ui.show();
-    });
-    ui.loadFile(page).catch(() => {});
-    return ui;
-}
-
-function writeStatus(data) {
-    const dir = uiDir();
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const file = path.join(dir, STATUS_FILE);
-    const temp = file + '.tmp';
-    const content = 'window.__ankaStatus=' + safeJson(data) + ';';
-    try {
-        fs.writeFileSync(temp, content, { mode: 0o600 });
-        fs.renameSync(temp, file);
-    } catch (err) {
-        try {
-            fs.rmSync(temp, { force: true });
-        } catch (cleanupErr) {}
-        fs.writeFileSync(file, content, { mode: 0o600 });
-    }
-}
-
-function pushStatus(phase, message) {
-    try {
-        writeStatus({
-            phase: phase,
-            version: state.version,
-            message: message || '',
-            startedAt: progress.startedAt || Date.now(),
-            at: Date.now()
+function runInstaller(command, args, cwd, verbatim) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, {
+            detached: true,
+            stdio: 'ignore',
+            shell: false,
+            windowsHide: true,
+            windowsVerbatimArguments: !!verbatim,
+            cwd: cwd,
+            env: cleanEnv()
         });
-    } catch (err) {}
+        child.once('error', reject);
+        child.once('spawn', () => child.unref());
+        child.once('close', (code) => resolve(typeof code === 'number' ? code : -1));
+    });
 }
 
-async function openProgressUi() {
+function needsElevation(err) {
+    if (!err) return false;
+    return err.code === 'EACCES' || err.code === 'UNKNOWN' || /740|elevation/i.test(String(err.message));
+}
+
+async function installWindows(file) {
+    const cwd = path.dirname(file);
     try {
-        progress.startedAt = Date.now();
-        const dir = uiDir();
-        try {
-            fs.rmSync(dir, { recursive: true, force: true });
-        } catch (err) {}
-        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-
-        const page = path.join(dir, UI_FILE);
-        fs.writeFileSync(page, fs.readFileSync(path.join(__dirname, UI_SOURCE)), { mode: 0o600 });
-        pushStatus('preparing');
-        fs.writeFileSync(path.join(dir, ACTIVE_FILE), JSON.stringify({ version: state.version, at: progress.startedAt }), { mode: 0o600 });
-
-        if (process.platform === 'win32') {
-            const launched = await launchStandaloneUi(page, dir);
-            return launched ? { win: null } : null;
-        }
-        return { win: openWindowUi(page) };
+        return await runInstaller(file, WIN_INSTALL_ARGS, cwd, false);
     } catch (err) {
-        return null;
-    }
-}
-
-function closeProgressUi(session) {
-    if (!session || !session.win) return;
-    try {
-        if (!session.win.isDestroyed()) session.win.destroy();
-    } catch (err) {}
-}
-
-function hideWindows(session) {
-    const keep = session && session.win ? session.win : null;
-    const hidden = [];
-    BrowserWindow.getAllWindows().forEach((item) => {
-        try {
-            if (item === keep || item.isDestroyed() || !item.isVisible()) return;
-            item.hide();
-            hidden.push(item);
-        } catch (err) {}
-    });
-    return hidden;
-}
-
-function restoreWindows(list) {
-    list.forEach((item) => {
-        try {
-            if (!item.isDestroyed()) item.show();
-        } catch (err) {}
-    });
-}
-
-function finishPendingUi(installedVersion) {
-    const active = path.join(uiDir(), ACTIVE_FILE);
-    let info = null;
-    try {
-        info = JSON.parse(fs.readFileSync(active, 'utf8'));
-    } catch (err) {
-        return;
+        if (!needsElevation(err)) throw err;
     }
 
-    const target = info && typeof info.version === 'string' ? info.version : '';
-    const fresh = info && Number(info.at) > 0 && Date.now() - Number(info.at) < ACTIVE_MAX_AGE;
-    try {
-        fs.rmSync(active, { force: true });
-    } catch (err) {}
-
-    if (fresh && VERSION_RE.test(target)) {
-        const ok = compareVersions(installedVersion, target) >= 0;
-        try {
-            writeStatus({
-                phase: ok ? 'done' : 'failed',
-                version: ok ? installedVersion : target,
-                message: ok ? '' : 'Kurulum tamamlanamadı. Anka Web\'i kapatıp güncellemeyi tekrar deneyin.',
-                startedAt: Number(info.at),
-                at: Date.now()
-            });
-        } catch (err) {}
-    }
-
-    const timer = setTimeout(() => {
-        try {
-            fs.rmSync(uiDir(), { recursive: true, force: true });
-        } catch (err) {}
-    }, UI_CLEAN_DELAY);
-    if (typeof timer.unref === 'function') timer.unref();
-}
-
-function hookQuit() {
-    if (quitHook.hooked) return;
-    quitHook.hooked = true;
-    app.on('before-quit', (event) => {
-        if (!quitHook.enabled || quitHook.handled) return;
-        if (process.platform !== 'win32' || state.phase !== 'ready' || !state.file) return;
-        quitHook.handled = true;
-        event.preventDefault();
-        verifiedFile()
-            .then((file) => launchWindowsInstaller(file, SILENT_ARGS))
-            .catch(() => {})
-            .then(() => app.quit());
-    });
+    if (!SAFE_PATH_RE.test(file)) throw new Error('Güncelleme dosyasının yolu desteklenmiyor');
+    const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+    const cmd = path.join(root, 'System32', 'cmd.exe');
+    const line = '"start "" /wait "' + file + '" ' + WIN_INSTALL_ARGS.join(' ') + '"';
+    return runInstaller(cmd, ['/d', '/s', '/c', line], cwd, true);
 }
 
 function isLaunchable(file) {
@@ -975,13 +951,107 @@ async function installAndRelaunchLinux(file) {
     const name = await installDeb(file);
     const binary = await findInstalledBinary(name);
     if (!binary) throw new Error('Kurulum tamamlandı ancak uygulama başlatılamadı, elle açın');
-    await launchDetached(SH_BIN, ['-c', 'sleep 2; exec "$0"', binary], path.dirname(binary), false);
+    await launchDetached(SH_BIN, ['-c', 'sleep 2; exec "$0"', binary], path.dirname(binary));
 }
 
 function quitSoon() {
     setTimeout(() => app.quit(), 300);
     const force = setTimeout(() => app.exit(0), 5000);
     if (typeof force.unref === 'function') force.unref();
+}
+
+function openPanel() {
+    const panelWin = new BrowserWindow({
+        width: PANEL_WIDTH,
+        height: PANEL_HEIGHT,
+        useContentSize: true,
+        frame: false,
+        resizable: false,
+        movable: true,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        alwaysOnTop: process.platform === 'win32',
+        center: true,
+        show: false,
+        backgroundColor: '#0b0b0e',
+        title: 'Anka Web Güncelleme',
+        webPreferences: {
+            partition: PANEL_PARTITION,
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            webSecurity: true,
+            devTools: false,
+            spellcheck: false,
+            webviewTag: false,
+            navigateOnDragDrop: false,
+            backgroundThrottling: false
+        }
+    });
+
+    const panelContents = panelWin.webContents;
+    const panelSession = session.fromPartition(PANEL_PARTITION);
+    let locked = false;
+
+    panelSession.setPermissionRequestHandler((wc, permission, callback) => callback(false));
+    panelSession.setPermissionCheckHandler(() => false);
+    panelContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    panelContents.on('will-navigate', (event) => event.preventDefault());
+    panelContents.on('will-attach-webview', (event) => event.preventDefault());
+    if (typeof panelWin.removeMenu === 'function') panelWin.removeMenu();
+
+    panelWin.on('close', (event) => {
+        if (locked) event.preventDefault();
+    });
+
+    const ready = new Promise((resolve) => {
+        panelContents.once('did-finish-load', resolve);
+        panelContents.once('did-fail-load', resolve);
+    });
+
+    panelWin.once('ready-to-show', () => {
+        if (panelWin.isDestroyed()) return;
+        panelWin.show();
+        panelWin.focus();
+    });
+
+    panelWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(PANEL_HTML)).catch(() => {});
+
+    async function set(view) {
+        if (panelWin.isDestroyed()) return;
+        await Promise.race([ready, sleep(4000)]);
+        if (panelWin.isDestroyed()) return;
+        try {
+            await panelContents.executeJavaScript('(' + PANEL_SCRIPT + ')(' + safeJson(view) + ')');
+        } catch (err) {}
+    }
+
+    function lock(value) {
+        locked = !!value;
+    }
+
+    function close() {
+        locked = false;
+        if (!panelWin.isDestroyed()) panelWin.destroy();
+    }
+
+    return { set: set, lock: lock, close: close };
+}
+
+function installView(version, percent) {
+    const sub = process.platform === 'linux'
+        ? 'Anka Web v' + version + ' kuruluyor. Yetki penceresi açılırsa onaylayın, uygulama otomatik yeniden açılacak.'
+        : 'Anka Web v' + version + ' sessizce kuruluyor. Uygulama otomatik olarak yeniden açılacak.';
+    return { phase: 'install', step: 2, version: version, percent: percent, title: 'Arka Planda Güncelleniyor', sub: sub };
+}
+
+function doneView(version) {
+    return { phase: 'done', step: 4, version: version, percent: 100, title: 'Güncelleme tamamlandı', sub: 'Anka Web yeniden başlatılıyor…' };
+}
+
+function errorView(version, message) {
+    return { phase: 'err', step: 2, version: version, percent: 100, title: 'Güncelleme başarısız', sub: message };
 }
 
 function init(win, currentVersion, options) {
@@ -993,15 +1063,9 @@ function init(win, currentVersion, options) {
     const contents = win.webContents;
     const installed = String(currentVersion || app.getVersion());
     const startManual = !!(options && options.manual);
+    const updatedTo = takeMarker(installed);
 
-    quitHook.enabled = !!(options && options.installOnQuit);
-    hookQuit();
-
-    if (!global.__ankaUiFinalized) {
-        global.__ankaUiFinalized = true;
-        finishPendingUi(installed);
-    }
-
+    let announce = updatedTo ? 'Anka Web v' + updatedTo + ' sürümüne güncellendi' : '';
     let destroyed = false;
     let busy = false;
     let installing = false;
@@ -1011,6 +1075,7 @@ function init(win, currentVersion, options) {
     let intervalTimer = null;
     let pollTimer = null;
     let abortCtl = null;
+    let panel = null;
 
     async function ensureUi() {
         if (destroyed || win.isDestroyed()) return false;
@@ -1036,8 +1101,22 @@ function init(win, currentVersion, options) {
     }
 
     function paint() {
-        if (state.phase === 'idle' || state.snoozed === state.version) return;
-        send({ view: 'update', version: state.version, percent: state.percent, ready: state.phase === 'ready' });
+        if (installing || state.phase === 'idle' || state.snoozed === state.version) return;
+        send({
+            view: 'update',
+            version: state.version,
+            percent: state.percent,
+            ready: state.phase === 'ready',
+            notes: state.notes || '',
+            detail: state.detail || ''
+        });
+    }
+
+    function flushAnnounce() {
+        if (!announce) return;
+        const message = announce;
+        announce = '';
+        send({ view: 'info', title: 'Anka Web', message: message });
     }
 
     function startPoll() {
@@ -1052,7 +1131,7 @@ function init(win, currentVersion, options) {
     }
 
     async function check(manual) {
-        if (destroyed) return;
+        if (destroyed || installing) return;
         if (busy) {
             if (manual) {
                 state.snoozed = '';
@@ -1099,25 +1178,32 @@ function init(win, currentVersion, options) {
             state.percent = 0;
             state.file = '';
             state.hash = '';
+            state.notes = '';
+            state.detail = '';
             paint();
 
-            const digestPromise = fetchDigest(target, version, downloadCtl.signal).catch((err) => {
+            const releasePromise = fetchRelease(target, version, downloadCtl.signal).catch((err) => {
                 downloadCtl.abort();
                 throw err;
             });
+            const hashPromise = releasePromise.then((release) => release.hash);
+            hashPromise.catch(() => {});
 
-            const downloadPromise = download(target, version, downloadCtl.signal, (percent) => {
+            const downloadPromise = downloadWithRetry(target, version, downloadCtl.signal, (percent, received, total) => {
                 state.percent = percent;
+                state.detail = total ? formatBytes(received) + ' / ' + formatBytes(total) : '';
                 paint();
-            }, digestPromise);
+            }, hashPromise);
 
-            const results = await Promise.allSettled([digestPromise, downloadPromise]);
+            const results = await Promise.allSettled([releasePromise, downloadPromise]);
             if (results[0].status === 'rejected') throw results[0].reason;
             if (results[1].status === 'rejected') throw results[1].reason;
 
             if (destroyed) return;
             state.file = results[1].value;
-            state.hash = results[0].value;
+            state.hash = results[0].value.hash;
+            state.notes = results[0].value.notes;
+            state.detail = '';
             state.percent = 100;
             state.phase = 'ready';
             state.snoozed = '';
@@ -1129,6 +1215,7 @@ function init(win, currentVersion, options) {
                 cleanDir('');
                 state.phase = 'idle';
                 state.percent = 0;
+                state.detail = '';
             }
             if (visible) await send({ view: 'error', message: err && err.message ? err.message : 'Bilinmeyen hata' });
         } finally {
@@ -1142,40 +1229,68 @@ function init(win, currentVersion, options) {
         if (installing || destroyed) return;
         if (state.phase !== 'ready' || !state.file) return;
         installing = true;
-
-        let session = null;
-        let hidden = [];
+        let ticker = null;
+        const version = state.version;
 
         try {
+            const file = state.file;
+            if (path.dirname(file) !== updatesDir()) throw new Error('Güncelleme dosyası geçersiz konumda');
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Güncelleme dosyası geçersiz');
             if (process.platform !== 'win32' && process.platform !== 'linux') throw new Error('Bu platformda kurulum desteklenmiyor');
 
-            const file = await verifiedFile();
-            quitHook.handled = true;
-
-            session = await openProgressUi();
-            hidden = hideWindows(session);
-
-            if (process.platform === 'win32') {
-                pushStatus('installing');
-                await launchWindowsInstaller(file, SILENT_RUN_ARGS, () => pushStatus('authorizing', 'Açılan yönetici izni penceresini onaylayın.'));
-                pushStatus('installing');
-            } else {
-                pushStatus('installing', 'Yetkilendirme ve kurulum sürüyor, lütfen bekleyin.');
-                await installAndRelaunchLinux(file);
-                pushStatus('done');
-                await delay(DONE_LINGER);
+            if (process.platform === 'win32' && !isPortableExecutable(file)) {
+                resetState();
+                throw new Error('Güncelleme dosyası geçersiz, yeniden indirilecek');
             }
 
+            const digest = await hashFile(file);
+            if (!sameHash(digest, state.hash)) {
+                resetState();
+                throw new Error('Dosya doğrulaması başarısız, yeniden indirilecek');
+            }
+
+            writeMarker(installed, version);
+            panel = openPanel();
+            panel.lock(true);
+            if (!win.isDestroyed()) win.hide();
+            panel.set(installView(version, 6));
+
+            const startedAt = Date.now();
+            ticker = setInterval(() => {
+                const percent = Math.min(94, Math.round(94 * (1 - Math.exp(-(Date.now() - startedAt) / 12000))));
+                panel.set(installView(version, Math.max(6, percent)));
+            }, 400);
+
+            if (process.platform === 'win32') {
+                const code = await installWindows(file);
+                if (code !== 0) throw new Error(code === 1 ? 'Kurulum iptal edildi' : 'Kurulum başarısız (kod ' + code + ')');
+            } else {
+                await installAndRelaunchLinux(file);
+            }
+
+            clearInterval(ticker);
+            ticker = null;
+            await panel.set(doneView(version));
+            await sleep(1200);
             quitSoon();
         } catch (err) {
-            quitHook.handled = false;
+            if (ticker) clearInterval(ticker);
+            removeMarker();
             const message = err && err.message ? err.message : 'Kurulum başlatılamadı';
-            pushStatus('failed', message);
-            closeProgressUi(session);
-            restoreWindows(hidden);
-            await send({ view: 'error', message: message });
-        } finally {
+            if (panel) {
+                await panel.set(errorView(version, message));
+                panel.lock(false);
+                await sleep(2500);
+                panel.close();
+                panel = null;
+            }
+            if (!win.isDestroyed()) {
+                win.show();
+                win.focus();
+            }
             installing = false;
+            await send({ view: 'error', message: message });
         }
     }
 
@@ -1219,6 +1334,7 @@ function init(win, currentVersion, options) {
     function onFinishLoad() {
         uiReady = false;
         paint();
+        flushAnnounce();
     }
 
     function destroy() {
@@ -1228,10 +1344,15 @@ function init(win, currentVersion, options) {
         clearInterval(intervalTimer);
         clearInterval(pollTimer);
         if (abortCtl) abortCtl.abort();
+        if (panel) {
+            panel.close();
+            panel = null;
+        }
         if (state.phase === 'downloading') {
             cleanDir('');
             state.phase = 'idle';
             state.percent = 0;
+            state.detail = '';
         }
         try {
             ipcMain.removeListener(ACTION_CHANNEL, onAction);
@@ -1270,6 +1391,7 @@ function init(win, currentVersion, options) {
     if (typeof intervalTimer.unref === 'function') intervalTimer.unref();
 
     paint();
+    if (!contents.isLoading()) flushAnnounce();
 }
 
 module.exports = { init };
