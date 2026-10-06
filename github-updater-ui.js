@@ -886,8 +886,31 @@ function systemPath(...parts) {
     return path.join(root, 'System32', ...parts);
 }
 
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 async function launchWindows(file, kind) {
     const dir = path.dirname(file);
+    const currentPid = process.pid;
+
+    const isProcessRunning = (pid) => {
+        return new Promise((resolve) => {
+            const { exec } = require('child_process');
+            exec(`tasklist /FI "PID eq ${pid}" /NH`, (err, stdout) => {
+                if (err || !stdout) return resolve(false);
+                resolve(stdout.includes(pid.toString()));
+            });
+        });
+    };
+
+    let attempts = 0;
+    while (await isProcessRunning(currentPid) && attempts < 20) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        attempts++;
+    }
+
+    if (await isProcessRunning(currentPid)) {
+        throw new Error('Eski uygulama süreci tamamen sonlandırılamadı, kurulum iptal edildi.');
+    }
 
     if (kind === 'msi') {
         const line = '/d /s /c ""' + systemPath('msiexec.exe') + '" /i "' + file + '" /passive /norestart & start "" "' + process.execPath + '""';
