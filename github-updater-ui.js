@@ -838,10 +838,9 @@ function init(win, currentVersion, options) {
     const installed = String(currentVersion || app.getVersion());
     takeMarker(installed);
 
-    if (state.phase !== 'downloading') state.phase = 'idle';
+    state.phase = 'idle';
 
     let destroyed = false;
-    let busy = false;
     let updating = false;
     let installing = false;
     let uiReady = false;
@@ -850,6 +849,7 @@ function init(win, currentVersion, options) {
     let pollTimer = null;
     let checkCtl = null;
     let updateCtl = null;
+    let checkPromise = null;
 
     async function ensureUi() {
         if (destroyed || win.isDestroyed()) return false;
@@ -929,9 +929,7 @@ function init(win, currentVersion, options) {
         }
     }
 
-    async function check() {
-        if (destroyed || installing || busy || updating) return;
-        busy = true;
+    async function doCheck(manual) {
         const ctl = new AbortController();
         checkCtl = ctl;
 
@@ -940,24 +938,52 @@ function init(win, currentVersion, options) {
             const res = await get(url, { allow: manifestAllow, timeout: REQUEST_TIMEOUT, redirects: false, signal: ctl.signal }, 0);
             const manifest = parseManifest((await readLimited(res, MAX_MANIFEST_BYTES)).toString('utf8'));
             const version = String(manifest.version || '').trim();
-            if (!VERSION_RE.test(version)) return;
-            if (compareVersions(version, installed) <= 0) return;
-            if (state.snoozed === version) return;
-            if (state.phase === 'prompt' && state.version === version) return;
+            if (!VERSION_RE.test(version)) return { status: 'error', message: 'Sürüm bilgisi okunamadı' };
+            if (compareVersions(version, installed) <= 0) return { status: 'current', currentVersion: installed };
 
             const target = pickTarget(manifest, version);
-            if (!target || destroyed) return;
+            if (!target) return { status: 'error', message: 'Bu platform desteklenmiyor' };
+            if (destroyed) return { status: 'error', message: 'Güncelleyici durduruldu' };
 
+            const result = { status: 'available', version: version, currentVersion: installed };
+            if (manual) state.snoozed = '';
+            if (state.snoozed === version) return result;
+
+            const alreadyShown = state.phase === 'prompt' && state.version === version;
             state.version = version;
             state.target = target;
             state.file = '';
+            if (alreadyShown && !manual) return result;
+
             state.phase = 'prompt';
             await send({ view: 'prompt', version: version });
+            return result;
         } catch (err) {
+            return { status: 'error', message: err && err.message ? err.message : 'Kontrol başarısız' };
         } finally {
-            busy = false;
             if (checkCtl === ctl) checkCtl = null;
         }
+    }
+
+    async function check(manual) {
+        if (destroyed) return { status: 'error', message: 'Güncelleyici durduruldu' };
+        if (installing || updating) return { status: 'available', version: state.version, currentVersion: installed };
+
+        if (checkPromise) {
+            const pending = await checkPromise;
+            if (manual && pending.status === 'available' && state.phase !== 'prompt' && state.phase !== 'downloading') {
+                state.snoozed = '';
+                state.phase = 'prompt';
+                await send({ view: 'prompt', version: pending.version });
+            }
+            return pending;
+        }
+
+        const promise = doCheck(!!manual).finally(() => {
+            if (checkPromise === promise) checkPromise = null;
+        });
+        checkPromise = promise;
+        return promise;
     }
 
     function cancelUpdate() {
@@ -982,6 +1008,8 @@ function init(win, currentVersion, options) {
         handle(action);
     }
 
+    const controller = { check: check, destroy: destroy };
+
     function destroy() {
         if (destroyed) return;
         destroyed = true;
@@ -993,14 +1021,18 @@ function init(win, currentVersion, options) {
         try {
             ipcMain.removeListener(ACTION_CHANNEL, onAction);
         } catch (err) {}
+        try {
+            if (win.__ankaUpdater === controller) delete win.__ankaUpdater;
+        } catch (err) {}
     }
 
     ipcMain.on(ACTION_CHANNEL, onAction);
     win.once('closed', destroy);
+    win.__ankaUpdater = controller;
     global.__ankaUpdaterInstance = { destroy: destroy };
 
-    firstTimer = setTimeout(() => check(), FIRST_CHECK_DELAY);
-    intervalTimer = setInterval(() => check(), CHECK_INTERVAL);
+    firstTimer = setTimeout(() => check(false), FIRST_CHECK_DELAY);
+    intervalTimer = setInterval(() => check(false), CHECK_INTERVAL);
     if (typeof firstTimer.unref === 'function') firstTimer.unref();
     if (typeof intervalTimer.unref === 'function') intervalTimer.unref();
 }
