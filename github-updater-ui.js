@@ -73,7 +73,7 @@ function bootUi(version) {
     root.innerHTML = `
         <style>
             :host { all: initial; }
-            .card { position: fixed; right: 24px; bottom: 24px; width: min(400px, calc(100vw - 32px)); box-sizing: border-box; display: flex; gap: 14px; padding: 18px; border-radius: 16px; border: 1px solid var(--border, #27272a); background: var(--panel, #18181b); color: var(--text, #f4f4f5); box-shadow: var(--shadow-pop, 0 20px 40px rgba(0,0,0,.45)); font: 13px/1.5 var(--font, system-ui, sans-serif); z-index: 2147483000; overflow: hidden; animation: cardIn .42s cubic-bezier(.16,1,.3,1) both; will-change: transform, opacity; }
+            .card { position: fixed; right: 24px; bottom: 24px; width: min(400px, calc(100vw - 32px)); box-sizing: border-box; display: flex; gap: 14px; padding: 18px; border-radius: 20px; border: 1px solid var(--border, rgba(255, 255, 255, 0.12)); background: var(--panel, #18181b); color: var(--text, #f4f4f5); box-shadow: var(--shadow-pop, 0 20px 40px rgba(0,0,0,.45)); font: 13px/1.5 var(--font, system-ui, sans-serif); z-index: 2147483000; overflow: hidden; animation: cardIn .42s cubic-bezier(.16,1,.3,1) both; will-change: transform, opacity; }
             .card.out { animation: cardOut .22s cubic-bezier(.4,0,1,1) both; }
             .card::before { content: ''; position: absolute; left: 0; top: 0; right: 0; height: 2px; background: linear-gradient(90deg, var(--accent, #ff4757), var(--accent-2, #ff7a45)); transform-origin: left; animation: topbar .7s .1s cubic-bezier(.16,1,.3,1) both; }
             @keyframes cardIn { from { opacity: 0; transform: translateY(28px) scale(.94); } to { opacity: 1; transform: none; } }
@@ -102,7 +102,7 @@ function bootUi(version) {
             .bar { height: 100%; width: 100%; border-radius: 3px; transform-origin: left; transform: scaleX(0); transition: transform .25s ease-out; background: linear-gradient(90deg, var(--accent, #ff4757), var(--accent-2, #ff7a45), var(--accent, #ff4757)); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
             @keyframes shimmer { to { background-position: -200% 0; } }
             .actions { display: flex; gap: 8px; margin-top: 14px; }
-            .btn { flex: 1; min-height: 38px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border, #27272a); background: transparent; color: inherit; font: inherit; font-weight: 600; cursor: pointer; touch-action: manipulation; transition: background-color .15s ease, transform .1s ease, filter .15s ease; }
+            .btn { flex: 1; min-height: 38px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border, #27272a); background: transparent; color: inherit; font: inherit; font-weight: 600; cursor: pointer; touch-action: manipulation; transition: background-color .15s ease, transform .1s ease, filter .15s ease; }
             .btn:hover { background: var(--hover, #27272a); }
             .btn:active { transform: scale(.96); }
             .btn.primary { flex: 2; background: var(--accent, #ff4757); border-color: transparent; color: #fff; animation: glow 2s ease-in-out infinite; }
@@ -858,9 +858,7 @@ function quitSoon(installerPath) {
                 stdio: 'ignore'
             });
             subprocess.unref();
-        } catch (err) {
-            console.error("Yükleyici başlatılamadı:", err);
-        }
+        } catch (err) {}
     }
 
     setTimeout(() => {
@@ -877,40 +875,16 @@ function systemPath(...parts) {
     return path.join(root, 'System32', ...parts);
 }
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
 async function launchWindows(file, kind) {
     const dir = path.dirname(file);
-    const currentPid = process.pid;
-
-    const isProcessRunning = (pid) => {
-        return new Promise((resolve) => {
-            const { exec } = require('child_process');
-            exec(`tasklist /FI "PID eq ${pid}" /NH`, (err, stdout) => {
-                if (err || !stdout) return resolve(false);
-                resolve(stdout.includes(pid.toString()));
-            });
-        });
-    };
-
-    let attempts = 0;
-    while (await isProcessRunning(currentPid) && attempts < 20) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        attempts++;
-    }
-
-    if (await isProcessRunning(currentPid)) {
-        throw new Error('Eski uygulama süreci tamamen sonlandırılamadı, kurulum iptal edildi.');
-    }
-
     if (kind === 'msi') {
-        const line = '/d /s /c ""' + systemPath('msiexec.exe') + '" /i "' + file + '" /passive /norestart & start "" "' + process.execPath + '""';
+        const line = '/d /s /c ""' + systemPath('msiexec.exe') + '" /i "' + file + '" /quiet /norestart & start "" "' + process.execPath + '""';
         await launchDetached(systemPath('cmd.exe'), [line], dir, { verbatim: true, hide: true });
         return;
     }
 
     try {
-        await launchDetached(file, ['--updated', '--force-run'], dir, { hide: false });
+        await launchDetached(file, ['--updated', '--force-run', '/S', '/verysilent', '/suppressmsgboxes', '/norestart', '/nogui'], dir, { hide: true });
     } catch (err) {
         const result = await runProcess(
             systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe'),
@@ -974,7 +948,7 @@ async function installDeb(file) {
     if (info.code !== 0 || !PKG_RE.test(name)) throw new Error('Geçersiz .deb paketi');
 
     const aptGet = findBin('apt-get');
-    if (aptGet) await runPrivileged(aptGet, ['install', '-y', '--allow-downgrades', file]);
+    if (aptGet) await runPrivileged(aptGet, ['install', '-y', '-qq', '--allow-downgrades', file]);
     else await runPrivileged(dpkg, ['-i', file]);
 
     const listed = await runProcess(dpkg, ['-L', name]);
@@ -994,9 +968,9 @@ async function installRpm(file) {
     const yum = findBin('yum');
     const zypper = findBin('zypper');
 
-    if (dnf) await runPrivileged(dnf, ['install', '-y', '--nogpgcheck', file]);
+    if (dnf) await runPrivileged(dnf, ['install', '-y', '-q', '--nogpgcheck', file]);
     else if (zypper) await runPrivileged(zypper, ['--non-interactive', '--no-gpg-checks', 'install', '--allow-unsigned-rpm', '--allow-downgrade', file]);
-    else if (yum) await runPrivileged(yum, ['install', '-y', '--nogpgcheck', file]);
+    else if (yum) await runPrivileged(yum, ['install', '-y', '-q', '--nogpgcheck', file]);
     else await runPrivileged(rpm, ['-U', '--replacepkgs', '--nosignature', file]);
 
     const listed = await runProcess(rpm, ['-ql', name]);
@@ -1024,90 +998,9 @@ function installAppImage(file) {
         try {
             fs.rmSync(temp, { force: true });
         } catch (cleanupErr) {}
-        throw new Error('AppImage dosyası değiştirilemedi: ' + (err && err.code ? err.code : 'hata'));
+        throw new Error('AppImage dosyası değiştirilemedi');
     }
     return dest;
-}
-
-function tarRoot() {
-    const exec = process.execPath;
-    const dir = path.dirname(exec);
-    const foreign = /^\/(usr|opt|snap|nix)\//.test(dir + '/') || /^electron/i.test(path.basename(exec));
-    if (!process.env.APPIMAGE && !foreign) {
-        try {
-            fs.accessSync(dir, fs.constants.W_OK);
-            fs.accessSync(path.dirname(dir), fs.constants.W_OK);
-            return dir;
-        } catch (err) {}
-    }
-    return path.join(os.homedir(), '.local', 'share', 'anka-web');
-}
-
-function findExecutable(dir) {
-    const preferred = path.basename(process.execPath);
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    let best = null;
-    let bestSize = -1;
-    for (const entry of entries) {
-        if (!entry.isFile() || SKIP_BIN_RE.test(entry.name)) continue;
-        const full = path.join(dir, entry.name);
-        const stat = fs.statSync(full);
-        if ((stat.mode & 0o111) === 0) continue;
-        if (entry.name === preferred) return entry.name;
-        if (stat.size > bestSize) {
-            best = entry.name;
-            bestSize = stat.size;
-        }
-    }
-    return best;
-}
-
-async function installTarGz(file) {
-    const tar = findBin('tar');
-    if (!tar) throw new Error('tar bulunamadı');
-
-    const root = tarRoot();
-    const parent = path.dirname(root);
-    fs.mkdirSync(parent, { recursive: true, mode: 0o755 });
-
-    const staging = root + '.new-' + process.pid;
-    const old = root + '.old-' + process.pid;
-    fs.rmSync(staging, { force: true, recursive: true });
-    fs.mkdirSync(staging, { mode: 0o755 });
-
-    try {
-        const result = await runProcess(tar, ['-xzf', file, '-C', staging, '--no-same-owner']);
-        if (result.code !== 0) throw new Error('Arşiv açılamadı');
-
-        let source = staging;
-        const entries = fs.readdirSync(staging, { withFileTypes: true });
-        if (entries.length === 1 && entries[0].isDirectory()) source = path.join(staging, entries[0].name);
-
-        const exeName = findExecutable(source);
-        if (!exeName) throw new Error('Arşivde çalıştırılabilir dosya bulunamadı');
-
-        const hadOld = fs.existsSync(root);
-        if (hadOld) fs.renameSync(root, old);
-        try {
-            fs.renameSync(source, root);
-        } catch (err) {
-            if (hadOld) fs.renameSync(old, root);
-            throw err;
-        }
-
-        fs.rmSync(staging, { force: true, recursive: true });
-        if (hadOld) {
-            try {
-                fs.rmSync(old, { force: true, recursive: true });
-            } catch (err) {}
-        }
-        return path.join(root, exeName);
-    } catch (err) {
-        try {
-            fs.rmSync(staging, { force: true, recursive: true });
-        } catch (cleanupErr) {}
-        throw err;
-    }
 }
 
 async function installAndRelaunchLinux(file, kind) {
@@ -1115,10 +1008,9 @@ async function installAndRelaunchLinux(file, kind) {
     if (kind === 'deb') binary = await installDeb(file);
     else if (kind === 'rpm') binary = await installRpm(file);
     else if (kind === 'appimage') binary = installAppImage(file);
-    else if (kind === 'targz') binary = await installTarGz(file);
     else throw new Error('Bu paket türü desteklenmiyor');
 
-    if (!binary) throw new Error('Kurulum tamamlandı ancak uygulama başlatılamadı, elle açın');
+    if (!binary) throw new Error('Kurulum tamamlandı ancak uygulama başlatılamadı');
     await launchDetached(SH_BIN, ['-c', LINUX_RELAUNCH, binary, String(process.pid)], path.dirname(binary), { hide: true });
 }
 
@@ -1232,7 +1124,7 @@ function init(win, currentVersion, options) {
             const res = await get(url, { allow: manifestAllow, timeout: REQUEST_TIMEOUT, redirects: false, signal: ctl.signal }, 0);
             const manifest = parseManifest((await readLimited(res, MAX_MANIFEST_BYTES)).toString('utf8'));
             const version = String(manifest.version || '').trim();
-            if (!VERSION_RE.test(version)) throw new Error('Manifestteki sürüm geçersiz');
+            if (!VERSION_RE.test(version)) throw new Error('Sürüm bilgisi geçersiz');
 
             if (compareVersions(version, installed) <= 0) {
                 if (state.phase !== 'idle') resetState();
@@ -1317,40 +1209,39 @@ function init(win, currentVersion, options) {
 
         try {
             const file = state.file;
-            if (path.dirname(file) !== updatesDir()) throw new Error('Güncelleme dosyası geçersiz konumda');
+            if (path.dirname(file) !== updatesDir()) throw new Error('Geçersiz dosya konumu');
             const stat = fs.lstatSync(file);
-            if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Güncelleme dosyası geçersiz');
-            if (process.platform !== 'win32' && process.platform !== 'linux') throw new Error('Bu platformda kurulum desteklenmiyor');
+            if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Geçersiz dosya');
+            if (process.platform !== 'win32' && process.platform !== 'linux') throw new Error('Desteklenmeyen platform');
 
             if (!validMagic(kind, file)) {
                 resetState();
-                throw new Error('Güncelleme dosyası geçersiz, yeniden indirilecek');
+                throw new Error('Dosya doğrulaması başarısız');
             }
 
             const digest = await hashFile(file);
             if (!sameHash(digest, state.hash)) {
                 resetState();
-                throw new Error('Dosya doğrulaması başarısız, yeniden indirilecek');
+                throw new Error('İmza doğrulaması başarısız');
             }
 
             writeMarker(installed, version);
 
             if (process.platform === 'win32') {
-                await send({ view: 'info', title: 'Anka Web', message: 'Kurulum penceresi açılıyor…', sticky: true });
+                await send({ view: 'info', title: 'Anka Web', message: 'Kurulum arka planda gerçekleştiriliyor...', sticky: true });
                 await launchWindows(file, kind);
                 quitSoon();
                 return;
             }
 
-            await send({ view: 'info', title: 'Anka Web', message: 'Kurulum başlıyor. Yetki penceresi açılırsa onaylayın.', sticky: true });
+            await send({ view: 'info', title: 'Anka Web', message: 'Kurulum arka planda başlatılıyor...', sticky: true });
             await installAndRelaunchLinux(file, kind);
-            await send({ view: 'info', title: 'Güncelleme tamamlandı', message: 'Anka Web yeniden başlatılıyor…', sticky: true });
             await sleep(900);
             quitSoon();
         } catch (err) {
             removeMarker();
             installing = false;
-            await send({ view: 'error', message: err && err.message ? err.message : 'Kurulum başlatılamadı' });
+            await send({ view: 'error', message: err && err.message ? err.message : 'Kurulum başarısız' });
         }
     }
 
