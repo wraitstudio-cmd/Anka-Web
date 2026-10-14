@@ -877,7 +877,7 @@ function systemPath(...parts) {
     return path.join(root, 'System32', ...parts);
 }
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const sleepFunction = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function launchWindows(file, kind) {
     const dir = path.dirname(file);
