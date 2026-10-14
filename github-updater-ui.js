@@ -12,7 +12,7 @@ const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO +
 const MANIFEST_PATH = '/' + OWNER + '/' + REPO + '/refs/heads/main/latest.yml';
 const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
-const UI_VERSION = 10;
+const UI_VERSION = 11;
 const FIRST_CHECK_DELAY = 1000;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
@@ -221,7 +221,7 @@ function bootUi(version) {
                 if (state.prompt) {
                     title.textContent = 'Yeni sürüm mevcut: ' + state.version;
                     text.textContent = 'Güncellemeyi yüklemek istiyor musunuz?';
-                    setButtons([['Daha Sonra', 'skip'], ['Güncelle', 'install', true]]);
+                    setButtons([['Daha Sonra', 'skip'], ['Güncelle', 'update', true]]);
                 } else if (isReady) {
                     title.textContent = 'Güncelleme hazır: ' + state.version;
                     text.textContent = 'Arka planda güncelleniyor…';
@@ -1332,17 +1332,11 @@ function setupWindow(win, currentVersion, options) {
             state.snoozed = state.version;
             if (abortCtl) abortCtl.abort();
             send(null);
-        } else if (action === 'install') {
+        } else if (action === 'install' || action === 'update') {
             startDownloadAndInstall();
         } else if (action === 'retry') {
             if (state.phase === 'ready') startDownloadAndInstall();
             else check(true);
-        } else if (action === 'update') {
-            if (state.phase === 'idle') check(true);
-            else {
-                state.snoozed = '';
-                paint();
-            }
         }
     }
 
