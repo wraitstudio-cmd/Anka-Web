@@ -2,6 +2,8 @@
 
 Anka-Web projesinin kaynak kodları, sürüm yönetimleri ve dağıtım konfigürasyonları bu depo üzerinden yönetilmektedir.
 
+Not: Güncelleme Yöneticisi Teknik sorundan dolayı bozulmuştur. Bu sorununun üzerinde çalışıyoruz.
+
 Proje hakkında detaylı bilgi almak, kullanım kılavuzunu incelemek ve canlı demoya ulaşmak için resmi web sitemizi ziyaret edebilirsiniz:
 
 🌐 **Resmi Web Sitesi:** [Linke Gitmek İçin Tıkla](https://ankasite.vercel.app)  
