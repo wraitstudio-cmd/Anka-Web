@@ -4,7 +4,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { app, ipcMain } = require('electron');
+const { app, ipcMain, BrowserWindow } = require('electron');
 
 const OWNER = 'wraitstudio-cmd';
 const REPO = 'Anka-Web';
@@ -841,7 +841,6 @@ function launchDetached(command, args, cwd, options) {
 
 function quitSoon(installerPath) {
     try {
-        const { BrowserWindow } = require('electron');
         const windows = BrowserWindow.getAllWindows();
         for (const win of windows) {
             if (win && !win.isDestroyed()) {
@@ -850,26 +849,50 @@ function quitSoon(installerPath) {
         }
     } catch (e) {}
 
-    if (installerPath) {
-        try {
-            const { spawn } = require('child_process');
-            const subprocess = spawn(installerPath, [], {
-                detached: true,
-                stdio: 'ignore'
-            });
-            subprocess.unref();
-        } catch (err) {
-            console.error("Yükleyici başlatılamadı:", err);
+    const quitTimeout = setTimeout(() => {
+        if (installerPath) {
+            try {
+                const { spawn } = require('child_process');
+                const subprocess = spawn(installerPath, [], {
+                    detached: true,
+                    stdio: 'ignore'
+                });
+                subprocess.unref();
+            } catch (err) {
+                console.error("Yükleyici başlatılamadı:", err);
+            }
         }
+
+        try {
+            app.quit();
+        } catch (e) {}
+
+        const exitTimeout = setTimeout(() => {
+            try {
+                app.exit(0);
+            } catch (e) {}
+        }, 100);
+
+        if (exitTimeout && typeof exitTimeout.unref === 'function') {
+            exitTimeout.unref();
+        }
+    }, 300);
+
+    if (quitTimeout && typeof quitTimeout.unref === 'function') {
+        quitTimeout.unref();
     }
 
-    setTimeout(() => {
+    const forceTimeout = setTimeout(() => {
         try {
             app.exit(0);
         } catch (e) {
             process.exit(0);
         }
-    }, 200);
+    }, 3000);
+
+    if (forceTimeout && typeof forceTimeout.unref === 'function') {
+        forceTimeout.unref();
+    }
 }
 
 function systemPath(...parts) {
@@ -1122,11 +1145,8 @@ async function installAndRelaunchLinux(file, kind) {
     await launchDetached(SH_BIN, ['-c', LINUX_RELAUNCH, binary, String(process.pid)], path.dirname(binary), { hide: true });
 }
 
-function init(win, currentVersion, options) {
+function setupWindow(win, currentVersion, options) {
     if (!win || win.isDestroyed()) return;
-
-    const previous = global.__ankaUpdaterInstance;
-    if (previous) previous.destroy();
 
     const contents = win.webContents;
     const installed = String(currentVersion || app.getVersion());
@@ -1338,7 +1358,7 @@ function init(win, currentVersion, options) {
             if (process.platform === 'win32') {
                 await send({ view: 'info', title: 'Anka Web', message: 'Kurulum penceresi açılıyor…', sticky: true });
                 await launchWindows(file, kind);
-                quitSoon();
+                quitSoon(file);
                 return;
             }
 
@@ -1424,9 +1444,6 @@ function init(win, currentVersion, options) {
                 delete win.__ankaUpdater;
             } catch (err) {}
         }
-        if (global.__ankaUpdaterInstance && global.__ankaUpdaterInstance.destroy === destroy) {
-            global.__ankaUpdaterInstance = null;
-        }
     }
 
     ipcMain.on(ACTION_CHANNEL, onAction);
@@ -1440,7 +1457,6 @@ function init(win, currentVersion, options) {
         check: (manual) => check(!!manual),
         destroy: destroy
     });
-    global.__ankaUpdaterInstance = { destroy: destroy };
 
     firstTimer = setTimeout(() => check(startManual), FIRST_CHECK_DELAY);
     intervalTimer = setInterval(() => check(false), CHECK_INTERVAL);
@@ -1449,6 +1465,15 @@ function init(win, currentVersion, options) {
 
     paint();
     if (!contents.isLoading()) flushAnnounce();
+}
+
+function init(targetWin, currentVersion, options) {
+    const wins = targetWin ? [targetWin] : BrowserWindow.getAllWindows();
+    wins.forEach(win => setupWindow(win, currentVersion, options));
+
+    app.on('browser-window-created', (event, win) => {
+        setupWindow(win, currentVersion, options);
+    });
 }
 
 module.exports = { init };
