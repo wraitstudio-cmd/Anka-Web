@@ -839,6 +839,7 @@ function launchDetached(command, args, cwd, options) {
     });
 }
 
+function quitSoon() {
 function quitSoon(installerPath) {
     try {
         const { BrowserWindow } = require('electron');
@@ -850,8 +851,20 @@ function quitSoon(installerPath) {
         }
     } catch (e) {}
 
+    const quitTimeout = setTimeout(() => {
     if (installerPath) {
         try {
+            app.quit();
+        } catch (e) {}
+        
+        const exitTimeout = setTimeout(() => {
+            try {
+                app.exit(0);
+            } catch (e) {}
+        }, 100);
+        
+        if (exitTimeout && typeof exitTimeout.unref === 'function') {
+            exitTimeout.unref();
             const { spawn } = require('child_process');
             const subprocess = spawn(installerPath, [], {
                 detached: true,
@@ -861,11 +874,22 @@ function quitSoon(installerPath) {
         } catch (err) {
             console.error("Yükleyici başlatılamadı:", err);
         }
+    }, 300);
+
+    if (quitTimeout && typeof quitTimeout.unref === 'function') {
+        quitTimeout.unref();
     }
 
+    const forceTimeout = setTimeout(() => {
     setTimeout(() => {
         try {
             app.exit(0);
+        } catch (e) {}
+    }, 3000);
+
+    if (forceTimeout && typeof forceTimeout.unref === 'function') {
+        forceTimeout.unref();
+    }
         } catch (e) {
             process.exit(0);
         }
