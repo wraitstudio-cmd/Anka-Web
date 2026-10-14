@@ -12,11 +12,9 @@ const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO +
 const MANIFEST_PATH = '/' + OWNER + '/' + REPO + '/main/latest.yml';
 const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
-const UI_VERSION = 9;
+const UI_VERSION = 10;
 const FIRST_CHECK_DELAY = 500;
 const CHECK_INTERVAL = 5 * 60 * 1000;
-const FOCUS_CHECK_GAP = 60 * 1000;
-const AUTO_INSTALL_DELAY = 500;
 const REQUEST_TIMEOUT = 8000;
 const DOWNLOAD_IDLE_TIMEOUT = 30000;
 const DOWNLOAD_ATTEMPTS = 3;
@@ -27,17 +25,13 @@ const MAX_DOWNLOAD_BYTES = 600 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_MARKER_BYTES = 4096;
 const MARKER_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-const NOTES_MAX = 600;
 const POLL_MS = 250;
-const PROGRESS_MS = 100;
 const MARKER_FILE = 'anka-last-update.json';
 const ACTION_CHANNEL = 'anka-updater:action';
-const ACTIONS = new Set(['later', 'close', 'install', 'retry', 'update']);
 const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 const FILE_RE = /^[A-Za-z0-9._-]{1,120}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const DIGEST_RE = /^sha256:([A-Fa-f0-9]{64})$/;
-const PKG_RE = /^[a-z0-9][a-z0-9+._-]{0,100}$/i;
 const SKIP_BIN_RE = /(chrome-sandbox|chrome_crashpad_handler|\.so(\.|$)|\.sh$|\.pak$|\.bin$|\.dat$|\.json$)/i;
 const TRANSIENT_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET', 'EPIPE']);
 const EXTENSIONS = { exe: '.exe', msi: '.msi', deb: '.deb', rpm: '.rpm', appimage: '.AppImage', targz: '.tar.gz' };
@@ -132,7 +126,8 @@ function bootUi(version) {
     }
 
     function show() {
-        if (card.hidden) {
+        clearTimeout(leaveTimer);
+        if (card.hidden || card.classList.contains('out')) {
             card.hidden = false;
             card.classList.remove('out');
         }
@@ -148,14 +143,25 @@ function bootUi(version) {
     }
 
     function render(state) {
-        if (!state || state.view !== 'prompt') {
+        if (!state) {
             dismiss();
             return;
         }
-        title.textContent = 'Güncelleme Mevcut';
-        text.textContent = 'Anka Web v' + state.version + ' sürümü hazır. Şimdi güncellensin mi?';
-        setButtons([['Hayır', 'later'], ['Evet', 'install', true]]);
-        show();
+        if (state.view === 'prompt') {
+            title.textContent = 'Güncelleme Mevcut';
+            text.textContent = 'Anka Web v' + state.version + ' sürümü hazır. Şimdi güncellensin mi?';
+            setButtons([['Daha sonra', 'later'], ['Güncelle', 'install', true]]);
+            show();
+            return;
+        }
+        if (state.view === 'error') {
+            title.textContent = 'Güncelleme Başarısız';
+            text.textContent = 'Güncelleme tamamlanamadı. Tekrar denemek ister misiniz?';
+            setButtons([['Kapat', 'close'], ['Tekrar dene', 'retry', true]]);
+            show();
+            return;
+        }
+        dismiss();
     }
 
     window.__ankaUpdater = Object.freeze({
@@ -175,8 +181,7 @@ const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
     phase: 'idle',
     version: '',
     file: '',
-    hash: '',
-    kind: '',
+    target: null,
     snoozed: ''
 });
 
@@ -671,7 +676,7 @@ function launchDetached(command, args, cwd, options) {
     });
 }
 
-function quitSoon(installerPath) {
+function quitSoon() {
     try {
         const { BrowserWindow } = require('electron');
         const windows = BrowserWindow.getAllWindows();
@@ -681,17 +686,6 @@ function quitSoon(installerPath) {
             }
         }
     } catch (e) {}
-
-    if (installerPath) {
-        try {
-            const { spawn } = require('child_process');
-            const subprocess = spawn(installerPath, [], {
-                detached: true,
-                stdio: 'ignore'
-            });
-            subprocess.unref();
-        } catch (err) {}
-    }
 
     setTimeout(() => {
         try {
@@ -842,16 +836,20 @@ function init(win, currentVersion, options) {
 
     const contents = win.webContents;
     const installed = String(currentVersion || app.getVersion());
-    const updatedTo = takeMarker(installed);
+    takeMarker(installed);
+
+    if (state.phase !== 'downloading') state.phase = 'idle';
 
     let destroyed = false;
     let busy = false;
+    let updating = false;
     let installing = false;
     let uiReady = false;
     let firstTimer = null;
     let intervalTimer = null;
     let pollTimer = null;
-    let abortCtl = null;
+    let checkCtl = null;
+    let updateCtl = null;
 
     async function ensureUi() {
         if (destroyed || win.isDestroyed()) return false;
@@ -888,29 +886,54 @@ function init(win, currentVersion, options) {
     }
 
     async function install(target, version, file) {
-        if (installing || destroyed) return;
         installing = true;
-        send(null);
         try {
             writeMarker(installed, version);
             if (process.platform === 'win32') {
                 await launchWindows(file, target.kind);
-                quitSoon();
-                return;
+            } else {
+                await installAndRelaunchLinux(file, target.kind);
             }
-            await installAndRelaunchLinux(file, target.kind);
             quitSoon();
         } catch (err) {
             removeMarker();
             installing = false;
+            throw err;
+        }
+    }
+
+    async function runUpdate() {
+        if (destroyed || installing || updating) return;
+        const target = state.target;
+        const version = state.version;
+        if (!target || !version) return;
+
+        updating = true;
+        state.phase = 'downloading';
+        const ctl = new AbortController();
+        updateCtl = ctl;
+        send(null);
+
+        try {
+            const release = await fetchRelease(target, version, ctl.signal);
+            const file = await downloadWithRetry(target, version, ctl.signal, Promise.resolve(release.hash));
+            if (destroyed || ctl.signal.aborted) return;
+            state.file = file;
+            await install(target, version, file);
+        } catch (err) {
+            if (!destroyed && !ctl.signal.aborted) send({ view: 'error' });
+        } finally {
+            updating = false;
+            if (!installing) state.phase = 'idle';
+            if (updateCtl === ctl) updateCtl = null;
         }
     }
 
     async function check() {
-        if (destroyed || installing || busy) return;
+        if (destroyed || installing || busy || updating) return;
         busy = true;
         const ctl = new AbortController();
-        abortCtl = ctl;
+        checkCtl = ctl;
 
         try {
             const url = MANIFEST_URL + '?t=' + Date.now();
@@ -918,35 +941,38 @@ function init(win, currentVersion, options) {
             const manifest = parseManifest((await readLimited(res, MAX_MANIFEST_BYTES)).toString('utf8'));
             const version = String(manifest.version || '').trim();
             if (!VERSION_RE.test(version)) return;
-
             if (compareVersions(version, installed) <= 0) return;
+            if (state.snoozed === version) return;
+            if (state.phase === 'prompt' && state.version === version) return;
 
             const target = pickTarget(manifest, version);
-            if (!target) return;
+            if (!target || destroyed) return;
 
-            const release = await fetchRelease(target, version, ctl.signal);
-            const filePath = await downloadWithRetry(target, version, ctl.signal, Promise.resolve(release.hash));
-
-            if (destroyed) return;
             state.version = version;
             state.target = target;
-            state.file = filePath;
+            state.file = '';
+            state.phase = 'prompt';
             await send({ view: 'prompt', version: version });
         } catch (err) {
         } finally {
             busy = false;
-            if (abortCtl === ctl) abortCtl = null;
+            if (checkCtl === ctl) checkCtl = null;
         }
+    }
+
+    function cancelUpdate() {
+        if (updateCtl) updateCtl.abort();
+        if (state.version) state.snoozed = state.version;
+        state.phase = 'idle';
+        send(null);
     }
 
     function handle(action) {
         if (destroyed) return;
-        if (action === 'later') {
-            send(null);
-        } else if (action === 'install') {
-            if (state.target && state.version && state.file) {
-                install(state.target, state.version, state.file);
-            }
+        if (action === 'later' || action === 'close') {
+            cancelUpdate();
+        } else if (action === 'install' || action === 'update' || action === 'retry') {
+            runUpdate();
         }
     }
 
@@ -962,7 +988,8 @@ function init(win, currentVersion, options) {
         clearTimeout(firstTimer);
         clearInterval(intervalTimer);
         clearInterval(pollTimer);
-        if (abortCtl) abortCtl.abort();
+        if (checkCtl) checkCtl.abort();
+        if (updateCtl) updateCtl.abort();
         try {
             ipcMain.removeListener(ACTION_CHANNEL, onAction);
         } catch (err) {}
