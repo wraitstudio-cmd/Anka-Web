@@ -12,7 +12,7 @@ const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO +
 const MANIFEST_PATH = '/' + OWNER + '/' + REPO + '/refs/heads/main/latest.yml';
 const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
-const UI_VERSION = 9;
+const UI_VERSION = 10;
 const FIRST_CHECK_DELAY = 1000;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
@@ -221,10 +221,10 @@ function bootUi(version) {
                 if (state.prompt) {
                     title.textContent = 'Yeni sürüm mevcut: ' + state.version;
                     text.textContent = 'Güncellemeyi yüklemek istiyor musunuz?';
-                    setButtons([['Atla / Daha Sonra', 'skip'], ['Devam Et', 'install', true]]);
+                    setButtons([['Daha Sonra', 'skip'], ['Güncelle', 'install', true]]);
                 } else if (isReady) {
                     title.textContent = 'Güncelleme hazır: ' + state.version;
-                    text.textContent = 'Kurulum başlatılıyor…';
+                    text.textContent = 'Arka planda güncelleniyor…';
                     setButtons([]);
                 } else {
                     title.textContent = 'Yeni sürüm indiriliyor: ' + state.version;
@@ -559,37 +559,26 @@ function pickTarget(manifest, version) {
 
 async function fetchRelease(target, version, signal) {
     const url = 'https://api.github.com' + RELEASE_API_PREFIX + 'v' + version;
-    const res = await get(url, {
-        allow: releaseAllow(version),
-        accept: 'application/vnd.github+json',
-        timeout: REQUEST_TIMEOUT,
-        redirects: false,
-        signal: signal
-    }, 0);
-
-    let release;
     try {
-        release = JSON.parse((await readLimited(res, MAX_JSON_BYTES)).toString('utf8'));
-    } catch (err) {
-        throw new Error('Sürüm bilgisi okunamadı');
-    }
+        const res = await get(url, {
+            allow: releaseAllow(version),
+            accept: 'application/vnd.github+json',
+            timeout: REQUEST_TIMEOUT,
+            redirects: false,
+            signal: signal
+        }, 0);
 
-    const assets = release && Array.isArray(release.assets) ? release.assets : [];
-    const asset = assets.find((item) => item && item.name === target.name && item.browser_download_url === target.url);
-    if (!asset || asset.state !== 'uploaded') {
-        return { hash: '', notes: cleanNotes(release.body) };
-    }
+        let release = JSON.parse((await readLimited(res, MAX_JSON_BYTES)).toString('utf8'));
+        const assets = release && Array.isArray(release.assets) ? release.assets : [];
+        const asset = assets.find((item) => item && item.name === target.name && item.browser_download_url === target.url);
+        if (!asset) return { hash: '', notes: cleanNotes(release.body) };
 
-    const match = DIGEST_RE.exec(String(asset.digest || ''));
-    if (!match) {
-        return { hash: '', notes: cleanNotes(release.body) };
+        const match = DIGEST_RE.exec(String(asset.digest || ''));
+        const hash = match ? match[1].toLowerCase() : '';
+        return { hash: hash, notes: cleanNotes(release.body) };
+    } catch (e) {
+        return { hash: '', notes: '' };
     }
-
-    const hash = match[1].toLowerCase();
-    if (!HASH_RE.test(hash)) {
-        return { hash: '', notes: cleanNotes(release.body) };
-    }
-    return { hash: hash, notes: cleanNotes(release.body) };
 }
 
 function updatesDir() {
@@ -922,32 +911,15 @@ function systemPath(...parts) {
 
 async function launchWindows(file, kind) {
     const dir = path.dirname(file);
-    const currentPid = process.pid;
-
-    const isProcessRunning = (pid) => {
-        return new Promise((resolve) => {
-            const { exec } = require('child_process');
-            exec(`tasklist /FI "PID eq ${pid}" /NH`, (err, stdout) => {
-                if (err || !stdout) return resolve(false);
-                resolve(stdout.includes(pid.toString()));
-            });
-        });
-    };
-
-    let attempts = 0;
-    while (await isProcessRunning(currentPid) && attempts < 20) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        attempts++;
-    }
 
     if (kind === 'msi') {
-        const line = '/d /s /c ""' + systemPath('msiexec.exe') + '" /i "' + file + '" /passive /norestart & start "" "' + process.execPath + '""';
+        const line = '/d /s /c ""' + systemPath('msiexec.exe') + '" /i "' + file + '" /quiet /norestart & start "" "' + process.execPath + '""';
         await launchDetached(systemPath('cmd.exe'), [line], dir, { verbatim: true, hide: true });
         return;
     }
 
     try {
-        await launchDetached(file, ['--updated', '--force-run'], dir, { hide: false });
+        await launchDetached(file, ['/S', '/verysilent', '/SUPPRESSMSGBOXES', '/NORESTART', '--updated', '--force-run'], dir, { hide: true });
     } catch (err) {
         const result = await runProcess(
             systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe'),
@@ -1336,16 +1308,12 @@ function setupWindow(win, currentVersion, options) {
             writeMarker(installed, version);
 
             if (process.platform === 'win32') {
-                await send({ view: 'info', title: 'Anka Web', message: 'Kurulum penceresi açılıyor…', sticky: true });
                 await launchWindows(file, state.kind);
                 quitSoon(file);
                 return;
             }
 
-            await send({ view: 'info', title: 'Anka Web', message: 'Kurulum başlıyor. Yetki penceresi açılırsa onaylayın.', sticky: true });
             await installAndRelaunchLinux(file, state.kind);
-            await send({ view: 'info', title: 'Güncelleme tamamlandı', message: 'Anka Web yeniden başlatılıyor…', sticky: true });
-            await sleep(900);
             quitSoon();
         } catch (err) {
             removeMarker();
