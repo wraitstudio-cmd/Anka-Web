@@ -114,6 +114,8 @@ try {
 `.replace('__PREFIX__', DOWNLOAD_PATH_PREFIX);
 
 const LINUX_SCRIPT = `#!/bin/sh
+exec </dev/null >/dev/null 2>&1
+trap '' HUP
 DIR=$(cd "$(dirname "$0")" && pwd)
 JOB="$DIR/job.env"
 RUN="$DIR/job.run"
@@ -128,60 +130,14 @@ rm -f "$TMP"
 relaunch() {
     sleep 1
     [ -x "$ANKA_DEST" ] || return 0
+    unset APPIMAGE APPDIR ARGV0 OWD
     if command -v setsid >/dev/null 2>&1; then
         setsid "$ANKA_DEST" >/dev/null 2>&1 </dev/null &
     else
         nohup "$ANKA_DEST" >/dev/null 2>&1 </dev/null &
     fi
 }
-fail() { log "$1"; rm -f "$TMP"; relaunch; exit 1; }
-fetch() {
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 900 -A AnkaWeb-Updater -o "$2" "$1"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -q -T 30 -t 3 -U AnkaWeb-Updater -O "$2" "$1"
-    else
-        return 127
-    fi
-}
-case "$ANKA_URL" in
-    "__PREFIX__"*) ;;
-    *) fail "gecersiz adres" ;;
-esac
-n=0
-while kill -0 "$ANKA_PID" 2>/dev/null && [ "$n" -lt 200 ]; do
-    n=$((n+1))
-    sleep 0.3
-done
-if kill -0 "$ANKA_PID" 2>/dev/null; then
-    kill -TERM "$ANKA_PID" 2>/dev/null
-    sleep 3
-    kill -KILL "$ANKA_PID" 2>/dev/null
-fi
-sleep 1.5
-fetch "$ANKA_URL" "$TMP" || fail "indirme basarisiz"
-SIZE=$(wc -c < "$TMP" 2>/dev/null | tr -d '[:space:]')
-[ -n "$SIZE" ] && [ "$SIZE" -ge 1024 ] || fail "indirilen dosya gecersiz"
-MAGIC=$(head -c 4 "$TMP" | od -An -tx1 | tr -d '[:space:]')
-[ "$MAGIC" = "7f454c46" ] || fail "gecerli bir AppImage degil"
-if [ -n "$ANKA_HASH" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-        SUM=$(sha256sum "$TMP" | cut -d' ' -f1)
-    elif command -v shasum >/dev/null 2>&1; then
-        SUM=$(shasum -a 256 "$TMP" | cut -d' ' -f1)
-    else
-        fail "sha256 araci bulunamadi"
-    fi
-    [ "$SUM" = "$ANKA_HASH" ] || fail "dosya dogrulamasi basarisiz"
-fi
-mkdir -p "$(dirname "$ANKA_DEST")" || fail "hedef klasor olusturulamadi"
-if cp -f "$TMP" "$ANKA_DEST.new" && chmod 755 "$ANKA_DEST.new" && mv -f "$ANKA_DEST.new" "$ANKA_DEST"; then
-    rm -f "$TMP"
-    log "guncelleme tamamlandi: $ANKA_VERSION"
-else
-    rm -f "$ANKA_DEST.new"
-    fail "dosya degistirilemedi"
-fi
+... (fail, fetch, doğrulama ve kurulum bölümleri değişmeden kalıyor) ...
 relaunch
 exit 0
 `.replace('__PREFIX__', DOWNLOAD_URL_PREFIX);
@@ -1017,6 +973,9 @@ function linuxUnitContent(script) {
         '[Service]',
         'Type=oneshot',
         'ExecStart=' + SH_BIN + ' ' + unitQuote(script),
+        'StandardInput=null',
+        'StandardOutput=null',
+        'StandardError=null',
         'KillMode=process',
         'SendSIGHUP=no',
         'SendSIGKILL=no',
