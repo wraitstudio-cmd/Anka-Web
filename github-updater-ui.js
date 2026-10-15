@@ -12,7 +12,7 @@ const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO +
 const MANIFEST_PATH = '/' + OWNER + '/' + REPO + '/refs/heads/main/latest.yml';
 const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
-const UI_VERSION = 12;
+const UI_VERSION = 13;
 const FIRST_CHECK_DELAY = 1000;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
@@ -39,6 +39,14 @@ const PKG_RE = /^[a-z0-9][a-z0-9+._-]{0,100}$/i;
 const SKIP_BIN_RE = /(chrome-sandbox|chrome_crashpad_handler|\.so(\.|$)|\.sh$|\.pak$|\.bin$|\.dat$|\.json$)/i;
 const TRANSIENT_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET', 'EPIPE']);
 const EXTENSIONS = { exe: '.exe', msi: '.msi', deb: '.deb', rpm: '.rpm', appimage: '.AppImage', targz: '.tar.gz', win: '.exe' };
+const ASSET_MATCH = {
+    exe: (name) => /\.exe$/i.test(name) && !/portable/i.test(name),
+    msi: (name) => /\.msi$/i.test(name),
+    deb: (name) => /\.deb$/i.test(name),
+    rpm: (name) => /\.rpm$/i.test(name),
+    appimage: (name) => /\.appimage$/i.test(name),
+    targz: (name) => /\.tar\.gz$/i.test(name)
+};
 const MAGIC = {
     exe: [0x4d, 0x5a],
     msi: [0xd0, 0xcf, 0x11, 0xe0],
@@ -296,13 +304,11 @@ const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
     version: '',
     percent: 0,
     file: '',
-    hash: '',
     kind: '',
     snoozed: '',
     notes: '',
     detail: '',
-    attempted: '',
-    target: null
+    targets: []
 });
 
 function safeJson(value) {
@@ -441,12 +447,15 @@ function get(url, options, depth) {
             }
             if (code === 403 || code === 429) {
                 res.resume();
-                reject(new Error('GitHub istek sınırı aşıldı, biraz sonra tekrar deneyin'));
+                const limited = new Error('GitHub istek sınırı aşıldı, biraz sonra tekrar deneyin');
+                limited.status = code;
+                reject(limited);
                 return;
             }
             if (code !== 200) {
                 res.resume();
-                const failure = new Error('Sunucu yanıtı: ' + code);
+                const failure = new Error(code === 404 ? 'Dosya bulunamadı (404)' : 'Sunucu yanıtı: ' + code);
+                failure.status = code;
                 failure.transient = code >= 500;
                 reject(failure);
                 return;
@@ -529,6 +538,15 @@ function linuxKinds() {
     return kinds.filter((kind, index) => kinds.indexOf(kind) === index);
 }
 
+function platformKinds() {
+    if (process.platform === 'win32') return ['exe', 'win', 'msi'];
+    if (process.platform === 'linux') {
+        if (process.arch !== 'x64') throw new Error('Bu işlemci mimarisi için paket yok');
+        return linuxKinds();
+    }
+    return null;
+}
+
 function buildTarget(kind, raw, version) {
     const ext = EXTENSIONS[kind] || '.bin';
     let url;
@@ -554,24 +572,42 @@ function buildTarget(kind, raw, version) {
     return { kind: kind === 'win' ? 'exe' : kind, ext: ext, url: url.toString(), name: name, hash: '' };
 }
 
-function pickTarget(manifest, version) {
-    let kinds;
-    if (process.platform === 'win32') kinds = ['exe', 'win', 'msi'];
-    else if (process.platform === 'linux') kinds = linuxKinds();
-    else return null;
+function collectTargets(manifest, version, assets, kinds) {
+    const list = [];
+    const seen = new Set();
+    const byName = new Map();
+    assets.forEach((asset) => byName.set(asset.name, asset));
 
-    if (process.platform === 'linux' && process.arch !== 'x64') throw new Error('Bu işlemci mimarisi için paket yok');
+    const add = (target, hash) => {
+        if (!target || seen.has(target.url)) return;
+        seen.add(target.url);
+        target.hash = hash || '';
+        list.push(target);
+    };
 
     for (const kind of kinds) {
         const raw = manifest['url_' + kind];
-        if (!raw) continue;
-        const target = buildTarget(kind, raw, version);
-        if (target) return target;
+        if (raw) {
+            const target = buildTarget(kind, raw, version);
+            if (target) {
+                const asset = byName.get(target.name);
+                if (asset) add(target, asset.hash);
+                else if (!assets.length) add(target, '');
+            }
+        }
+
+        const matcher = ASSET_MATCH[kind];
+        if (!matcher) continue;
+        for (const asset of assets) {
+            if (!matcher(asset.name)) continue;
+            add(buildTarget(kind, asset.url, version), asset.hash);
+        }
     }
-    throw new Error('Bu sistem için uygun güncelleme paketi bulunamadı');
+
+    return list;
 }
 
-async function fetchRelease(target, version, signal) {
+async function fetchRelease(version, signal) {
     const url = 'https://api.github.com' + RELEASE_API_PREFIX + 'v' + version;
     try {
         const res = await get(url, {
@@ -583,14 +619,16 @@ async function fetchRelease(target, version, signal) {
         }, 0);
 
         const release = JSON.parse((await readLimited(res, MAX_JSON_BYTES)).toString('utf8'));
-        const assets = release && Array.isArray(release.assets) ? release.assets : [];
-        const asset = assets.find((item) => item && item.name === target.name && item.browser_download_url === target.url);
-        if (!asset) return { hash: '', notes: cleanNotes(release.body) };
-
-        const match = DIGEST_RE.exec(String(asset.digest || ''));
-        return { hash: match ? match[1].toLowerCase() : '', notes: cleanNotes(release.body) };
+        const list = release && Array.isArray(release.assets) ? release.assets : [];
+        const assets = [];
+        list.forEach((item) => {
+            if (!item || typeof item.name !== 'string' || typeof item.browser_download_url !== 'string') return;
+            const match = DIGEST_RE.exec(String(item.digest || ''));
+            assets.push({ name: item.name, url: item.browser_download_url, hash: match ? match[1].toLowerCase() : '' });
+        });
+        return { assets: assets, notes: cleanNotes(release && release.body) };
     } catch (e) {
-        return { hash: '', notes: '' };
+        return { assets: [], notes: '' };
     }
 }
 
@@ -638,12 +676,10 @@ function resetState() {
     state.version = '';
     state.percent = 0;
     state.file = '';
-    state.hash = '';
     state.kind = '';
     state.notes = '';
     state.detail = '';
-    state.attempted = '';
-    state.target = null;
+    state.targets = [];
 }
 
 function markerPath() {
@@ -714,7 +750,7 @@ function cleanEnv(extra) {
     return env;
 }
 
-async function download(target, version, signal, onProgress, expectedHash) {
+async function download(target, version, signal, onProgress) {
     const dir = prepareDir();
     cleanDir('');
     const finalPath = path.join(dir, 'anka-web-' + version + target.ext);
@@ -790,8 +826,7 @@ async function download(target, version, signal, onProgress, expectedHash) {
             });
         });
 
-        const expected = await expectedHash;
-        if (expected && !sameHash(hash.digest('hex'), expected)) throw new Error('Dosya doğrulaması başarısız');
+        if (target.hash && !sameHash(hash.digest('hex'), target.hash)) throw new Error('Dosya doğrulaması başarısız');
         if (!validMagic(target.kind, partPath)) throw new Error('İndirilen dosya geçerli bir kurulum dosyası değil');
         fs.renameSync(partPath, finalPath);
         return finalPath;
@@ -803,11 +838,11 @@ async function download(target, version, signal, onProgress, expectedHash) {
     }
 }
 
-async function downloadWithRetry(target, version, signal, onProgress, expectedHash) {
+async function downloadWithRetry(target, version, signal, onProgress) {
     let lastError = null;
     for (let attempt = 0; attempt < DOWNLOAD_ATTEMPTS; attempt += 1) {
         try {
-            return await download(target, version, signal, onProgress, expectedHash);
+            return await download(target, version, signal, onProgress);
         } catch (err) {
             lastError = err;
             if (signal.aborted || !err || !err.transient || attempt === DOWNLOAD_ATTEMPTS - 1) throw err;
@@ -816,6 +851,23 @@ async function downloadWithRetry(target, version, signal, onProgress, expectedHa
         }
     }
     throw lastError;
+}
+
+async function downloadAny(targets, version, signal, onProgress) {
+    const missing = [];
+    for (const target of targets) {
+        try {
+            const file = await downloadWithRetry(target, version, signal, onProgress);
+            return { file: file, target: target };
+        } catch (err) {
+            if (err && err.status === 404 && !signal.aborted) {
+                missing.push(target.name);
+                continue;
+            }
+            throw err;
+        }
+    }
+    throw new Error('Güncelleme dosyası GitHub\'da bulunamadı (404): ' + missing.join(', '));
 }
 
 function runProcess(command, args, extraEnv) {
@@ -1190,7 +1242,14 @@ function setupWindow(win, currentVersion, options) {
 
         try {
             const url = MANIFEST_URL + '?t=' + Date.now();
-            const res = await get(url, { allow: manifestAllow, timeout: REQUEST_TIMEOUT, redirects: false, signal: ctl.signal }, 0);
+            let res;
+            try {
+                res = await get(url, { allow: manifestAllow, timeout: REQUEST_TIMEOUT, redirects: false, signal: ctl.signal }, 0);
+            } catch (err) {
+                if (err && err.status === 404) throw new Error('latest.yml bulunamadı (404). Depo herkese açık olmalı ve dosya main dalının kökünde bulunmalı');
+                throw err;
+            }
+
             const manifest = parseManifest((await readLimited(res, MAX_MANIFEST_BYTES)).toString('utf8'));
             const version = String(manifest.version || '').trim();
             if (!VERSION_RE.test(version)) throw new Error('Manifestteki sürüm geçersiz');
@@ -1201,26 +1260,25 @@ function setupWindow(win, currentVersion, options) {
                 return;
             }
 
-            const target = pickTarget(manifest, version);
-            if (!target) {
+            const kinds = platformKinds();
+            if (!kinds) {
                 if (manual) await send({ view: 'info', title: 'Anka Web', message: 'Bu platformda otomatik güncelleme desteklenmiyor' });
                 return;
             }
 
-            if (state.version !== version) {
+            if (state.version !== version || !state.targets.length) {
+                const release = await fetchRelease(version, ctl.signal);
+                const targets = collectTargets(manifest, version, release.assets, kinds);
+                if (!targets.length) throw new Error('Bu sistem için uygun güncelleme paketi bulunamadı');
+
                 state.version = version;
-                state.kind = target.kind;
-                state.target = target;
+                state.targets = targets;
+                state.kind = targets[0].kind;
                 state.phase = 'prompt';
                 state.percent = 0;
                 state.file = '';
-                state.hash = '';
-                state.notes = '';
-                state.detail = '';
-
-                const release = await fetchRelease(target, version, ctl.signal);
-                state.hash = release.hash;
                 state.notes = release.notes;
+                state.detail = '';
             }
 
             paint();
@@ -1234,7 +1292,7 @@ function setupWindow(win, currentVersion, options) {
     }
 
     async function startDownloadAndInstall() {
-        if (installing || destroyed || !state.target) return;
+        if (installing || destroyed || !state.targets.length) return;
         installing = true;
         const downloadCtl = new AbortController();
         abortCtl = downloadCtl;
@@ -1245,18 +1303,21 @@ function setupWindow(win, currentVersion, options) {
             state.detail = '';
             paint();
 
-            const target = state.target;
             const version = state.version;
 
-            const file = await downloadWithRetry(target, version, downloadCtl.signal, (percent, received, total) => {
+            const result = await downloadAny(state.targets, version, downloadCtl.signal, (percent, received, total) => {
                 state.percent = percent;
                 state.detail = total ? formatBytes(received) + ' / ' + formatBytes(total) : '';
                 paint();
-            }, Promise.resolve(state.hash));
+            });
 
             if (destroyed) return;
 
+            const file = result.file;
+            const kind = result.target.kind;
+
             state.file = file;
+            state.kind = kind;
             state.percent = 100;
             state.phase = 'ready';
             paint();
@@ -1264,9 +1325,9 @@ function setupWindow(win, currentVersion, options) {
             writeMarker(installed, version);
 
             if (process.platform === 'win32') {
-                await launchWindows(file, target.kind);
+                await launchWindows(file, kind);
             } else {
-                await installAndRelaunchLinux(file, target.kind);
+                await installAndRelaunchLinux(file, kind);
             }
             quitSoon();
         } catch (err) {
