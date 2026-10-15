@@ -14,7 +14,7 @@ const DOWNLOAD_URL_PREFIX = 'https://github.com' + DOWNLOAD_PATH_PREFIX;
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
 const LATEST_API_PATH = '/repos/' + OWNER + '/' + REPO + '/releases/latest';
 const UI_VERSION = 16;
-const TASK_VERSION = 3;
+const TASK_VERSION = 4;
 const FIRST_CHECK_DELAY = 1000;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
@@ -1195,16 +1195,19 @@ function xmlEscape(value) {
 }
 
 function windowsTaskXml(script) {
+    const name = process.env.USERNAME || os.userInfo().username;
+    const user = (process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + name;
     const powershell = systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe');
     const args = '-NoProfile -NoLogo -ExecutionPolicy Bypass -File "' + script + '"';
     return [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<Task version="1.2" xmlns="' + WIN_TASK_NAMESPACE + '">',
+        '<?xml version="1.0" encoding="UTF-16"?>',
+        '<Task version="1.4" xmlns="' + WIN_TASK_NAMESPACE + '">',
         '  <RegistrationInfo>',
         '    <Description>Anka Web Updater</Description>',
         '  </RegistrationInfo>',
         '  <Principals>',
         '    <Principal id="Author">',
+        '      <UserId>' + xmlEscape(user) + '</UserId>',
         '      <LogonType>InteractiveToken</LogonType>',
         '      <RunLevel>LeastPrivilege</RunLevel>',
         '    </Principal>',
@@ -1234,12 +1237,14 @@ function windowsTaskXml(script) {
 async function createWindowsTask(dir, script) {
     const xmlFile = path.join(dir, WIN_TASK_XML);
     const xml = windowsTaskXml(script);
-    
-    fs.writeFileSync(xmlFile, xml, { encoding: 'utf8', mode: 0o600 });
-    
+    fs.writeFileSync(xmlFile, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]), { mode: 0o600 });
     try {
         const result = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/xml', xmlFile, '/f']);
-        return result.code === 0;
+        if (result.code !== 0) {
+            const fallbackResult = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/tr', `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${script}"`, '/sc', 'ONCE', '/st', '00:00', '/f']);
+            return fallbackResult.code === 0;
+        }
+        return true;
     } catch (err) {
         return false;
     } finally {
@@ -1304,8 +1309,12 @@ async function triggerWindows(job) {
     }
 
     if (result.code !== 0) {
-        fs.rmSync(jobFile, { force: true });
-        throw new Error('Güncelleme görevi başlatılamadı');
+        try {
+            await launchDetached('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, WIN_SCRIPT_FILE)], dir);
+        } catch (fallbackErr) {
+            fs.rmSync(jobFile, { force: true });
+            throw new Error('Güncelleme görevi başlatılamadı');
+        }
     }
 
     if (!(await waitClaim(jobFile, CLAIM_WAIT))) {
