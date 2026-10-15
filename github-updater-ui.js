@@ -1195,19 +1195,16 @@ function xmlEscape(value) {
 }
 
 function windowsTaskXml(script) {
-    const name = process.env.USERNAME || os.userInfo().username;
-    const user = (process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + name;
     const powershell = systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe');
     const args = '-NoProfile -NoLogo -ExecutionPolicy Bypass -File "' + script + '"';
     return [
-        '<?xml version="1.0" encoding="UTF-16"?>',
+        '<?xml version="1.0" encoding="UTF-8"?>',
         '<Task version="1.2" xmlns="' + WIN_TASK_NAMESPACE + '">',
         '  <RegistrationInfo>',
         '    <Description>Anka Web Updater</Description>',
         '  </RegistrationInfo>',
         '  <Principals>',
         '    <Principal id="Author">',
-        '      <UserId>' + xmlEscape(user) + '</UserId>',
         '      <LogonType>InteractiveToken</LogonType>',
         '      <RunLevel>LeastPrivilege</RunLevel>',
         '    </Principal>',
@@ -1237,7 +1234,9 @@ function windowsTaskXml(script) {
 async function createWindowsTask(dir, script) {
     const xmlFile = path.join(dir, WIN_TASK_XML);
     const xml = windowsTaskXml(script);
-    fs.writeFileSync(xmlFile, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]), { mode: 0o600 });
+    
+    fs.writeFileSync(xmlFile, xml, { encoding: 'utf8', mode: 0o600 });
+    
     try {
         const result = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/xml', xmlFile, '/f']);
         return result.code === 0;
