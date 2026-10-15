@@ -532,6 +532,7 @@ const WIN_TASK_SCRIPT = [
 
 const LINUX_SCRIPT = [
 '#!/bin/sh',
+'trap \'\' HUP',
 'DIR=$(cd "$(dirname "$0")" && pwd)',
 'JOB="$DIR/job.env"',
 'LOG="$DIR/updater.log"',
@@ -574,7 +575,6 @@ const LINUX_SCRIPT = [
 '',
 '. "$JOB" 2>/dev/null',
 'rm -f "$JOB"',
-'trap \'\' HUP',
 '',
 '',
 'TMP="$DIR/anka-web-$ANKA_VERSION.AppImage.part"',
@@ -1501,31 +1501,35 @@ async function triggerLinux(target, version) {
     }
 
     let claimed = false;
-    const systemctl = findBin('systemctl');
-    if (systemctl) {
-        try {
-            const result = await runProcess(systemctl, ['--user', 'start', '--no-block', 'anka-web-updater.service']);
-            if (result.code === 0) claimed = await waitClaim(jobFile, CLAIM_WAIT);
-        } catch (err) {
-            logWarn('systemctl start', err);
+
+    try {
+        await launchDetached(SH_BIN, [script], dir);
+        claimed = await waitClaim(jobFile, 5000);
+    } catch (err) {
+        logWarn('direct launch', err);
+    }
+
+    if (!claimed && fs.existsSync(jobFile)) {
+        const systemctl = findBin('systemctl');
+        if (systemctl) {
+            try {
+                await runProcess(systemctl, ['--user', 'start', '--no-block', 'anka-web-updater.service']);
+                claimed = await waitClaim(jobFile, 10000);
+            } catch (err) {
+                logWarn('systemctl start', err);
+            }
         }
     }
 
     if (!claimed && fs.existsSync(jobFile)) {
-        try {
-            await launchDetached(SH_BIN, [script], dir);
-            claimed = await waitClaim(jobFile, CLAIM_WAIT);
-        } catch (err) {
-            logWarn('direct launch', err);
-        }
-    }
-
-    if (!claimed && fs.existsSync(jobFile)) {
-        try {
-            await launchDetached('nohup', [SH_BIN, script], dir);
-            claimed = await waitClaim(jobFile, CLAIM_WAIT);
-        } catch (err) {
-            logWarn('nohup launch', err);
+        const nohup = findBin('nohup');
+        if (nohup) {
+            try {
+                await launchDetached(nohup, [SH_BIN, script], dir);
+                claimed = await waitClaim(jobFile, 5000);
+            } catch (err) {
+                logWarn('nohup launch', err);
+            }
         }
     }
 
