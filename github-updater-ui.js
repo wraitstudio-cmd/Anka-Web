@@ -31,6 +31,7 @@ const MARKER_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const NOTES_MAX = 600;
 const POLL_MS = 250;
 const PROGRESS_MS = 100;
+const HANDOFF_DELAY = 2000;
 const MARKER_FILE = 'anka-last-update.json';
 const ACTION_CHANNEL = 'anka-updater:action';
 const ACTIONS = new Set(['later', 'close', 'install', 'retry', 'update', 'skip']);
@@ -39,7 +40,6 @@ const FILE_RE = /^[A-Za-z0-9._+()@ -]{1,200}$/;
 const TAG_RE = /^[A-Za-z0-9._-]{1,100}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const DIGEST_RE = /^sha256:([A-Fa-f0-9]{64})$/;
-const PKG_RE = /^[a-z0-9][a-z0-9+._-]{0,100}$/i;
 const SKIP_BIN_RE = /(chrome-sandbox|chrome_crashpad_handler|\.so(\.|$)|\.sh$|\.pak$|\.bin$|\.dat$|\.json$)/i;
 const TRANSIENT_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET', 'EPIPE']);
 const EXTENSIONS = { exe: '.exe', msi: '.msi', deb: '.deb', rpm: '.rpm', appimage: '.AppImage', targz: '.tar.gz' };
@@ -51,25 +51,16 @@ const MAGIC = {
     appimage: [0x7f, 0x45, 0x4c, 0x46],
     targz: [0x1f, 0x8b]
 };
-const DEB_IDS = new Set(['debian', 'ubuntu', 'linuxmint', 'pop', 'elementary', 'kali', 'raspbian', 'zorin', 'mx', 'devuan', 'neon', 'tuxedo', 'deepin', 'parrot', 'pureos', 'lmde', 'pardus']);
-const RPM_IDS = new Set(['rhel', 'fedora', 'centos', 'rocky', 'almalinux', 'ol', 'suse', 'opensuse', 'opensuse-leap', 'opensuse-tumbleweed', 'sles', 'sled', 'mageia', 'openmandriva', 'pclinuxos', 'rosa', 'altlinux', 'alt', 'amzn', 'nobara', 'eurolinux', 'cloudlinux', 'scientific', 'redos', 'openeuler', 'euleros', 'tizen', 'qubes', 'berry', 'vine', 'turbolinux', 'asianux', 'clearos', 'geckolinux']);
 const STRIPPED_ENV = ['APPIMAGE', 'APPDIR', 'ARGV0', 'OWD'];
 const BIN_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/local/bin'];
 const SH_BIN = '/bin/sh';
-const LINUX_RELAUNCH = 'n=0; while kill -0 "$1" 2>/dev/null && [ "$n" -lt 100 ]; do n=$((n+1)); sleep 0.3; done; sleep 1; exec "$0"';
+const LINUX_RELAUNCH = 'n=0; while kill -0 "$1" 2>/dev/null && [ "$n" -lt 100 ]; do n=$((n+1)); sleep 0.3; done; sleep 1.5; exec "$0"';
 const WIN_EXE_SCRIPT = [
     "try{Wait-Process -Id ([int]$env:ANKA_PID) -Timeout 40}catch{}",
-    "Start-Sleep -Milliseconds 800",
-    "$a=@('/S','/verysilent','/SUPPRESSMSGBOXES','/NORESTART','--updated','--force-run')",
-    "try{Start-Process -FilePath $env:ANKA_UPDATE_FILE -ArgumentList $a -WindowStyle Hidden}catch{try{Start-Process -FilePath $env:ANKA_UPDATE_FILE -ArgumentList $a -Verb RunAs -WindowStyle Hidden}catch{Start-Process -FilePath $env:ANKA_EXEC}}"
-].join('\n');
-const WIN_MSI_SCRIPT = [
-    "try{Wait-Process -Id ([int]$env:ANKA_PID) -Timeout 40}catch{}",
-    "Start-Sleep -Milliseconds 800",
-    "$a=@('/i',('\"'+$env:ANKA_UPDATE_FILE+'\"'),'/quiet','/norestart')",
-    "$c=1",
-    "try{$p=Start-Process -FilePath 'msiexec.exe' -ArgumentList $a -WindowStyle Hidden -Wait -PassThru;$c=$p.ExitCode}catch{}",
-    "if($c -ne 0 -and $c -ne 3010){try{$p=Start-Process -FilePath 'msiexec.exe' -ArgumentList $a -Verb RunAs -WindowStyle Hidden -Wait -PassThru}catch{}}",
+    "Start-Sleep -Milliseconds 1500",
+    "$a=@('/S','--updated')",
+    "try{Start-Process -FilePath $env:ANKA_UPDATE_FILE -ArgumentList $a -WindowStyle Hidden -Wait}catch{}",
+    "Start-Sleep -Milliseconds 1000",
     "Start-Process -FilePath $env:ANKA_EXEC"
 ].join('\n');
 
@@ -493,50 +484,12 @@ function findBin(name) {
     return null;
 }
 
-function osIds() {
-    let text = '';
-    try {
-        text = fs.readFileSync('/etc/os-release', 'utf8');
-    } catch (err) {
-        try {
-            text = fs.readFileSync('/usr/lib/os-release', 'utf8');
-        } catch (inner) {}
-    }
-    const ids = [];
-    text.split('\n').forEach((line) => {
-        const match = /^(ID|ID_LIKE)=(.*)$/.exec(line.trim());
-        if (!match) return;
-        match[2].replace(/^["']|["']$/g, '').toLowerCase().split(/\s+/).forEach((value) => {
-            if (value) ids.push(value);
-        });
-    });
-    return ids;
-}
-
 function linuxKinds() {
-    const kinds = [];
-    if (process.env.APPIMAGE) kinds.push('appimage');
-
-    const ids = osIds();
-    const immutable = fs.existsSync('/run/ostree-booted');
-    const canDeb = !!(findBin('dpkg') && findBin('dpkg-deb'));
-    const canRpm = !!findBin('rpm');
-    const debLike = ids.some((id) => DEB_IDS.has(id));
-    const rpmLike = ids.some((id) => RPM_IDS.has(id));
-
-    if (!immutable && !process.env.APPIMAGE) {
-        if (debLike && canDeb) kinds.push('deb');
-        else if (rpmLike && canRpm) kinds.push('rpm');
-        else if (canDeb) kinds.push('deb');
-        else if (canRpm) kinds.push('rpm');
-    }
-
-    kinds.push('appimage', 'targz');
-    return kinds.filter((kind, index) => kinds.indexOf(kind) === index);
+    return process.env.APPIMAGE ? ['appimage', 'targz'] : ['targz', 'appimage'];
 }
 
 function platformKinds() {
-    if (process.platform === 'win32') return ['exe', 'msi'];
+    if (process.platform === 'win32') return ['exe'];
     if (process.platform === 'linux') {
         if (process.arch !== 'x64') throw new Error('Bu işlemci mimarisi için paket yok');
         return linuxKinds();
@@ -948,7 +901,7 @@ function quitSoon() {
             } catch (e) {
                 process.exit(0);
             }
-        }, 500);
+        }, 1500);
     }, 200);
 }
 
@@ -957,130 +910,40 @@ function systemPath(...parts) {
     return path.join(root, 'System32', ...parts);
 }
 
-async function launchWindows(file, kind) {
-    const script = kind === 'msi' ? WIN_MSI_SCRIPT : WIN_EXE_SCRIPT;
+async function launchWindows(file) {
     await launchDetached(
         systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe'),
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(WIN_EXE_SCRIPT, 'utf16le').toString('base64')],
         path.dirname(file),
         { hide: true, env: { ANKA_UPDATE_FILE: file, ANKA_PID: String(process.pid), ANKA_EXEC: process.execPath } }
     );
 }
 
-function isLaunchable(file) {
-    if (SKIP_BIN_RE.test(path.basename(file))) return false;
-    const inBin = path.dirname(file) === '/usr/bin';
-    const inOpt = path.dirname(path.dirname(file)) === '/opt';
-    if (!inBin && !inOpt) return false;
-    try {
-        const stat = fs.statSync(file);
-        return stat.isFile() && (stat.mode & 0o111) !== 0 && (stat.mode & 0o6000) === 0;
-    } catch (err) {
-        return false;
-    }
-}
-
-function pickLaunchable(files) {
-    if (files.includes(process.execPath) && isLaunchable(process.execPath)) return process.execPath;
-    const candidates = files.filter(isLaunchable).sort((a, b) => {
-        const x = path.dirname(a) === '/usr/bin' ? 0 : 1;
-        const y = path.dirname(b) === '/usr/bin' ? 0 : 1;
-        return x - y;
-    });
-    return candidates[0] || null;
-}
-
-function parseFileList(text) {
-    return text.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('/'));
-}
-
-async function runPrivileged(command, args) {
-    const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-    let result;
-    if (isRoot) {
-        result = await runProcess(command, args, { DEBIAN_FRONTEND: 'noninteractive' });
-    } else {
-        const pkexec = findBin('pkexec');
-        const env = findBin('env');
-        if (!pkexec || !env) throw new Error('pkexec bulunamadı, polkit kurulu olmalı');
-        result = await runProcess(pkexec, [env, 'DEBIAN_FRONTEND=noninteractive', command].concat(args));
-    }
-    if (result.code === 126 || result.code === 127) throw new Error('Yetkilendirme iptal edildi');
-    if (result.code !== 0) throw new Error('Kurulum başarısız (kod ' + result.code + ')');
-    return result;
-}
-
-async function installDeb(file) {
-    const dpkg = findBin('dpkg');
-    const dpkgDeb = findBin('dpkg-deb');
-    if (!dpkg || !dpkgDeb) throw new Error('Bu sistem .deb paketlerini desteklemiyor');
-
-    const info = await runProcess(dpkgDeb, ['-f', file, 'Package']);
-    const name = info.out.trim();
-    if (info.code !== 0 || !PKG_RE.test(name)) throw new Error('Geçersiz .deb paketi');
-
-    const aptGet = findBin('apt-get');
-    let done = false;
-    if (aptGet) {
-        try {
-            await runPrivileged(aptGet, ['install', '-y', '--allow-downgrades', '-o', 'APT::Sandbox::User=root', file]);
-            done = true;
-        } catch (err) {
-            if (/iptal/.test(String(err.message))) throw err;
-        }
-    }
-    if (!done) await runPrivileged(dpkg, ['-i', file]);
-
-    const listed = await runProcess(dpkg, ['-L', name]);
-    if (listed.code !== 0) return null;
-    return pickLaunchable(parseFileList(listed.out));
-}
-
-async function installRpm(file) {
-    const rpm = findBin('rpm');
-    if (!rpm) throw new Error('Bu sistem .rpm paketlerini desteklemiyor');
-
-    const info = await runProcess(rpm, ['-qp', '--qf', '%{NAME}', file]);
-    const name = info.out.trim();
-    if (info.code !== 0 || !PKG_RE.test(name)) throw new Error('Geçersiz .rpm paketi');
-
-    const dnf = findBin('dnf');
-    const yum = findBin('yum');
-    const zypper = findBin('zypper');
-
-    if (dnf) await runPrivileged(dnf, ['install', '-y', '--nogpgcheck', file]);
-    else if (zypper) await runPrivileged(zypper, ['--non-interactive', '--no-gpg-checks', 'install', '--allow-unsigned-rpm', '--allow-downgrade', file]);
-    else if (yum) await runPrivileged(yum, ['install', '-y', '--nogpgcheck', file]);
-    else await runPrivileged(rpm, ['-U', '--replacepkgs', '--nosignature', file]);
-
-    const listed = await runProcess(rpm, ['-ql', name]);
-    if (listed.code !== 0) return null;
-    return pickLaunchable(parseFileList(listed.out));
+function userInstallDir() {
+    return path.join(os.homedir(), '.local', 'share', 'anka-web');
 }
 
 function installAppImage(file) {
     const current = process.env.APPIMAGE;
-    let dest;
-    if (current && fs.existsSync(current)) {
-        dest = current;
-    } else {
-        const dir = path.join(os.homedir(), '.local', 'share', 'anka-web');
-        fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
-        dest = path.join(dir, 'Anka_Web.AppImage');
-    }
+    const targets = [];
+    if (current && fs.existsSync(current)) targets.push(current);
+    targets.push(path.join(userInstallDir(), 'Anka_Web.AppImage'));
 
-    const temp = dest + '.new-' + process.pid;
-    try {
-        fs.copyFileSync(file, temp);
-        fs.chmodSync(temp, 0o755);
-        fs.renameSync(temp, dest);
-    } catch (err) {
+    for (const dest of targets) {
+        const temp = dest + '.new-' + process.pid;
         try {
-            fs.rmSync(temp, { force: true });
-        } catch (cleanupErr) {}
-        throw new Error('AppImage dosyası değiştirilemedi');
+            fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o755 });
+            fs.copyFileSync(file, temp);
+            fs.chmodSync(temp, 0o755);
+            fs.renameSync(temp, dest);
+            return dest;
+        } catch (err) {
+            try {
+                fs.rmSync(temp, { force: true });
+            } catch (cleanupErr) {}
+        }
     }
-    return dest;
+    throw new Error('AppImage dosyası değiştirilemedi');
 }
 
 function tarRoot() {
@@ -1094,7 +957,7 @@ function tarRoot() {
             return dir;
         } catch (err) {}
     }
-    return path.join(os.homedir(), '.local', 'share', 'anka-web');
+    return userInstallDir();
 }
 
 function findExecutable(dir) {
@@ -1165,14 +1028,11 @@ async function installTarGz(file) {
 }
 
 async function installAndRelaunchLinux(file, kind) {
-    let binary = null;
-    if (kind === 'deb') binary = await installDeb(file);
-    else if (kind === 'rpm') binary = await installRpm(file);
-    else if (kind === 'appimage') binary = installAppImage(file);
+    let binary;
+    if (kind === 'appimage') binary = installAppImage(file);
     else if (kind === 'targz') binary = await installTarGz(file);
     else throw new Error('Bu paket türü desteklenmiyor');
 
-    if (!binary) binary = process.execPath;
     await launchDetached(SH_BIN, ['-c', LINUX_RELAUNCH, binary, String(process.pid)], path.dirname(binary), { hide: true });
 }
 
@@ -1351,10 +1211,13 @@ function setupWindow(win, currentVersion, options) {
             writeMarker(installed, version);
 
             if (process.platform === 'win32') {
-                await launchWindows(file, kind);
+                await launchWindows(file);
             } else {
                 await installAndRelaunchLinux(file, kind);
             }
+
+            await sleep(HANDOFF_DELAY);
+            if (destroyed) return;
             quitSoon();
         } catch (err) {
             installing = false;
