@@ -2,7 +2,6 @@ const https = require('https');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { app, ipcMain, BrowserWindow } = require('electron');
 
@@ -11,28 +10,35 @@ const REPO = 'Anka-Web';
 const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO + '/refs/heads/main/latest.yml';
 const MANIFEST_PATH = '/' + OWNER + '/' + REPO + '/refs/heads/main/latest.yml';
 const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
+const DOWNLOAD_URL_PREFIX = 'https://github.com' + DOWNLOAD_PATH_PREFIX;
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
 const LATEST_API_PATH = '/repos/' + OWNER + '/' + REPO + '/releases/latest';
-const UI_VERSION = 14;
+const UI_VERSION = 15;
 const FIRST_CHECK_DELAY = 1000;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
 const REQUEST_TIMEOUT = 10000;
-const DOWNLOAD_IDLE_TIMEOUT = 30000;
-const DOWNLOAD_ATTEMPTS = 3;
 const MAX_REDIRECTS = 5;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
-const MAX_DOWNLOAD_BYTES = 600 * 1024 * 1024;
-const MIN_DOWNLOAD_BYTES = 1024;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_MARKER_BYTES = 4096;
 const MARKER_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const NOTES_MAX = 600;
 const POLL_MS = 250;
-const PROGRESS_MS = 100;
-const HANDOFF_DELAY = 2000;
+const HANDOFF_DELAY = 1500;
+const CLAIM_WAIT = 10000;
+const CLAIM_POLL = 200;
 const MARKER_FILE = 'anka-last-update.json';
+const UPDATER_DIR = 'updater';
+const TASK_NAME = 'AnkaWebUpdater';
+const LINUX_UNIT = 'anka-web-updater.service';
+const WIN_JOB_FILE = 'job.json';
+const WIN_SCRIPT_FILE = 'anka-updater.ps1';
+const WIN_TASK_MARKER = 'task.json';
+const WIN_TASK_XML = 'task.xml';
+const LINUX_JOB_FILE = 'job.env';
+const LINUX_SCRIPT_FILE = 'anka-updater.sh';
 const ACTION_CHANNEL = 'anka-updater:action';
 const ACTIONS = new Set(['later', 'close', 'install', 'retry', 'update', 'skip']);
 const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
@@ -40,29 +46,145 @@ const FILE_RE = /^[A-Za-z0-9._+()@ -]{1,200}$/;
 const TAG_RE = /^[A-Za-z0-9._-]{1,100}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const DIGEST_RE = /^sha256:([A-Fa-f0-9]{64})$/;
-const SKIP_BIN_RE = /(chrome-sandbox|chrome_crashpad_handler|\.so(\.|$)|\.sh$|\.pak$|\.bin$|\.dat$|\.json$)/i;
 const TRANSIENT_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET', 'EPIPE']);
 const EXTENSIONS = { exe: '.exe', msi: '.msi', deb: '.deb', rpm: '.rpm', appimage: '.AppImage', targz: '.tar.gz' };
-const MAGIC = {
-    exe: [0x4d, 0x5a],
-    msi: [0xd0, 0xcf, 0x11, 0xe0],
-    deb: [0x21, 0x3c, 0x61, 0x72, 0x63, 0x68, 0x3e],
-    rpm: [0xed, 0xab, 0xee, 0xdb],
-    appimage: [0x7f, 0x45, 0x4c, 0x46],
-    targz: [0x1f, 0x8b]
-};
 const STRIPPED_ENV = ['APPIMAGE', 'APPDIR', 'ARGV0', 'OWD'];
+const GUI_ENV = ['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'XDG_SESSION_TYPE', 'XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP', 'LANG'];
 const BIN_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/local/bin'];
 const SH_BIN = '/bin/sh';
-const LINUX_RELAUNCH = 'n=0; while kill -0 "$1" 2>/dev/null && [ "$n" -lt 100 ]; do n=$((n+1)); sleep 0.3; done; sleep 1.5; exec "$0"';
-const WIN_EXE_SCRIPT = [
-    "try{Wait-Process -Id ([int]$env:ANKA_PID) -Timeout 40}catch{}",
-    "Start-Sleep -Milliseconds 1500",
-    "$a=@('/S','--updated')",
-    "try{Start-Process -FilePath $env:ANKA_UPDATE_FILE -ArgumentList $a -WindowStyle Hidden -Wait}catch{}",
-    "Start-Sleep -Milliseconds 1000",
-    "Start-Process -FilePath $env:ANKA_EXEC"
-].join('\n');
+
+const WIN_TASK_SCRIPT = `$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+$dir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$jobFile = Join-Path $dir 'job.json'
+$logFile = Join-Path $dir 'updater.log'
+function Write-Log($m) { try { Add-Content -Path $logFile -Value ((Get-Date -Format 's') + ' ' + $m) } catch {} }
+if (-not (Test-Path -LiteralPath $jobFile)) { exit 1 }
+$job = $null
+try { $job = Get-Content -Raw -Encoding UTF8 -LiteralPath $jobFile | ConvertFrom-Json } catch {}
+Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
+if (-not $job) { exit 1 }
+$tmp = Join-Path $dir ('anka-web-' + [string]$job.version + '.exe')
+try {
+    $uri = [Uri]([string]$job.url)
+    if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'github.com' -or -not $uri.AbsolutePath.StartsWith('__PREFIX__')) { throw 'Gecersiz adres' }
+    $procId = [int]$job.pid
+    try { Wait-Process -Id $procId -Timeout 60 } catch {}
+    $alive = Get-Process -Id $procId -ErrorAction SilentlyContinue
+    if ($alive -and $alive.ProcessName -eq [IO.Path]::GetFileNameWithoutExtension([string]$job.exec)) {
+        try { $alive.Kill(); $alive.WaitForExit(10000) | Out-Null } catch {}
+    }
+    Start-Sleep -Milliseconds 1500
+    $ok = $false
+    for ($i = 1; $i -le 3 -and -not $ok; $i++) {
+        try {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+            Invoke-WebRequest -Uri $uri.AbsoluteUri -OutFile $tmp -UseBasicParsing -UserAgent 'AnkaWeb-Updater' -TimeoutSec 900
+            $ok = $true
+        } catch {
+            Write-Log ('indirme denemesi ' + $i + ': ' + $_.Exception.Message)
+            Start-Sleep -Seconds (2 * $i)
+        }
+    }
+    if (-not $ok) { throw 'Indirme basarisiz' }
+    $info = Get-Item -LiteralPath $tmp
+    if ($info.Length -lt 1024) { throw 'Indirilen dosya gecersiz' }
+    $stream = [IO.File]::OpenRead($tmp)
+    try { $b1 = $stream.ReadByte(); $b2 = $stream.ReadByte() } finally { $stream.Close() }
+    if ($b1 -ne 0x4d -or $b2 -ne 0x5a) { throw 'Gecerli bir kurulum dosyasi degil' }
+    $expected = ([string]$job.hash).ToLower()
+    if ($expected) {
+        $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToLower()
+        if ($actual -ne $expected) { throw 'Dosya dogrulamasi basarisiz' }
+    }
+    $proc = Start-Process -FilePath $tmp -ArgumentList @('/S', '--updated') -WindowStyle Hidden -Wait -PassThru
+    Write-Log ('kurulum cikis kodu ' + $proc.ExitCode)
+} catch {
+    Write-Log $_.Exception.Message
+} finally {
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+}
+Start-Sleep -Milliseconds 1000
+try {
+    Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + [string]$job.exec + '"')
+} catch {
+    try { Start-Process -FilePath ([string]$job.exec) } catch {}
+}
+`.replace('__PREFIX__', DOWNLOAD_PATH_PREFIX);
+
+const LINUX_SCRIPT = `#!/bin/sh
+DIR=$(cd "$(dirname "$0")" && pwd)
+JOB="$DIR/job.env"
+RUN="$DIR/job.run"
+LOG="$DIR/updater.log"
+log() { echo "$(date '+%Y-%m-%dT%H:%M:%S') $1" >> "$LOG" 2>/dev/null; }
+[ -f "$JOB" ] || exit 1
+mv -f "$JOB" "$RUN" 2>/dev/null || exit 1
+. "$RUN"
+rm -f "$RUN"
+TMP="$DIR/anka-web-$ANKA_VERSION.AppImage.part"
+rm -f "$TMP"
+relaunch() {
+    sleep 1
+    [ -x "$ANKA_DEST" ] || return 0
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "$ANKA_DEST" >/dev/null 2>&1 </dev/null &
+    else
+        nohup "$ANKA_DEST" >/dev/null 2>&1 </dev/null &
+    fi
+}
+fail() { log "$1"; rm -f "$TMP"; relaunch; exit 1; }
+fetch() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 900 -A AnkaWeb-Updater -o "$2" "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -T 30 -t 3 -U AnkaWeb-Updater -O "$2" "$1"
+    else
+        return 127
+    fi
+}
+case "$ANKA_URL" in
+    "__PREFIX__"*) ;;
+    *) fail "gecersiz adres" ;;
+esac
+n=0
+while kill -0 "$ANKA_PID" 2>/dev/null && [ "$n" -lt 200 ]; do
+    n=$((n+1))
+    sleep 0.3
+done
+if kill -0 "$ANKA_PID" 2>/dev/null; then
+    kill -TERM "$ANKA_PID" 2>/dev/null
+    sleep 3
+    kill -KILL "$ANKA_PID" 2>/dev/null
+fi
+sleep 1.5
+fetch "$ANKA_URL" "$TMP" || fail "indirme basarisiz"
+SIZE=$(wc -c < "$TMP" 2>/dev/null | tr -d '[:space:]')
+[ -n "$SIZE" ] && [ "$SIZE" -ge 1024 ] || fail "indirilen dosya gecersiz"
+MAGIC=$(head -c 4 "$TMP" | od -An -tx1 | tr -d '[:space:]')
+[ "$MAGIC" = "7f454c46" ] || fail "gecerli bir AppImage degil"
+if [ -n "$ANKA_HASH" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        SUM=$(sha256sum "$TMP" | cut -d' ' -f1)
+    elif command -v shasum >/dev/null 2>&1; then
+        SUM=$(shasum -a 256 "$TMP" | cut -d' ' -f1)
+    else
+        fail "sha256 araci bulunamadi"
+    fi
+    [ "$SUM" = "$ANKA_HASH" ] || fail "dosya dogrulamasi basarisiz"
+fi
+mkdir -p "$(dirname "$ANKA_DEST")" || fail "hedef klasor olusturulamadi"
+if cp -f "$TMP" "$ANKA_DEST.new" && chmod 755 "$ANKA_DEST.new" && mv -f "$ANKA_DEST.new" "$ANKA_DEST"; then
+    rm -f "$TMP"
+    log "guncelleme tamamlandi: $ANKA_VERSION"
+else
+    rm -f "$ANKA_DEST.new"
+    fail "dosya degistirilemedi"
+fi
+relaunch
+exit 0
+`.replace('__PREFIX__', DOWNLOAD_URL_PREFIX);
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
 
@@ -230,11 +352,11 @@ function bootUi(version) {
                     text.textContent = 'Güncellemeyi yüklemek istiyor musunuz?';
                     setButtons([['Daha Sonra', 'skip'], ['Güncelle', 'update', true]]);
                 } else if (isReady) {
-                    title.textContent = 'Güncelleme hazır: ' + state.version;
-                    text.textContent = 'Arka planda güncelleniyor…';
+                    title.textContent = 'Güncelleme başlatılıyor: ' + state.version;
+                    text.textContent = 'Uygulama kapanacak, güncelleme arka planda kurulup uygulama yeniden açılacak…';
                     setButtons([]);
                 } else {
-                    title.textContent = 'Yeni sürüm indiriliyor: ' + state.version;
+                    title.textContent = 'Güncelleme hazırlanıyor: ' + state.version;
                     setButtons([['İptal Et', 'skip']]);
                 }
 
@@ -245,7 +367,7 @@ function bootUi(version) {
             }
 
             if (!state.prompt && !isReady) {
-                text.textContent = 'İndiriliyor… %' + percent + (state.detail ? ' · ' + state.detail : '');
+                text.textContent = 'Hazırlanıyor… %' + percent + (state.detail ? ' · ' + state.detail : '');
                 bar.style.transform = 'scaleX(' + percent / 100 + ')';
             }
         } else if (state.view === 'error') {
@@ -299,6 +421,8 @@ const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
 
 if (!Array.isArray(state.targets)) state.targets = [];
 
+let ensurePromise = null;
+
 function safeJson(value) {
     return JSON.stringify(value)
         .replace(/</g, '\\u003c')
@@ -322,10 +446,6 @@ function transientError(message) {
     const err = new Error(message);
     err.transient = true;
     return err;
-}
-
-function formatBytes(value) {
-    return (Number(value) / 1048576).toFixed(1) + ' MB';
 }
 
 function parseVersion(value) {
@@ -367,17 +487,8 @@ function cleanNotes(value) {
         .slice(0, NOTES_MAX);
 }
 
-function isAssetHost(host) {
-    return host === 'github.com' || (host.endsWith('.githubusercontent.com') && host !== 'raw.githubusercontent.com');
-}
-
 function manifestAllow(url) {
     return url.hostname === 'raw.githubusercontent.com' && url.pathname === MANIFEST_PATH;
-}
-
-function downloadAllow(url, redirected) {
-    if (redirected) return isAssetHost(url.hostname);
-    return url.hostname === 'github.com' && url.pathname.startsWith(DOWNLOAD_PATH_PREFIX);
 }
 
 function releaseAllow(apiPath) {
@@ -484,15 +595,11 @@ function findBin(name) {
     return null;
 }
 
-function linuxKinds() {
-    return process.env.APPIMAGE ? ['appimage', 'targz'] : ['targz', 'appimage'];
-}
-
 function platformKinds() {
     if (process.platform === 'win32') return ['exe'];
     if (process.platform === 'linux') {
         if (process.arch !== 'x64') throw new Error('Bu işlemci mimarisi için paket yok');
-        return linuxKinds();
+        return ['appimage'];
     }
     return null;
 }
@@ -618,46 +725,7 @@ async function fetchRelease(version, signal) {
     return { assets: [], notes: '' };
 }
 
-function updatesDir() {
-    return path.join(app.getPath('userData'), 'updates');
-}
-
-function prepareDir() {
-    const dir = updatesDir();
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    return dir;
-}
-
-function cleanDir(keep) {
-    const dir = updatesDir();
-    let names = [];
-    try {
-        names = fs.readdirSync(dir);
-    } catch (err) {
-        return;
-    }
-    for (const name of names) {
-        if (name === keep) continue;
-        try {
-            fs.rmSync(path.join(dir, name), { force: true, recursive: true });
-        } catch (err) {}
-    }
-}
-
-function ensureSpace(dir, needed) {
-    if (!needed || typeof fs.statfsSync !== 'function') return;
-    let free = 0;
-    try {
-        const stats = fs.statfsSync(dir);
-        free = Number(stats.bavail) * Number(stats.bsize);
-    } catch (err) {
-        return;
-    }
-    if (free > 0 && free < needed * 2) throw new Error('Diskte yeterli boş alan yok');
-}
-
 function resetState() {
-    cleanDir('');
     state.phase = 'idle';
     state.version = '';
     state.percent = 0;
@@ -699,26 +767,6 @@ function takeMarker(installed) {
     return data.to;
 }
 
-function validMagic(kind, file) {
-    const magic = MAGIC[kind];
-    if (!magic) return true;
-    let fd;
-    try {
-        fd = fs.openSync(file, 'r');
-        const head = Buffer.alloc(magic.length);
-        if (fs.readSync(fd, head, 0, magic.length, 0) !== magic.length) return false;
-        return magic.every((byte, index) => head[index] === byte);
-    } catch (err) {
-        return false;
-    } finally {
-        if (fd !== undefined) {
-            try {
-                fs.closeSync(fd);
-            } catch (err) {}
-        }
-    }
-}
-
 function cleanEnv(extra) {
     const env = Object.assign({}, process.env);
     STRIPPED_ENV.forEach((key) => {
@@ -726,127 +774,6 @@ function cleanEnv(extra) {
     });
     if (extra) Object.assign(env, extra);
     return env;
-}
-
-async function download(target, version, signal, onProgress) {
-    const dir = prepareDir();
-    cleanDir('');
-    const finalPath = path.join(dir, 'anka-web-' + version + target.ext);
-    const partPath = path.join(dir, crypto.randomBytes(8).toString('hex') + '.part');
-
-    try {
-        const res = await get(target.url, { allow: downloadAllow, timeout: DOWNLOAD_IDLE_TIMEOUT, redirects: true, signal: signal }, 0);
-        const total = Number(res.headers['content-length']) || 0;
-        if (total > MAX_DOWNLOAD_BYTES) {
-            res.destroy();
-            throw new Error('Dosya çok büyük');
-        }
-
-        try {
-            ensureSpace(dir, total);
-        } catch (err) {
-            res.destroy();
-            throw err;
-        }
-
-        onProgress(0, 0, total);
-
-        const hash = crypto.createHash('sha256');
-        const out = fs.createWriteStream(partPath, { flags: 'wx', mode: 0o600, highWaterMark: 1024 * 1024 });
-
-        await new Promise((resolve, reject) => {
-            let received = 0;
-            let last = 0;
-            let settled = false;
-
-            const fail = (err) => {
-                if (settled) return;
-                settled = true;
-                res.destroy();
-                out.destroy();
-                reject(err);
-            };
-
-            res.on('data', (chunk) => {
-                received += chunk.length;
-                if (received > MAX_DOWNLOAD_BYTES) {
-                    fail(new Error('Dosya çok büyük'));
-                    return;
-                }
-                hash.update(chunk);
-                if (!out.write(chunk)) {
-                    res.pause();
-                    out.once('drain', () => res.resume());
-                }
-                const now = Date.now();
-                if (total && now - last >= PROGRESS_MS) {
-                    last = now;
-                    onProgress(Math.min(99, Math.floor((received / total) * 100)), received, total);
-                }
-            });
-
-            res.on('error', (err) => fail(networkError(err)));
-            res.on('close', () => {
-                if (!res.complete) fail(transientError('İndirme yarıda kesildi'));
-            });
-            out.on('error', fail);
-            res.on('end', () => {
-                if (settled) return;
-                if (total && received !== total) {
-                    fail(transientError('İndirilen dosya eksik'));
-                    return;
-                }
-                out.end(() => {
-                    if (settled) return;
-                    settled = true;
-                    resolve();
-                });
-            });
-        });
-
-        if (fs.statSync(partPath).size < MIN_DOWNLOAD_BYTES) throw new Error('İndirilen dosya geçersiz');
-        if (target.hash && hash.digest('hex') !== target.hash) throw new Error('Dosya doğrulaması başarısız');
-        if (!validMagic(target.kind, partPath)) throw new Error('İndirilen dosya geçerli bir kurulum dosyası değil');
-        fs.renameSync(partPath, finalPath);
-        return finalPath;
-    } catch (err) {
-        try {
-            fs.rmSync(partPath, { force: true });
-        } catch (cleanupErr) {}
-        throw err;
-    }
-}
-
-async function downloadWithRetry(target, version, signal, onProgress) {
-    let lastError = null;
-    for (let attempt = 0; attempt < DOWNLOAD_ATTEMPTS; attempt += 1) {
-        try {
-            return await download(target, version, signal, onProgress);
-        } catch (err) {
-            lastError = err;
-            if (signal.aborted || !err || !err.transient || attempt === DOWNLOAD_ATTEMPTS - 1) throw err;
-            await sleep(1500 * (attempt + 1), signal);
-            if (signal.aborted) throw err;
-        }
-    }
-    throw lastError;
-}
-
-async function downloadAny(targets, version, signal, onProgress) {
-    const missing = [];
-    for (const target of targets) {
-        try {
-            const file = await downloadWithRetry(target, version, signal, onProgress);
-            return { file: file, target: target };
-        } catch (err) {
-            if (err && err.status === 404 && !signal.aborted) {
-                missing.push(target.name);
-                continue;
-            }
-            throw err;
-        }
-    }
-    throw new Error('Güncelleme dosyası GitHub\'da bulunamadı (404): ' + missing.join(', '));
 }
 
 function runProcess(command, args, extraEnv) {
@@ -910,130 +837,293 @@ function systemPath(...parts) {
     return path.join(root, 'System32', ...parts);
 }
 
-async function launchWindows(file) {
-    await launchDetached(
-        systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe'),
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(WIN_EXE_SCRIPT, 'utf16le').toString('base64')],
-        path.dirname(file),
-        { hide: true, env: { ANKA_UPDATE_FILE: file, ANKA_PID: String(process.pid), ANKA_EXEC: process.execPath } }
-    );
+function updaterDir() {
+    return path.join(app.getPath('userData'), UPDATER_DIR);
+}
+
+function prepareUpdaterDir() {
+    const dir = updaterDir();
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return dir;
+}
+
+function writeIfChanged(file, content, mode) {
+    let current = null;
+    try {
+        current = fs.readFileSync(file, 'utf8');
+    } catch (err) {
+        current = null;
+    }
+    if (current === content) return false;
+    const temp = file + '.tmp-' + process.pid;
+    fs.writeFileSync(temp, content, { mode: mode });
+    fs.renameSync(temp, file);
+    return true;
+}
+
+async function waitClaim(file, limit) {
+    const end = Date.now() + limit;
+    while (Date.now() < end) {
+        if (!fs.existsSync(file)) return true;
+        await sleep(CLAIM_POLL);
+    }
+    return !fs.existsSync(file);
+}
+
+function xmlEscape(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function windowsTaskXml(runLevel, script) {
+    const name = process.env.USERNAME || os.userInfo().username;
+    const user = (process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + name;
+    const powershell = systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const args = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + script + '"';
+    return [
+        '<?xml version="1.0" encoding="UTF-16"?>',
+        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
+        '  <RegistrationInfo>',
+        '    <Description>Anka Web Updater</Description>',
+        '  </RegistrationInfo>',
+        '  <Principals>',
+        '    <Principal id="Author">',
+        '      <UserId>' + xmlEscape(user) + '</UserId>',
+        '      <LogonType>InteractiveToken</LogonType>',
+        '      <RunLevel>' + runLevel + '</RunLevel>',
+        '    </Principal>',
+        '  </Principals>',
+        '  <Settings>',
+        '    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>',
+        '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>',
+        '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>',
+        '    <AllowHardTerminate>true</AllowHardTerminate>',
+        '    <StartWhenAvailable>true</StartWhenAvailable>',
+        '    <AllowStartOnDemand>true</AllowStartOnDemand>',
+        '    <Enabled>true</Enabled>',
+        '    <Hidden>true</Hidden>',
+        '    <ExecutionTimeLimit>PT30M</ExecutionTimeLimit>',
+        '    <Priority>7</Priority>',
+        '  </Settings>',
+        '  <Actions Context="Author">',
+        '    <Exec>',
+        '      <Command>' + xmlEscape(powershell) + '</Command>',
+        '      <Arguments>' + xmlEscape(args) + '</Arguments>',
+        '    </Exec>',
+        '  </Actions>',
+        '</Task>'
+    ].join('\r\n');
+}
+
+async function createWindowsTask(dir, script, runLevel) {
+    const xmlFile = path.join(dir, WIN_TASK_XML);
+    const xml = windowsTaskXml(runLevel, script);
+    fs.writeFileSync(xmlFile, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]), { mode: 0o600 });
+    try {
+        const result = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/xml', xmlFile, '/f']);
+        return result.code === 0;
+    } catch (err) {
+        return false;
+    } finally {
+        try {
+            fs.rmSync(xmlFile, { force: true });
+        } catch (cleanupErr) {}
+    }
+}
+
+async function ensureWindowsTask() {
+    const dir = prepareUpdaterDir();
+    const script = path.join(dir, WIN_SCRIPT_FILE);
+    writeIfChanged(script, '\uFEFF' + WIN_TASK_SCRIPT, 0o600);
+
+    const markerFile = path.join(dir, WIN_TASK_MARKER);
+    let marker = null;
+    try {
+        marker = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+    } catch (err) {
+        marker = null;
+    }
+
+    const query = await runProcess(systemPath('schtasks.exe'), ['/query', '/tn', TASK_NAME]);
+    const exists = query.code === 0;
+    if (exists && marker && marker.script === script) return;
+
+    let level = 'HighestAvailable';
+    let created = await createWindowsTask(dir, script, level);
+    if (!created) {
+        level = 'LeastPrivilege';
+        created = await createWindowsTask(dir, script, level);
+    }
+    if (!created) {
+        if (exists) return;
+        throw new Error('Güncelleme görevi oluşturulamadı');
+    }
+
+    try {
+        fs.writeFileSync(markerFile, JSON.stringify({ script: script, level: level }), { mode: 0o600 });
+    } catch (err) {}
+}
+
+async function triggerWindows(job) {
+    await ensureBackground();
+    const dir = prepareUpdaterDir();
+    const jobFile = path.join(dir, WIN_JOB_FILE);
+    fs.writeFileSync(jobFile, JSON.stringify(job), { mode: 0o600 });
+
+    let result;
+    try {
+        result = await runProcess(systemPath('schtasks.exe'), ['/run', '/tn', TASK_NAME]);
+    } catch (err) {
+        result = { code: 1 };
+    }
+
+    if (result.code !== 0) {
+        fs.rmSync(jobFile, { force: true });
+        throw new Error('Güncelleme görevi başlatılamadı');
+    }
+
+    if (!(await waitClaim(jobFile, CLAIM_WAIT))) {
+        fs.rmSync(jobFile, { force: true });
+        throw new Error('Güncelleme görevi yanıt vermedi');
+    }
 }
 
 function userInstallDir() {
     return path.join(os.homedir(), '.local', 'share', 'anka-web');
 }
 
-function installAppImage(file) {
+function linuxDestination() {
     const current = process.env.APPIMAGE;
-    const targets = [];
-    if (current && fs.existsSync(current)) targets.push(current);
-    targets.push(path.join(userInstallDir(), 'Anka_Web.AppImage'));
-
-    for (const dest of targets) {
-        const temp = dest + '.new-' + process.pid;
-        try {
-            fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o755 });
-            fs.copyFileSync(file, temp);
-            fs.chmodSync(temp, 0o755);
-            fs.renameSync(temp, dest);
-            return dest;
-        } catch (err) {
-            try {
-                fs.rmSync(temp, { force: true });
-            } catch (cleanupErr) {}
-        }
-    }
-    throw new Error('AppImage dosyası değiştirilemedi');
+    if (current && fs.existsSync(current)) return current;
+    return path.join(userInstallDir(), 'Anka_Web.AppImage');
 }
 
-function tarRoot() {
-    const exec = process.execPath;
-    const dir = path.dirname(exec);
-    const foreign = /^\/(usr|opt|snap|nix)\//.test(dir + '/') || /^electron/i.test(path.basename(exec));
-    if (!process.env.APPIMAGE && !foreign) {
+function shellQuote(value) {
+    return "'" + String(value).replace(/'/g, "'\\''") + "'";
+}
+
+function unitQuote(value) {
+    return '"' + String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/%/g, '%%') + '"';
+}
+
+function linuxUnitContent(script) {
+    return [
+        '[Unit]',
+        'Description=Anka Web Updater',
+        '',
+        '[Service]',
+        'Type=oneshot',
+        'ExecStart=' + SH_BIN + ' ' + unitQuote(script),
+        'KillMode=process',
+        'SendSIGHUP=no',
+        'SendSIGKILL=no',
+        'TimeoutStartSec=30min',
+        ''
+    ].join('\n');
+}
+
+async function ensureLinuxService() {
+    const dir = prepareUpdaterDir();
+    const script = path.join(dir, LINUX_SCRIPT_FILE);
+    writeIfChanged(script, LINUX_SCRIPT, 0o755);
+    try {
+        fs.chmodSync(script, 0o755);
+    } catch (err) {}
+
+    const systemctl = findBin('systemctl');
+    if (!systemctl) return;
+
+    const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+    const unitDir = path.join(configHome, 'systemd', 'user');
+    fs.mkdirSync(unitDir, { recursive: true, mode: 0o755 });
+    const changed = writeIfChanged(path.join(unitDir, LINUX_UNIT), linuxUnitContent(script), 0o644);
+    if (changed) {
         try {
-            fs.accessSync(dir, fs.constants.W_OK);
-            fs.accessSync(path.dirname(dir), fs.constants.W_OK);
-            return dir;
+            await runProcess(systemctl, ['--user', 'daemon-reload']);
         } catch (err) {}
     }
-    return userInstallDir();
 }
 
-function findExecutable(dir) {
-    const preferred = path.basename(process.execPath);
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    let best = null;
-    let bestSize = -1;
-    for (const entry of entries) {
-        if (!entry.isFile() || SKIP_BIN_RE.test(entry.name)) continue;
-        const full = path.join(dir, entry.name);
-        const stat = fs.statSync(full);
-        if ((stat.mode & 0o111) === 0) continue;
-        if (entry.name === preferred) return entry.name;
-        if (stat.size > bestSize) {
-            best = entry.name;
-            bestSize = stat.size;
-        }
-    }
-    return best;
+function linuxJobContent(target, version) {
+    const lines = [
+        'ANKA_PID=' + shellQuote(process.pid),
+        'ANKA_URL=' + shellQuote(target.url),
+        'ANKA_HASH=' + shellQuote(target.hash || ''),
+        'ANKA_VERSION=' + shellQuote(version),
+        'ANKA_DEST=' + shellQuote(linuxDestination())
+    ];
+    GUI_ENV.forEach((key) => {
+        if (process.env[key]) lines.push('export ' + key + '=' + shellQuote(process.env[key]));
+    });
+    return lines.join('\n') + '\n';
 }
 
-async function installTarGz(file) {
-    const tar = findBin('tar');
-    if (!tar) throw new Error('tar bulunamadı');
+async function triggerLinux(target, version) {
+    await ensureBackground();
+    const dir = prepareUpdaterDir();
+    const script = path.join(dir, LINUX_SCRIPT_FILE);
+    const jobFile = path.join(dir, LINUX_JOB_FILE);
+    fs.writeFileSync(jobFile, linuxJobContent(target, version), { mode: 0o600 });
 
-    const root = tarRoot();
-    const parent = path.dirname(root);
-    fs.mkdirSync(parent, { recursive: true, mode: 0o755 });
-
-    const staging = root + '.new-' + process.pid;
-    const old = root + '.old-' + process.pid;
-    fs.rmSync(staging, { force: true, recursive: true });
-    fs.mkdirSync(staging, { mode: 0o755 });
-
-    try {
-        const result = await runProcess(tar, ['-xzf', file, '-C', staging, '--no-same-owner']);
-        if (result.code !== 0) throw new Error('Arşiv açılamadı');
-
-        let source = staging;
-        const entries = fs.readdirSync(staging, { withFileTypes: true });
-        if (entries.length === 1 && entries[0].isDirectory()) source = path.join(staging, entries[0].name);
-
-        const exeName = findExecutable(source);
-        if (!exeName) throw new Error('Arşivde çalıştırılabilir dosya bulunamadı');
-
-        const hadOld = fs.existsSync(root);
-        if (hadOld) fs.renameSync(root, old);
+    let claimed = false;
+    const systemctl = findBin('systemctl');
+    if (systemctl) {
         try {
-            fs.renameSync(source, root);
+            const result = await runProcess(systemctl, ['--user', 'start', '--no-block', LINUX_UNIT]);
+            if (result.code === 0) claimed = await waitClaim(jobFile, CLAIM_WAIT);
         } catch (err) {
-            if (hadOld) fs.renameSync(old, root);
-            throw err;
+            claimed = false;
         }
+    }
 
-        fs.rmSync(staging, { force: true, recursive: true });
-        if (hadOld) {
-            try {
-                fs.rmSync(old, { force: true, recursive: true });
-            } catch (err) {}
-        }
-        return path.join(root, exeName);
-    } catch (err) {
+    if (!claimed && fs.existsSync(jobFile)) {
         try {
-            fs.rmSync(staging, { force: true, recursive: true });
-        } catch (cleanupErr) {}
-        throw err;
+            await launchDetached(SH_BIN, [script], dir, { hide: true });
+            claimed = await waitClaim(jobFile, CLAIM_WAIT);
+        } catch (err) {
+            claimed = false;
+        }
+    }
+
+    if (!claimed) {
+        fs.rmSync(jobFile, { force: true });
+        throw new Error('Güncelleme servisi başlatılamadı');
     }
 }
 
-async function installAndRelaunchLinux(file, kind) {
-    let binary;
-    if (kind === 'appimage') binary = installAppImage(file);
-    else if (kind === 'targz') binary = await installTarGz(file);
-    else throw new Error('Bu paket türü desteklenmiyor');
+function ensureBackground() {
+    if (!ensurePromise) {
+        let work;
+        if (process.platform === 'win32') work = ensureWindowsTask();
+        else if (process.platform === 'linux') work = ensureLinuxService();
+        else work = Promise.resolve();
+        ensurePromise = work.catch((err) => {
+            ensurePromise = null;
+            throw err;
+        });
+    }
+    return ensurePromise;
+}
 
-    await launchDetached(SH_BIN, ['-c', LINUX_RELAUNCH, binary, String(process.pid)], path.dirname(binary), { hide: true });
+async function launchBackgroundUpdate(target, version) {
+    if (process.platform === 'win32') {
+        await triggerWindows({
+            pid: process.pid,
+            url: target.url,
+            hash: target.hash || '',
+            version: version,
+            exec: process.execPath
+        });
+        return;
+    }
+    if (process.platform === 'linux') {
+        await triggerLinux(target, version);
+        return;
+    }
+    throw new Error('Bu platformda otomatik güncelleme desteklenmiyor');
 }
 
 function setupWindow(win, currentVersion, options) {
@@ -1177,44 +1267,22 @@ function setupWindow(win, currentVersion, options) {
         }
     }
 
-    async function startDownloadAndInstall() {
+    async function startBackgroundUpdate() {
         if (installing || destroyed || !state.targets.length) return;
         installing = true;
-        const downloadCtl = new AbortController();
-        abortCtl = downloadCtl;
 
         try {
-            state.phase = 'downloading';
-            state.percent = 0;
+            const target = state.targets[0];
+            const version = state.version;
+
+            state.phase = 'ready';
+            state.percent = 100;
+            state.kind = target.kind;
             state.detail = '';
             paint();
 
-            const version = state.version;
-
-            const result = await downloadAny(state.targets, version, downloadCtl.signal, (percent, received, total) => {
-                state.percent = percent;
-                state.detail = total ? formatBytes(received) + ' / ' + formatBytes(total) : '';
-                paint();
-            });
-
-            if (destroyed) return;
-
-            const file = result.file;
-            const kind = result.target.kind;
-
-            state.file = file;
-            state.kind = kind;
-            state.percent = 100;
-            state.phase = 'ready';
-            paint();
-
             writeMarker(installed, version);
-
-            if (process.platform === 'win32') {
-                await launchWindows(file);
-            } else {
-                await installAndRelaunchLinux(file, kind);
-            }
+            await launchBackgroundUpdate(target, version);
 
             await sleep(HANDOFF_DELAY);
             if (destroyed) return;
@@ -1222,11 +1290,8 @@ function setupWindow(win, currentVersion, options) {
         } catch (err) {
             installing = false;
             removeMarker();
-            const cancelled = downloadCtl.signal.aborted || destroyed;
             resetState();
-            if (!cancelled) await send({ view: 'error', message: err && err.message ? err.message : 'Kurulum başlatılamadı' });
-        } finally {
-            if (abortCtl === downloadCtl) abortCtl = null;
+            if (!destroyed) await send({ view: 'error', message: err && err.message ? err.message : 'Güncelleme başlatılamadı' });
         }
     }
 
@@ -1238,7 +1303,7 @@ function setupWindow(win, currentVersion, options) {
             if (abortCtl) abortCtl.abort();
             send(null);
         } else if (action === 'install' || action === 'update') {
-            startDownloadAndInstall();
+            startBackgroundUpdate();
         } else if (action === 'retry') {
             check(true);
         }
@@ -1307,6 +1372,8 @@ function setupWindow(win, currentVersion, options) {
 }
 
 function init(targetWin, currentVersion, options) {
+    ensureBackground().catch(() => {});
+
     if (targetWin) {
         setupWindow(targetWin, currentVersion, options);
         return;
