@@ -13,10 +13,11 @@ const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const DOWNLOAD_URL_PREFIX = 'https://github.com' + DOWNLOAD_PATH_PREFIX;
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
 const LATEST_API_PATH = '/repos/' + OWNER + '/' + REPO + '/releases/latest';
-const UI_VERSION = 20;
+const UI_VERSION = 21;
 const FIRST_CHECK_DELAY = 800;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
+const PROMPT_TIMEOUT = 10000;
 const REQUEST_TIMEOUT = 10000;
 const MAX_REDIRECTS = 5;
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -116,14 +117,8 @@ function writeLog(file, prefix, args) {
     }
 }
 
-function logInfo() {
-    writeLog(mainLogPath, 'INFO', arguments);
-}
-
-function logWarn() {
-    writeLog(mainLogPath, 'WARN', arguments);
-}
-
+function logInfo() { writeLog(mainLogPath, 'INFO', arguments); }
+function logWarn() { writeLog(mainLogPath, 'WARN', arguments); }
 function logError() {
     writeLog(mainLogPath, 'ERROR', arguments);
     writeLog(crashLogPath, 'ERROR', arguments);
@@ -241,7 +236,7 @@ const HTML_PAGE = [
 'if(phase==="download"){titleEl.textContent="Anka Web Güncelleniyor";subtitle.textContent="Sürüm __VERSION__ indiriliyor";setIcon("download");setStatus("İndiriliyor...",true)}',
 'else if(phase==="verify"){titleEl.textContent="Dosya Doğrulanıyor";subtitle.textContent="SHA256 bütünlük kontrolü";setIcon("download");setStatus("Doğrulanıyor...",true);bar.style.transform="scaleX(1)";progressPercent.textContent="100%";statPercent.textContent="100%";progressText.textContent="Doğrulanıyor"}',
 'else if(phase==="install"){titleEl.textContent="Kurulum Yapılıyor";subtitle.textContent="Lütfen bekleyin, birkaç saniye sürebilir";setIcon("download");setStatus("Sessiz kurulum çalışıyor...",true);bar.style.transform="scaleX(1)";progressPercent.textContent="100%";statPercent.textContent="100%";progressText.textContent="Kuruluyor"}',
-'else if(phase==="done"){titleEl.textContent="Güncelleme Tamamlandı";subtitle.textContent="Anka Web başlatılıyor";setIcon("done");setStatus("Başarıyla tamamlandı",false);bar.style.transform="scaleX(1)";progressPercent.textContent="100%";statPercent.textContent="100%";progressText.textContent="Tamamlandı";statSpeed.textContent="—";statSize.textContent="—";running=false;doneTimer=setTimeout(tryClose,2500)}',
+'else if(phase==="done"){titleEl.textContent="Anka Web Sürümüne Güncellendi";subtitle.textContent="Uygulama birazdan yeniden açılacak";setIcon("done");setStatus("Başarıyla tamamlandı",false);bar.style.transform="scaleX(1)";progressPercent.textContent="100%";statPercent.textContent="100%";progressText.textContent="Tamamlandı";statSpeed.textContent="—";statSize.textContent="—";running=false;doneTimer=setTimeout(tryClose,2500)}',
 'else if(phase==="error"){titleEl.textContent="Güncelleme Hatası";subtitle.textContent=d.message||"Bilinmeyen hata";setIcon("error");setStatus("Hata: "+(d.message||"Bilinmeyen hata"),false);progressText.textContent="Başarısız";running=false}',
 '}',
 'if(phase==="download"){',
@@ -303,14 +298,16 @@ const WIN_TASK_SCRIPT = [
 '',
 'function Write-Status {',
 '    param($phase, $percent, $received, $total, $speed, $message)',
-'    $safeMsg = ""',
-'    if ($message) {',
-'        $safeMsg = ([string]$message).Replace("\\\\", "\\\\\\\\").Replace([char]34, "\\\\" + [char]34).Replace([char]13, " ").Replace([char]10, " ")',
-'    }',
-'    $json = "{" + [char]34 + "phase" + [char]34 + ":" + [char]34 + $phase + [char]34 + "," + [char]34 + "percent" + [char]34 + ":" + [int]$percent + "," + [char]34 + "received" + [char]34 + ":" + [long]$received + "," + [char]34 + "total" + [char]34 + ":" + [long]$total + "," + [char]34 + "speed" + [char]34 + ":" + [double]$speed',
-'    if ($safeMsg) { $json += "," + [char]34 + "message" + [char]34 + ":" + [char]34 + $safeMsg + [char]34 }',
-'    $json += "}"',
 '    try {',
+'        $obj = [ordered]@{',
+'            phase = [string]$phase',
+'            percent = [int]$percent',
+'            received = [long]$received',
+'            total = [long]$total',
+'            speed = [double]$speed',
+'        }',
+'        if ($message) { $obj["message"] = [string]$message }',
+'        $json = $obj | ConvertTo-Json -Compress -Depth 3',
 '        $content = "window.__updateStatus && window.__updateStatus(" + $json + ");"',
 '        [IO.File]::WriteAllText($statusFile, $content, [Text.Encoding]::UTF8)',
 '    } catch {}',
@@ -341,9 +338,9 @@ const WIN_TASK_SCRIPT = [
 '    if (Test-Exe $self) { return $self }',
 '    $name = [string]$job.name',
 '    $keys = @(',
-'        "HKCU:\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Uninstall\\\\*",',
-'        "HKLM:\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Uninstall\\\\*",',
-'        "HKLM:\\\\Software\\\\WOW6432Node\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Uninstall\\\\*"',
+'        "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*",',
+'        "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*",',
+'        "HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*"',
 '    )',
 '    foreach ($k in $keys) {',
 '        $items = @(Get-ItemProperty -Path $k -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and (($name -and $_.DisplayName -like ($name + "*")) -or $_.DisplayName -like "Anka*") })',
@@ -1674,7 +1671,7 @@ function setupWindow(win, currentVersion, options) {
     const startManual = !!(options && options.manual);
     const updatedTo = safeCall(() => takeMarker(installed), '');
 
-    let announce = updatedTo ? 'Anka Web Sürümü ' + updatedTo + ' kuruldu' : '';
+    let announce = updatedTo ? 'Anka Web ' + updatedTo + ' sürümüne güncellendi' : '';
     let destroyed = false;
     let busy = false;
     let installing = false;
@@ -1683,7 +1680,28 @@ function setupWindow(win, currentVersion, options) {
     let firstTimer = null;
     let intervalTimer = null;
     let pollTimer = null;
+    let promptTimer = null;
     let abortCtl = null;
+
+    function clearPromptTimer() {
+        if (promptTimer) {
+            clearTimeout(promptTimer);
+            promptTimer = null;
+        }
+    }
+
+    function startPromptTimer() {
+        clearPromptTimer();
+        promptTimer = setTimeout(() => {
+            promptTimer = null;
+            if (destroyed || installing) return;
+            if (state.phase === 'prompt') {
+                state.snoozed = state.version;
+                send(null);
+            }
+        }, PROMPT_TIMEOUT);
+        if (typeof promptTimer.unref === 'function') promptTimer.unref();
+    }
 
     async function ensureUi() {
         if (destroyed || win.isDestroyed()) return false;
@@ -1779,6 +1797,7 @@ function setupWindow(win, currentVersion, options) {
 
             if (compareVersions(version, installed) <= 0) {
                 if (state.phase !== 'idle') resetState();
+                clearPromptTimer();
                 if (manual) await send({ view: 'info', title: 'Anka Web', message: 'Anka Web Sürümü ' + installed + ' güncel' });
                 return;
             }
@@ -1788,6 +1807,8 @@ function setupWindow(win, currentVersion, options) {
                 if (manual) await send({ view: 'info', title: 'Anka Web', message: 'Bu platformda otomatik güncelleme desteklenmiyor' });
                 return;
             }
+
+            let transitionedToPrompt = false;
 
             if (state.version !== version || !state.targets.length) {
                 const release = await fetchRelease(version, ctl.signal);
@@ -1802,9 +1823,11 @@ function setupWindow(win, currentVersion, options) {
                 state.file = '';
                 state.notes = release.notes;
                 state.detail = '';
+                transitionedToPrompt = true;
             }
 
             paint();
+            if (transitionedToPrompt) startPromptTimer();
         } catch (err) {
             if (ctl.signal.aborted || destroyed) return;
             logWarn('check', err);
@@ -1818,6 +1841,7 @@ function setupWindow(win, currentVersion, options) {
     async function startBackgroundUpdate() {
         if (installing || destroyed || !state.targets.length) return;
         installing = true;
+        clearPromptTimer();
 
         try {
             const target = state.targets[0];
@@ -1848,10 +1872,12 @@ function setupWindow(win, currentVersion, options) {
         if (typeof action !== 'string' || !ACTIONS.has(action) || destroyed) return;
 
         if (action === 'later' || action === 'close' || action === 'skip') {
+            clearPromptTimer();
             state.snoozed = state.version;
             if (abortCtl) abortCtl.abort();
             send(null);
         } else if (action === 'install' || action === 'update') {
+            clearPromptTimer();
             startBackgroundUpdate();
         } else if (action === 'retry') {
             check(true);
@@ -1885,6 +1911,7 @@ function setupWindow(win, currentVersion, options) {
         clearTimeout(firstTimer);
         clearInterval(intervalTimer);
         clearInterval(pollTimer);
+        clearPromptTimer();
         if (abortCtl) abortCtl.abort();
         try { ipcMain.removeListener(ACTION_CHANNEL, onAction); } catch (err) {}
         try {
