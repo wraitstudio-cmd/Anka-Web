@@ -13,7 +13,8 @@ const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const DOWNLOAD_URL_PREFIX = 'https://github.com' + DOWNLOAD_PATH_PREFIX;
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
 const LATEST_API_PATH = '/repos/' + OWNER + '/' + REPO + '/releases/latest';
-const UI_VERSION = 15;
+const UI_VERSION = 16;
+const TASK_VERSION = 3;
 const FIRST_CHECK_DELAY = 1000;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
@@ -26,9 +27,9 @@ const MAX_MARKER_BYTES = 4096;
 const MARKER_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const NOTES_MAX = 600;
 const POLL_MS = 250;
-const HANDOFF_DELAY = 1500;
+const HANDOFF_DELAY = 800;
 const CLAIM_WAIT = 10000;
-const CLAIM_POLL = 200;
+const CLAIM_POLL = 100;
 const MARKER_FILE = 'anka-last-update.json';
 const UPDATER_DIR = 'updater';
 const TASK_NAME = 'AnkaWebUpdater';
@@ -60,6 +61,54 @@ $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $jobFile = Join-Path $dir 'job.json'
 $logFile = Join-Path $dir 'updater.log'
 function Write-Log($m) { try { Add-Content -Path $logFile -Value ((Get-Date -Format 's') + ' ' + $m) } catch {} }
+function Test-Exe($p) {
+    if (-not $p) { return $false }
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return $false }
+    $n = [IO.Path]::GetFileName($p)
+    if ($n -notlike '*.exe') { return $false }
+    if ($n -match '^(unins|uninstall|electron|squirrel|update)') { return $false }
+    return $true
+}
+function Find-InDir($d) {
+    if (-not $d -or -not (Test-Path -LiteralPath $d -PathType Container)) { return '' }
+    $f = Get-ChildItem -LiteralPath $d -Filter '*.exe' -File -ErrorAction SilentlyContinue | Where-Object { Test-Exe $_.FullName } | Sort-Object Length -Descending | Select-Object -First 1
+    if ($f) { return $f.FullName }
+    return ''
+}
+function Find-App($job) {
+    $self = [string]$job.exec
+    if (Test-Exe $self) { return $self }
+    $name = [string]$job.name
+    $keys = @(
+        'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+        'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+        'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
+    )
+    foreach ($k in $keys) {
+        $items = @(Get-ItemProperty -Path $k -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and (($name -and $_.DisplayName -like ($name + '*')) -or $_.DisplayName -like 'Anka*') })
+        foreach ($it in $items) {
+            $icon = ([string]$it.DisplayIcon) -replace ',\\s*-?\\d+$', '' -replace '"', ''
+            if (Test-Exe $icon) { return $icon }
+            $found = Find-InDir ([string]$it.InstallLocation)
+            if ($found) { return $found }
+        }
+    }
+    $pf86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+    $roots = @((Join-Path $env:LOCALAPPDATA 'Programs'), $env:ProgramFiles, $pf86)
+    foreach ($root in $roots) {
+        if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+        $filters = @('Anka*')
+        if ($name) { $filters = @(($name + '*'), 'Anka*') }
+        foreach ($flt in $filters) {
+            $dirs = @(Get-ChildItem -LiteralPath $root -Directory -Filter $flt -ErrorAction SilentlyContinue)
+            foreach ($d in $dirs) {
+                $found = Find-InDir $d.FullName
+                if ($found) { return $found }
+            }
+        }
+    }
+    return ''
+}
 if (-not (Test-Path -LiteralPath $jobFile)) { exit 1 }
 $job = $null
 try { $job = Get-Content -Raw -Encoding UTF8 -LiteralPath $jobFile | ConvertFrom-Json } catch {}
@@ -70,12 +119,12 @@ try {
     $uri = [Uri]([string]$job.url)
     if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'github.com' -or -not $uri.AbsolutePath.StartsWith('__PREFIX__')) { throw 'Gecersiz adres' }
     $procId = [int]$job.pid
-    try { Wait-Process -Id $procId -Timeout 60 } catch {}
+    try { Wait-Process -Id $procId -Timeout 30 } catch {}
     $alive = Get-Process -Id $procId -ErrorAction SilentlyContinue
-    if ($alive -and $alive.ProcessName -eq [IO.Path]::GetFileNameWithoutExtension([string]$job.exec)) {
+    if ($alive -and $alive.ProcessName -eq [string]$job.proc) {
         try { $alive.Kill(); $alive.WaitForExit(10000) | Out-Null } catch {}
     }
-    Start-Sleep -Milliseconds 1500
+    Start-Sleep -Milliseconds 700
     $ok = $false
     for ($i = 1; $i -le 3 -and -not $ok; $i++) {
         try {
@@ -84,7 +133,7 @@ try {
             $ok = $true
         } catch {
             Write-Log ('indirme denemesi ' + $i + ': ' + $_.Exception.Message)
-            Start-Sleep -Seconds (2 * $i)
+            Start-Sleep -Seconds $i
         }
     }
     if (-not $ok) { throw 'Indirme basarisiz' }
@@ -105,11 +154,17 @@ try {
 } finally {
     Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
 }
-Start-Sleep -Milliseconds 1000
+Start-Sleep -Milliseconds 500
+$target = ''
+try { $target = Find-App $job } catch { Write-Log $_.Exception.Message }
+if (-not $target) {
+    Write-Log 'uygulama bulunamadi'
+    exit 1
+}
 try {
-    Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + [string]$job.exec + '"')
+    Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $target + '"')
 } catch {
-    try { Start-Process -FilePath ([string]$job.exec) } catch {}
+    try { Start-Process -FilePath $target -WorkingDirectory (Split-Path -Parent $target) } catch { Write-Log $_.Exception.Message }
 }
 `.replace('__PREFIX__', DOWNLOAD_PATH_PREFIX);
 
@@ -128,7 +183,7 @@ rm -f "$RUN"
 TMP="$DIR/anka-web-$ANKA_VERSION.AppImage.part"
 rm -f "$TMP"
 relaunch() {
-    sleep 1
+    sleep 0.5
     [ -x "$ANKA_DEST" ] || return 0
     unset APPIMAGE APPDIR ARGV0 OWD
     if command -v setsid >/dev/null 2>&1; then
@@ -137,7 +192,54 @@ relaunch() {
         nohup "$ANKA_DEST" >/dev/null 2>&1 </dev/null &
     fi
 }
-... (fail, fetch, doğrulama ve kurulum bölümleri değişmeden kalıyor) ...
+fail() { log "$1"; rm -f "$TMP"; relaunch; exit 1; }
+fetch() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 15 --max-time 900 -A AnkaWeb-Updater -o "$2" "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -T 30 -t 3 -U AnkaWeb-Updater -O "$2" "$1"
+    else
+        return 127
+    fi
+}
+case "$ANKA_URL" in
+    "__PREFIX__"*) ;;
+    *) fail "gecersiz adres" ;;
+esac
+n=0
+while kill -0 "$ANKA_PID" 2>/dev/null && [ "$n" -lt 150 ]; do
+    n=$((n+1))
+    sleep 0.2
+done
+if kill -0 "$ANKA_PID" 2>/dev/null; then
+    kill -TERM "$ANKA_PID" 2>/dev/null
+    sleep 2
+    kill -KILL "$ANKA_PID" 2>/dev/null
+fi
+sleep 0.5
+fetch "$ANKA_URL" "$TMP" || fail "indirme basarisiz"
+SIZE=$(wc -c < "$TMP" 2>/dev/null | tr -d '[:space:]')
+[ -n "$SIZE" ] && [ "$SIZE" -ge 1024 ] || fail "indirilen dosya gecersiz"
+MAGIC=$(head -c 4 "$TMP" | od -An -tx1 | tr -d '[:space:]')
+[ "$MAGIC" = "7f454c46" ] || fail "gecerli bir AppImage degil"
+if [ -n "$ANKA_HASH" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        SUM=$(sha256sum "$TMP" | cut -d' ' -f1)
+    elif command -v shasum >/dev/null 2>&1; then
+        SUM=$(shasum -a 256 "$TMP" | cut -d' ' -f1)
+    else
+        fail "sha256 araci bulunamadi"
+    fi
+    [ "$SUM" = "$ANKA_HASH" ] || fail "dosya dogrulamasi basarisiz"
+fi
+mkdir -p "$(dirname "$ANKA_DEST")" || fail "hedef klasor olusturulamadi"
+if cp -f "$TMP" "$ANKA_DEST.new" && chmod 755 "$ANKA_DEST.new" && mv -f "$ANKA_DEST.new" "$ANKA_DEST"; then
+    rm -f "$TMP"
+    log "guncelleme tamamlandi: $ANKA_VERSION"
+else
+    rm -f "$ANKA_DEST.new"
+    fail "dosya degistirilemedi"
+fi
 relaunch
 exit 0
 `.replace('__PREFIX__', DOWNLOAD_URL_PREFIX);
@@ -304,15 +406,15 @@ function bootUi(version) {
                 setIcon(isReady ? 'check' : 'download', isReady ? 'done' : 'busy');
 
                 if (state.prompt) {
-                    title.textContent = 'Yeni sürüm mevcut: ' + state.version;
+                    title.textContent = 'Anka Web Sürümü ' + state.version + ' mevcut';
                     text.textContent = 'Güncellemeyi yüklemek istiyor musunuz?';
                     setButtons([['Daha Sonra', 'skip'], ['Güncelle', 'update', true]]);
                 } else if (isReady) {
-                    title.textContent = 'Güncelleme başlatılıyor: ' + state.version;
-                    text.textContent = 'Uygulama kapanacak, güncelleme arka planda kurulup uygulama yeniden açılacak…';
+                    title.textContent = 'Anka Web Sürümü ' + state.version + ' kuruluyor';
+                    text.textContent = 'Uygulama kapanacak, güncelleme arka planda kurulup Anka Web yeniden açılacak…';
                     setButtons([]);
                 } else {
-                    title.textContent = 'Güncelleme hazırlanıyor: ' + state.version;
+                    title.textContent = 'Anka Web Sürümü ' + state.version + ' hazırlanıyor';
                     setButtons([['İptal Et', 'skip']]);
                 }
 
@@ -748,16 +850,15 @@ function runProcess(command, args, extraEnv) {
     });
 }
 
-function launchDetached(command, args, cwd, options) {
-    const extra = options || {};
+function launchDetached(command, args, cwd, extraEnv) {
     return new Promise((resolve, reject) => {
         const child = spawn(command, args, {
             detached: true,
             stdio: 'ignore',
             shell: false,
-            windowsHide: !!extra.hide,
+            windowsHide: true,
             cwd: cwd,
-            env: cleanEnv(extra.env)
+            env: cleanEnv(extraEnv)
         });
         child.once('error', reject);
         child.once('spawn', () => {
@@ -784,8 +885,8 @@ function quitSoon() {
             } catch (e) {
                 process.exit(0);
             }
-        }, 1500);
-    }, 200);
+        }, 1200);
+    }, 150);
 }
 
 function systemPath(...parts) {
@@ -834,11 +935,11 @@ function xmlEscape(value) {
         .replace(/"/g, '&quot;');
 }
 
-function windowsTaskXml(runLevel, script) {
+function windowsTaskXml(script) {
     const name = process.env.USERNAME || os.userInfo().username;
     const user = (process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + name;
     const powershell = systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const args = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + script + '"';
+    const args = '-NoProfile -NonInteractive -NoLogo -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + script + '"';
     return [
         '<?xml version="1.0" encoding="UTF-16"?>',
         '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
@@ -849,7 +950,7 @@ function windowsTaskXml(runLevel, script) {
         '    <Principal id="Author">',
         '      <UserId>' + xmlEscape(user) + '</UserId>',
         '      <LogonType>InteractiveToken</LogonType>',
-        '      <RunLevel>' + runLevel + '</RunLevel>',
+        '      <RunLevel>LeastPrivilege</RunLevel>',
         '    </Principal>',
         '  </Principals>',
         '  <Settings>',
@@ -874,9 +975,9 @@ function windowsTaskXml(runLevel, script) {
     ].join('\r\n');
 }
 
-async function createWindowsTask(dir, script, runLevel) {
+async function createWindowsTask(dir, script) {
     const xmlFile = path.join(dir, WIN_TASK_XML);
-    const xml = windowsTaskXml(runLevel, script);
+    const xml = windowsTaskXml(script);
     fs.writeFileSync(xmlFile, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]), { mode: 0o600 });
     try {
         const result = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/xml', xmlFile, '/f']);
@@ -905,21 +1006,16 @@ async function ensureWindowsTask() {
 
     const query = await runProcess(systemPath('schtasks.exe'), ['/query', '/tn', TASK_NAME]);
     const exists = query.code === 0;
-    if (exists && marker && marker.script === script) return;
+    if (exists && marker && marker.script === script && marker.v === TASK_VERSION) return;
 
-    let level = 'HighestAvailable';
-    let created = await createWindowsTask(dir, script, level);
-    if (!created) {
-        level = 'LeastPrivilege';
-        created = await createWindowsTask(dir, script, level);
-    }
+    const created = await createWindowsTask(dir, script);
     if (!created) {
         if (exists) return;
         throw new Error('Güncelleme görevi oluşturulamadı');
     }
 
     try {
-        fs.writeFileSync(markerFile, JSON.stringify({ script: script, level: level }), { mode: 0o600 });
+        fs.writeFileSync(markerFile, JSON.stringify({ script: script, v: TASK_VERSION }), { mode: 0o600 });
     } catch (err) {}
 }
 
@@ -1040,7 +1136,7 @@ async function triggerLinux(target, version) {
 
     if (!claimed && fs.existsSync(jobFile)) {
         try {
-            await launchDetached(SH_BIN, [script], dir, { hide: true });
+            await launchDetached(SH_BIN, [script], dir);
             claimed = await waitClaim(jobFile, CLAIM_WAIT);
         } catch (err) {
             claimed = false;
@@ -1074,7 +1170,9 @@ async function launchBackgroundUpdate(target, version) {
             url: target.url,
             hash: target.hash || '',
             version: version,
-            exec: process.execPath
+            exec: app.isPackaged ? process.execPath : '',
+            proc: path.parse(process.execPath).name,
+            name: app.getName()
         });
         return;
     }
@@ -1093,7 +1191,7 @@ function setupWindow(win, currentVersion, options) {
     const startManual = !!(options && options.manual);
     const updatedTo = takeMarker(installed);
 
-    let announce = updatedTo ? 'Anka Web v' + updatedTo + ' sürümüne güncellendi' : '';
+    let announce = updatedTo ? 'Anka Web Sürümü ' + updatedTo + ' kuruldu' : '';
     let destroyed = false;
     let busy = false;
     let installing = false;
@@ -1191,7 +1289,7 @@ function setupWindow(win, currentVersion, options) {
 
             if (compareVersions(version, installed) <= 0) {
                 if (state.phase !== 'idle') resetState();
-                if (manual) await send({ view: 'info', title: 'Anka Web', message: 'Uygulama güncel (v' + installed + ')' });
+                if (manual) await send({ view: 'info', title: 'Anka Web', message: 'Anka Web Sürümü ' + installed + ' güncel' });
                 return;
             }
 
