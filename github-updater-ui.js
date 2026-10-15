@@ -561,13 +561,6 @@ const LINUX_SCRIPT = [
 '    printf \'window.__updateStatus && window.__updateStatus(%s);\' "$json" > "$STATUS" 2>/dev/null',
 '}',
 '',
-'find_bin() {',
-'    for d in /usr/bin /bin /usr/local/bin /usr/sbin /sbin; do',
-'        if [ -x "$d/$1" ]; then printf \'%s\' "$d/$1"; return 0; fi',
-'    done',
-'    command -v "$1" 2>/dev/null',
-'}',
-'',
 'if [ ! -f "$JOB" ]; then',
 '    log "job.env bulunamadi"',
 '    exit 1',
@@ -576,8 +569,9 @@ const LINUX_SCRIPT = [
 '. "$JOB" 2>/dev/null',
 'rm -f "$JOB"',
 '',
-'',
-'TMP="$DIR/anka-web-$ANKA_VERSION.AppImage.part"',
+'TMPNAME=$(basename "$ANKA_URL")',
+'[ -n "$TMPNAME" ] || TMPNAME="anka-web-$ANKA_VERSION.$ANKA_KIND"',
+'TMP="$DIR/$TMPNAME.part"',
 'rm -f "$TMP"',
 '',
 'write_status "download" 0 0 0 0 "Hazirlaniyor"',
@@ -651,12 +645,33 @@ const LINUX_SCRIPT = [
 '    log "gecersiz dosya"',
 '    exit 1',
 'fi',
+'',
 'MAGIC=$(head -c 4 "$TMP" | od -An -tx1 | tr -d \'[:space:]\')',
-'if [ "$MAGIC" != "7f454c46" ]; then',
-'    write_status "error" 0 0 0 0 "Gecerli AppImage degil"',
-'    log "gecerli appimage degil"',
-'    exit 1',
-'fi',
+'case "$ANKA_KIND" in',
+'    appimage)',
+'        if [ "$MAGIC" != "7f454c46" ]; then',
+'            write_status "error" 0 0 0 0 "Gecerli AppImage degil"',
+'            log "gecerli appimage degil"',
+'            exit 1',
+'        fi',
+'        ;;',
+'    deb)',
+'        DEBMAGIC=$(head -c 7 "$TMP" | od -An -tx1 | tr -d \'[:space:]\')',
+'        if [ "$DEBMAGIC" != "213c617263683e" ]; then',
+'            write_status "error" 0 0 0 0 "Gecerli deb paketi degil"',
+'            log "gecerli deb degil"',
+'            exit 1',
+'        fi',
+'        ;;',
+'    rpm)',
+'        if [ "$MAGIC" != "edabeedb" ]; then',
+'            write_status "error" 0 0 0 0 "Gecerli rpm paketi degil"',
+'            log "gecerli rpm degil"',
+'            exit 1',
+'        fi',
+'        ;;',
+'esac',
+'',
 'if [ -n "$ANKA_HASH" ]; then',
 '    SUM=""',
 '    if command -v sha256sum >/dev/null 2>&1; then',
@@ -674,26 +689,98 @@ const LINUX_SCRIPT = [
 'write_status "install" 100 0 0 0 "Kuruluyor"',
 'log "kurulum basliyor"',
 '',
-'mkdir -p "$(dirname "$ANKA_DEST")" || { write_status "error" 0 0 0 0 "Hedef olusturulamadi"; log "hedef olusturulamadi"; exit 1; }',
-'if cp -f "$TMP" "$ANKA_DEST.new" && chmod 755 "$ANKA_DEST.new" && mv -f "$ANKA_DEST.new" "$ANKA_DEST"; then',
+'run_root() {',
+'    if command -v pkexec >/dev/null 2>&1; then',
+'        pkexec "$@"',
+'        return $?',
+'    fi',
+'    if command -v sudo >/dev/null 2>&1; then',
+'        sudo -n "$@"',
+'        return $?',
+'    fi',
+'    return 127',
+'}',
+'',
+'install_deb() {',
+'    if command -v apt-get >/dev/null 2>&1; then',
+'        run_root apt-get install -y "$TMP" && return 0',
+'        run_root apt-get install -y -f && return 0',
+'    fi',
+'    if command -v dpkg >/dev/null 2>&1; then',
+'        run_root dpkg -i "$TMP" && return 0',
+'    fi',
+'    return 1',
+'}',
+'',
+'install_rpm() {',
+'    if command -v dnf >/dev/null 2>&1; then',
+'        run_root dnf install -y --nogpgcheck "$TMP" && return 0',
+'    fi',
+'    if command -v zypper >/dev/null 2>&1; then',
+'        run_root zypper --non-interactive install --allow-unsigned-rpm "$TMP" && return 0',
+'    fi',
+'    if command -v yum >/dev/null 2>&1; then',
+'        run_root yum install -y --nogpgcheck "$TMP" && return 0',
+'    fi',
+'    if command -v rpm >/dev/null 2>&1; then',
+'        run_root rpm -Uvh --replacepkgs --nosignature "$TMP" && return 0',
+'    fi',
+'    return 1',
+'}',
+'',
+'install_appimage() {',
+'    mkdir -p "$(dirname "$ANKA_DEST")" || return 1',
+'    cp -f "$TMP" "$ANKA_DEST.new" && chmod 755 "$ANKA_DEST.new" && mv -f "$ANKA_DEST.new" "$ANKA_DEST" && return 0',
+'    rm -f "$ANKA_DEST.new" 2>/dev/null',
+'    return 1',
+'}',
+'',
+'OK=1',
+'case "$ANKA_KIND" in',
+'    deb) install_deb || OK=0 ;;',
+'    rpm) install_rpm || OK=0 ;;',
+'    appimage) install_appimage || OK=0 ;;',
+'    *) OK=0 ;;',
+'esac',
+'',
+'if [ "$OK" -ne 1 ]; then',
 '    rm -f "$TMP"',
-'    log "guncelleme tamamlandi: $ANKA_VERSION"',
-'else',
-'    rm -f "$ANKA_DEST.new"',
-'    write_status "error" 0 0 0 0 "Dosya degistirilemedi"',
-'    log "dosya degistirilemedi"',
+'    write_status "error" 0 0 0 0 "Kurulum basarisiz"',
+'    log "kurulum basarisiz"',
 '    exit 1',
 'fi',
+'',
+'rm -f "$TMP"',
+'log "guncelleme tamamlandi: $ANKA_VERSION"',
 '',
 'write_status "done" 100 0 0 0 ""',
 '',
 'sleep 0.5',
-'if [ -x "$ANKA_DEST" ]; then',
+'',
+'find_binary() {',
+'    for n in anka-web Anka_Web anka-web-desktop ankaweb anka; do',
+'        p=$(command -v "$n" 2>/dev/null)',
+'        if [ -n "$p" ] && [ -x "$p" ]; then',
+'            printf \'%s\' "$p"',
+'            return 0',
+'        fi',
+'    done',
+'    return 1',
+'}',
+'',
+'BIN=""',
+'if [ "$ANKA_KIND" = "appimage" ] && [ -x "$ANKA_DEST" ]; then',
+'    BIN="$ANKA_DEST"',
+'else',
+'    BIN=$(find_binary)',
+'fi',
+'',
+'if [ -n "$BIN" ] && [ -x "$BIN" ]; then',
 '    unset APPIMAGE APPDIR ARGV0 OWD',
 '    if command -v setsid >/dev/null 2>&1; then',
-'        setsid "$ANKA_DEST" >/dev/null 2>&1 </dev/null &',
+'        setsid "$BIN" >/dev/null 2>&1 </dev/null &',
 '    else',
-'        nohup "$ANKA_DEST" >/dev/null 2>&1 </dev/null &',
+'        nohup "$BIN" >/dev/null 2>&1 </dev/null &',
 '    fi',
 'fi',
 '',
@@ -1111,11 +1198,43 @@ function findBin(name) {
     return null;
 }
 
+function detectLinuxDistro() {
+    try {
+        const raw = fs.readFileSync('/etc/os-release', 'utf8');
+        const out = Object.create(null);
+        raw.split(/\r?\n/).forEach((line) => {
+            const m = /^([A-Z_]+)=(.*)$/.exec(line);
+            if (!m) return;
+            let v = m[2].trim();
+            if (v.length > 1 && ((v[0] === '"' && v.endsWith('"')) || (v[0] === "'" && v.endsWith("'")))) {
+                v = v.slice(1, -1);
+            }
+            out[m[1]] = v;
+        });
+        return out;
+    } catch (err) {
+        return Object.create(null);
+    }
+}
+
+function linuxPreferredKinds() {
+    const info = detectLinuxDistro();
+    const id = String(info.ID || '').toLowerCase();
+    const like = ' ' + String(info.ID_LIKE || '').toLowerCase() + ' ';
+    const debSet = ['debian', 'ubuntu', 'linuxmint', 'mint', 'pop', 'elementary', 'kali', 'raspbian', 'deepin', 'zorin', 'mx', 'neon', 'devuan'];
+    const rpmSet = ['fedora', 'rhel', 'centos', 'rocky', 'almalinux', 'ol', 'opensuse', 'opensuse-leap', 'opensuse-tumbleweed', 'suse', 'sles', 'amzn', 'oracle', 'mageia'];
+    const isDeb = debSet.some((x) => id === x || id.startsWith(x + '-')) || debSet.some((x) => like.indexOf(' ' + x + ' ') >= 0);
+    const isRpm = rpmSet.some((x) => id === x || id.startsWith(x + '-')) || rpmSet.some((x) => like.indexOf(' ' + x + ' ') >= 0);
+    if (isDeb) return ['deb', 'appimage', 'targz'];
+    if (isRpm) return ['rpm', 'appimage', 'targz'];
+    return ['appimage', 'targz'];
+}
+
 function platformKinds() {
     if (process.platform === 'win32') return ['exe'];
     if (process.platform === 'linux') {
         if (process.arch !== 'x64') throw new Error('Bu işlemci mimarisi için paket yok');
-        return ['appimage'];
+        return linuxPreferredKinds();
     }
     return null;
 }
@@ -1453,6 +1572,7 @@ function linuxJobContent(target, version) {
         'ANKA_URL=' + shellQuote(target.url),
         'ANKA_HASH=' + shellQuote(target.hash || ''),
         'ANKA_VERSION=' + shellQuote(version),
+        'ANKA_KIND=' + shellQuote(target.kind),
         'ANKA_DEST=' + shellQuote(linuxDestination())
     ];
     GUI_ENV.forEach((key) => {
