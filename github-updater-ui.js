@@ -13,8 +13,7 @@ const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const DOWNLOAD_URL_PREFIX = 'https://github.com' + DOWNLOAD_PATH_PREFIX;
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
 const LATEST_API_PATH = '/repos/' + OWNER + '/' + REPO + '/releases/latest';
-const UI_VERSION = 18;
-const TASK_VERSION = 6;
+const UI_VERSION = 19;
 const FIRST_CHECK_DELAY = 800;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
@@ -27,19 +26,14 @@ const MAX_MARKER_BYTES = 4096;
 const MARKER_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const NOTES_MAX = 600;
 const POLL_MS = 200;
-const HANDOFF_DELAY = 500;
-const CLAIM_WAIT = 15000;
-const CLAIM_POLL = 80;
+const HANDOFF_DELAY = 400;
+const CLAIM_WAIT = 20000;
+const CLAIM_POLL = 60;
 const MARKER_FILE = 'anka-last-update.json';
 const UPDATER_DIR = 'updater';
-const TASK_NAME = 'AnkaWebUpdater';
-const LINUX_UNIT = 'anka-web-updater.service';
 const WIN_JOB_FILE = 'job.json';
 const WIN_SCRIPT_FILE = 'anka-updater.ps1';
-const WIN_STATUS_FILE = 'status.json';
-const WIN_TASK_MARKER = 'task.json';
-const WIN_TASK_XML = 'task.xml';
-const WIN_TASK_NAMESPACE = 'http://schemas.microsoft.com/windows/2004/02/mit/task';
+const WIN_STATUS_FILE = 'status.js';
 const LINUX_JOB_FILE = 'job.env';
 const LINUX_SCRIPT_FILE = 'anka-updater.sh';
 const ACTION_CHANNEL = 'anka-updater:action';
@@ -55,6 +49,91 @@ const STRIPPED_ENV = ['APPIMAGE', 'APPDIR', 'ARGV0', 'OWD'];
 const GUI_ENV = ['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'XDG_SESSION_TYPE', 'XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP', 'LANG'];
 const BIN_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/local/bin'];
 const SH_BIN = '/bin/sh';
+const LOG_DIR_NAME = 'anka-web-updater';
+
+let mainLogPath = null;
+let crashLogPath = null;
+
+function ensureLogDir() {
+    try {
+        const dir = path.join(os.tmpdir(), LOG_DIR_NAME);
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        return dir;
+    } catch (err) {
+        return null;
+    }
+}
+
+function initLogging() {
+    const dir = ensureLogDir();
+    if (!dir) return;
+    mainLogPath = path.join(dir, 'main.log');
+    crashLogPath = path.join(dir, 'crash.log');
+    try {
+        const stat = fs.existsSync(mainLogPath) ? fs.statSync(mainLogPath).size : 0;
+        if (stat > 512 * 1024) fs.writeFileSync(mainLogPath, '');
+    } catch (err) {}
+}
+
+function writeLog(file, prefix, args) {
+    if (!file) return;
+    try {
+        const parts = Array.prototype.map.call(args, (a) => {
+            if (a instanceof Error) return a.stack || a.message || String(a);
+            if (typeof a === 'string') return a;
+            try { return JSON.stringify(a); } catch (e) { return String(a); }
+        });
+        const line = new Date().toISOString() + ' [' + prefix + '] ' + parts.join(' ') + '\n';
+        fs.appendFileSync(file, line, { mode: 0o600 });
+    } catch (err) {}
+}
+
+function logInfo() {
+    writeLog(mainLogPath, 'INFO', arguments);
+}
+
+function logWarn() {
+    writeLog(mainLogPath, 'WARN', arguments);
+}
+
+function logError() {
+    writeLog(mainLogPath, 'ERROR', arguments);
+    writeLog(crashLogPath, 'ERROR', arguments);
+}
+
+function installGlobalHandlers() {
+    process.on('uncaughtException', (err) => {
+        try { logError('uncaughtException', err); } catch (e) {}
+    });
+    process.on('unhandledRejection', (reason) => {
+        try { logError('unhandledRejection', reason); } catch (e) {}
+    });
+    process.on('warning', (warning) => {
+        try { logWarn('warning', warning && warning.message ? warning.message : warning); } catch (e) {}
+    });
+}
+
+initLogging();
+installGlobalHandlers();
+
+function safeCall(fn, fallback) {
+    try {
+        const result = fn();
+        return result === undefined ? fallback : result;
+    } catch (err) {
+        logError('safeCall', err);
+        return fallback;
+    }
+}
+
+async function safeAsync(fn, fallback) {
+    try {
+        return await fn();
+    } catch (err) {
+        logError('safeAsync', err);
+        return fallback;
+    }
+}
 
 const HTML_PAGE = `<!DOCTYPE html>
 <html lang="tr">
@@ -84,7 +163,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .icon.err{background:linear-gradient(135deg,#ef4444,#dc2626);animation:none}
 .icon.err::after{border-color:rgba(239,68,68,.5);animation:none}
 .title{font-size:20px;font-weight:700;text-align:center;margin-bottom:6px;letter-spacing:-.01em}
-.subtitle{font-size:13px;color:#a1a1aa;text-align:center;margin-bottom:24px}
+.subtitle{font-size:13px;color:#a1a1aa;text-align:center;margin-bottom:24px;word-break:break-word}
 .progress-track{height:7px;border-radius:4px;background:rgba(255,255,255,.07);overflow:hidden;margin-bottom:10px}
 .progress-bar{height:100%;border-radius:4px;background:linear-gradient(90deg,#ff4757,#ff7a45,#ff4757);background-size:200% 100%;animation:shimmer 1.4s linear infinite;transform-origin:left;transform:scaleX(0);transition:transform .25s cubic-bezier(.4,0,.2,1);will-change:transform}
 .progress-info{display:flex;justify-content:space-between;font-size:12px;color:#71717a;margin-bottom:18px}
@@ -93,7 +172,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .stat{background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.05);border-radius:10px;padding:10px 8px;text-align:center}
 .stat-value{font-size:14px;font-weight:700;color:#f4f4f5;font-variant-numeric:tabular-nums}
 .stat-label{font-size:10px;color:#71717a;text-transform:uppercase;letter-spacing:.6px;margin-top:3px;font-weight:600}
-.status{display:flex;align-items:center;justify-content:center;gap:8px;font-size:12px;color:#a1a1aa;min-height:18px}
+.status{display:flex;align-items:center;justify-content:center;gap:8px;font-size:12px;color:#a1a1aa;min-height:18px;text-align:center}
 .spinner{width:12px;height:12px;border:2px solid rgba(255,255,255,.15);border-top-color:#ff4757;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
 @keyframes spin{to{transform:rotate(360deg)}}
 .spinner.hidden{display:none}
@@ -118,21 +197,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 <script>
 (function(){
 'use strict';
-var bar=document.getElementById('bar'),title=document.getElementById('title'),subtitle=document.getElementById('subtitle'),statusText=document.getElementById('statusText'),spinner=document.getElementById('spinner'),icon=document.getElementById('icon'),statPercent=document.getElementById('statPercent'),statSpeed=document.getElementById('statSpeed'),statSize=document.getElementById('statSize'),progressText=document.getElementById('progressText'),progressPercent=document.getElementById('progressPercent');
-var lastPhase='',lastPercent=-1,running=true;
+var bar=document.getElementById('bar'),titleEl=document.getElementById('title'),subtitle=document.getElementById('subtitle'),statusText=document.getElementById('statusText'),spinner=document.getElementById('spinner'),icon=document.getElementById('icon'),statPercent=document.getElementById('statPercent'),statSpeed=document.getElementById('statSpeed'),statSize=document.getElementById('statSize'),progressText=document.getElementById('progressText'),progressPercent=document.getElementById('progressPercent');
+var lastPhase='',lastPercent=-1,running=true,doneTimer=null;
 function fmtBytes(b){if(!b||b<0)return'0 MB';var mb=b/1048576;if(mb>=1024)return(mb/1024).toFixed(2)+' GB';return mb.toFixed(2)+' MB'}
 function fmtSpeed(bps){if(!bps||bps<0)return'0 MB/s';var mbps=bps/1048576;if(mbps>=1024)return(mbps/1024).toFixed(2)+' GB/s';return mbps.toFixed(2)+' MB/s'}
 function setIcon(t){if(t==='done'){icon.className='icon done';icon.innerHTML='<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'}else if(t==='error'){icon.className='icon err';icon.innerHTML='<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/></svg>'}else{icon.className='icon';icon.innerHTML='<svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>'}}
 function setStatus(msg,showSpinner){statusText.textContent=msg;if(showSpinner===false)spinner.classList.add('hidden');else spinner.classList.remove('hidden')}
+function tryClose(){try{window.open('','_self','');window.close()}catch(e){}}
 function update(d){
+if(!d||typeof d!=='object')return;
 var phase=d.phase||'download',percent=Math.max(0,Math.min(100,d.percent||0));
 if(phase!==lastPhase){
 lastPhase=phase;
-if(phase==='download'){title.textContent='Anka Web Güncelleniyor';subtitle.textContent='Sürüm __VERSION__ indiriliyor';setIcon('download');setStatus('İndiriliyor...',true)}
-else if(phase==='verify'){title.textContent='Dosya Doğrulanıyor';subtitle.textContent='SHA256 bütünlük kontrolü';setIcon('download');setStatus('Doğrulanıyor...',true);bar.style.transform='scaleX(1)';progressPercent.textContent='100%';statPercent.textContent='100%';progressText.textContent='Doğrulanıyor'}
-else if(phase==='install'){title.textContent='Kurulum Yapılıyor';subtitle.textContent='Lütfen bekleyin, birkaç saniye sürebilir';setIcon('download');setStatus('Sessiz kurulum çalışıyor...',true);bar.style.transform='scaleX(1)';progressPercent.textContent='100%';statPercent.textContent='100%';progressText.textContent='Kuruluyor'}
-else if(phase==='done'){title.textContent='Güncelleme Tamamlandı';subtitle.textContent='Anka Web başlatılıyor';setIcon('done');setStatus('Başarıyla tamamlandı',false);bar.style.transform='scaleX(1)';progressPercent.textContent='100%';statPercent.textContent='100%';progressText.textContent='Tamamlandı';statSpeed.textContent='—';statSize.textContent='—';running=false;setTimeout(function(){window.close()},2000)}
-else if(phase==='error'){title.textContent='Güncelleme Hatası';subtitle.textContent=d.message||'Bilinmeyen hata';setIcon('error');setStatus('Hata: '+(d.message||'Bilinmeyen hata'),false);progressText.textContent='Başarısız';running=false}
+if(phase==='download'){titleEl.textContent='Anka Web Güncelleniyor';subtitle.textContent='Sürüm __VERSION__ indiriliyor';setIcon('download');setStatus('İndiriliyor...',true)}
+else if(phase==='verify'){titleEl.textContent='Dosya Doğrulanıyor';subtitle.textContent='SHA256 bütünlük kontrolü';setIcon('download');setStatus('Doğrulanıyor...',true);bar.style.transform='scaleX(1)';progressPercent.textContent='100%';statPercent.textContent='100%';progressText.textContent='Doğrulanıyor'}
+else if(phase==='install'){titleEl.textContent='Kurulum Yapılıyor';subtitle.textContent='Lütfen bekleyin, birkaç saniye sürebilir';setIcon('download');setStatus('Sessiz kurulum çalışıyor...',true);bar.style.transform='scaleX(1)';progressPercent.textContent='100%';statPercent.textContent='100%';progressText.textContent='Kuruluyor'}
+else if(phase==='done'){titleEl.textContent='Güncelleme Tamamlandı';subtitle.textContent='Anka Web başlatılıyor';setIcon('done');setStatus('Başarıyla tamamlandı',false);bar.style.transform='scaleX(1)';progressPercent.textContent='100%';statPercent.textContent='100%';progressText.textContent='Tamamlandı';statSpeed.textContent='—';statSize.textContent='—';running=false;doneTimer=setTimeout(tryClose,2500)}
+else if(phase==='error'){titleEl.textContent='Güncelleme Hatası';subtitle.textContent=d.message||'Bilinmeyen hata';setIcon('error');setStatus('Hata: '+(d.message||'Bilinmeyen hata'),false);progressText.textContent='Başarısız';running=false}
 }
 if(phase==='download'){
 if(percent!==lastPercent){lastPercent=percent;bar.style.transform='scaleX('+(percent/100)+')';progressPercent.textContent=percent+'%';statPercent.textContent=percent+'%'}
@@ -143,16 +224,17 @@ progressText.textContent='İndiriliyor';
 setStatus(fmtBytes(received)+(total>0?' / '+fmtBytes(total):'')+'  •  '+fmtSpeed(speed*1048576),true)
 }
 }
-var statusUrl='__STATUS_URL__';
+window.__updateStatus=update;
+var failCount=0;
 function poll(){
 if(!running)return;
-var req=new XMLHttpRequest();
-req.open('GET',statusUrl+'?t='+Date.now(),true);
-req.timeout=4000;
-req.onload=function(){if(req.status===200){try{update(JSON.parse(req.responseText))}catch(e){}}setTimeout(poll,150)};
-req.onerror=function(){setTimeout(poll,400)};
-req.ontimeout=function(){setTimeout(poll,400)};
-req.send();
+var s=document.createElement('script');
+s.src='status.js?t='+Date.now();
+s.async=true;
+s.onload=function(){failCount=0;s.remove()};
+s.onerror=function(){failCount++;s.remove()};
+document.head.appendChild(s);
+setTimeout(poll,failCount>10?600:180)
 }
 poll();
 })();
@@ -160,88 +242,50 @@ poll();
 </body>
 </html>`;
 
-const WIN_TASK_SCRIPT = `$ErrorActionPreference = 'Stop'
+const WIN_TASK_SCRIPT = `$ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
+$WarningPreference = 'SilentlyContinue'
+$InformationPreference = 'SilentlyContinue'
+$VerbosePreference = 'SilentlyContinue'
+$DebugPreference = 'SilentlyContinue'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
+
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $jobFile = Join-Path $dir 'job.json'
 $logFile = Join-Path $dir 'updater.log'
-$statusFile = Join-Path $dir 'status.json'
-function Write-Log($m) { try { Add-Content -Path $logFile -Value ((Get-Date -Format 's') + ' ' + $m) } catch {} }
-function Write-Status($phase, $percent, $received, $total, $speed, $message) {
-    $obj = @{ phase = $phase; percent = [int]$percent; received = [long]$received; total = [long]$total; speed = [double]$speed }
-    if ($message) { $obj.message = $message }
-    try { [IO.File]::WriteAllText($statusFile, ($obj | ConvertTo-Json -Compress), [Text.Encoding]::UTF8) } catch {}
-}
+$statusFile = Join-Path $dir 'status.js'
+$startFlag = Join-Path $dir 'started.flag'
 
-$server = $null
-$port = 0
-
-function Start-HtmlServer {
-    param($HtmlPath)
+function Log {
+    param($m)
     try {
-        $listener = New-Object System.Net.HttpListener
-        $port = Get-Random -Minimum 49152 -Maximum 65535
-        $listener.Prefixes.Add("http://127.0.0.1:$port/")
-        $listener.Start()
-        $script:server = $listener
-        $script:port = $port
-        Start-Job -ScriptBlock {
-            param($L, $H)
-            while ($L.IsListening) {
-                try {
-                    $ctx = $L.GetContext()
-                    $path = $ctx.Request.Url.AbsolutePath
-                    if ($path -eq '/status.json') {
-                        $file = Join-Path (Split-Path $H -Parent) 'status.json'
-                        if (Test-Path $file) {
-                            $buf = [IO.File]::ReadAllBytes($file)
-                            $ctx.Response.ContentType = 'application/json; charset=utf-8'
-                            $ctx.Response.ContentLength64 = $buf.Length
-                            $ctx.Response.OutputStream.Write($buf, 0, $buf.Length)
-                        } else {
-                            $ctx.Response.StatusCode = 204
-                        }
-                    } else {
-                        $buf = [IO.File]::ReadAllBytes($H)
-                        $ctx.Response.ContentType = 'text/html; charset=utf-8'
-                        $ctx.Response.ContentLength64 = $buf.Length
-                        $ctx.Response.OutputStream.Write($buf, 0, $buf.Length)
-                    }
-                    $ctx.Response.OutputStream.Close()
-                } catch {}
-            }
-        } -ArgumentList $listener, $HtmlPath | Out-Null
-        return $true
-    } catch {
-        return $false
-    }
-}
-
-function Stop-HtmlServer {
-    if ($script:server) {
-        try { $script:server.Stop() } catch {}
-        try { $script:server.Close() } catch {}
-    }
-    Get-Job | Where-Object { $_.State -eq 'Running' } | Stop-Job -ErrorAction SilentlyContinue
-    Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue
-}
-
-function Open-Browser {
-    param($Url)
+        $line = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fff') + ' ' + $m
+        Add-Content -Path $logFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {}
     try {
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = $Url
-        $psi.UseShellExecute = $true
-        $psi.WindowStyle = 'Hidden'
-        [System.Diagnostics.Process]::Start($psi) | Out-Null
-        return $true
-    } catch {
-        try { Start-Process $Url -WindowStyle Hidden } catch { return $false }
-    }
+        $tmpLog = Join-Path $env:TEMP 'anka-web-updater\\updater.log'
+        $tmpDir = Split-Path $tmpLog -Parent
+        if (-not (Test-Path $tmpDir)) { New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null }
+        Add-Content -Path $tmpLog -Value $m -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {}
 }
 
-function Test-Exe($p) {
+function Write-Status {
+    param($phase, $percent, $received, $total, $speed, $message)
+    $safeMsg = ''
+    if ($message) { $safeMsg = ([string]$message).Replace('\\', '\\\\').Replace('"', '\\"').Replace("\`r", ' ').Replace("\`n", ' ') }
+    $json = '{"phase":"' + $phase + '","percent":' + [int]$percent + ',"received":' + [long]$received + ',"total":' + [long]$total + ',"speed":' + [double]$speed
+    if ($safeMsg) { $json += ',"message":"' + $safeMsg + '"' }
+    $json += '}'
+    try {
+        $content = 'window.__updateStatus && window.__updateStatus(' + $json + ');'
+        [IO.File]::WriteAllText($statusFile, $content, [Text.Encoding]::UTF8)
+    } catch {}
+}
+
+function Test-Exe {
+    param($p)
     if (-not $p) { return $false }
     if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return $false }
     $n = [IO.Path]::GetFileName($p)
@@ -250,14 +294,17 @@ function Test-Exe($p) {
     return $true
 }
 
-function Find-InDir($d) {
-    if (-not $d -or -not (Test-Path -LiteralPath $d -PathType Container)) { return '' }
+function Find-InDir {
+    param($d)
+    if (-not $d) { return '' }
+    if (-not (Test-Path -LiteralPath $d -PathType Container)) { return '' }
     $f = Get-ChildItem -LiteralPath $d -Filter '*.exe' -File -ErrorAction SilentlyContinue | Where-Object { Test-Exe $_.FullName } | Sort-Object Length -Descending | Select-Object -First 1
     if ($f) { return $f.FullName }
     return ''
 }
 
-function Find-App($job) {
+function Find-App {
+    param($job)
     $self = [string]$job.exec
     if (Test-Exe $self) { return $self }
     $name = [string]$job.name
@@ -278,7 +325,8 @@ function Find-App($job) {
     $pf86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
     $roots = @((Join-Path $env:LOCALAPPDATA 'Programs'), $env:ProgramFiles, $pf86)
     foreach ($root in $roots) {
-        if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+        if (-not $root) { continue }
+        if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
         $filters = @('Anka*')
         if ($name) { $filters = @(($name + '*'), 'Anka*') }
         foreach ($flt in $filters) {
@@ -292,51 +340,85 @@ function Find-App($job) {
     return ''
 }
 
-if (-not (Test-Path -LiteralPath $jobFile)) { exit 1 }
+try {
+    [IO.File]::WriteAllText($startFlag, (Get-Date).ToString('o'), [Text.Encoding]::UTF8)
+} catch {}
+
+Log 'updater basladi'
+Log ('dir=' + $dir)
+
+if (-not (Test-Path -LiteralPath $jobFile)) {
+    Log 'job.json bulunamadi'
+    Write-Status 'error' 0 0 0 0 'Görev dosyası bulunamadı'
+    Start-Sleep -Seconds 3
+    exit 1
+}
+
 $job = $null
-try { $job = Get-Content -Raw -Encoding UTF8 -LiteralPath $jobFile | ConvertFrom-Json } catch {}
-Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
-if (-not $job) { exit 1 }
+try {
+    $raw = Get-Content -Raw -Encoding UTF8 -LiteralPath $jobFile
+    $job = $raw | ConvertFrom-Json
+} catch {
+    Log ('job parse hatasi: ' + $_.Exception.Message)
+}
+
+try { Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue } catch {}
+Log 'job.json okundu ve silindi'
+
+if (-not $job) {
+    Write-Status 'error' 0 0 0 0 'Görev dosyası okunamadı'
+    Start-Sleep -Seconds 3
+    exit 1
+}
+
+Write-Status 'download' 0 0 0 0 'Hazırlanıyor'
 
 $tmp = Join-Path $dir ('anka-web-' + [string]$job.version + '.exe')
 $failed = $false
-$htmlFile = Join-Path $dir 'updater.html'
+$errMsg = ''
 
 try {
-    Write-Status 'download' 0 0 0 0 'Hazırlanıyor'
-    $uri = [Uri]([string]$job.url)
-    if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'github.com' -or -not $uri.AbsolutePath.StartsWith('__PREFIX__')) { throw 'Gecersiz adres' }
+    $urlStr = [string]$job.url
+    if (-not $urlStr) { throw 'URL eksik' }
+    $uri = [Uri]$urlStr
+    if ($uri.Scheme -ne 'https') { throw 'HTTPS gerekli' }
+    if ($uri.Host -ne 'github.com') { throw 'Geçersiz host' }
+    if (-not $uri.AbsolutePath.StartsWith('__PREFIX__')) { throw 'Geçersiz yol' }
+
+    Log ('url=' + $urlStr)
 
     $procId = [int]$job.pid
-    try { Wait-Process -Id $procId -Timeout 20 } catch {}
-    $alive = Get-Process -Id $procId -ErrorAction SilentlyContinue
-    if ($alive -and $alive.ProcessName -eq [string]$job.proc) {
-        try { $alive.Kill(); $alive.WaitForExit(8000) | Out-Null } catch {}
+    if ($procId -gt 0) {
+        try { Wait-Process -Id $procId -Timeout 20 -ErrorAction SilentlyContinue } catch {}
+        $alive = Get-Process -Id $procId -ErrorAction SilentlyContinue
+        if ($alive) {
+            $expected = [string]$job.proc
+            if (-not $expected -or $alive.ProcessName -eq $expected -or $alive.ProcessName -like '*electron*') {
+                try { $alive.Kill(); $alive.WaitForExit(8000) | Out-Null } catch {}
+            }
+        }
     }
     Start-Sleep -Milliseconds 400
 
-    $html = [IO.File]::ReadAllText($htmlFile)
-    $html = $html -replace '__VERSION__', [string]$job.version
-    [IO.File]::WriteAllText($htmlFile, $html, [Text.Encoding]::UTF8)
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
 
-    if (Start-HtmlServer $htmlFile) {
-        Open-Browser "http://127.0.0.1:$($script:port)/" | Out-Null
-    }
-
-    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+    Write-Status 'download' 0 0 0 0 'Bağlantı kuruluyor'
 
     $request = [Net.HttpWebRequest]::Create($uri)
     $request.UserAgent = 'AnkaWeb-Updater'
     $request.AllowAutoRedirect = $true
     $request.Timeout = 30000
     $request.ReadWriteTimeout = 30000
+    $request.Proxy = $null
+
     $response = $request.GetResponse()
     try {
         $total = [long]$response.ContentLength
+        if ($total -lt 0) { $total = 0 }
         $netStream = $response.GetResponseStream()
         $fileStream = [IO.File]::Create($tmp)
         try {
-            $buffer = New-Object byte[] 262144
+            $buffer = New-Object byte[] 1048576
             $received = [long]0
             $clock = [Diagnostics.Stopwatch]::StartNew()
             $lastWrite = [long]0
@@ -345,9 +427,10 @@ try {
                 $fileStream.Write($buffer, 0, $read)
                 $received += $read
                 $elapsed = $clock.ElapsedMilliseconds
-                if (($elapsed - $lastWrite) -ge 120) {
+                if (($elapsed - $lastWrite) -ge 100) {
                     $percent = 0
                     if ($total -gt 0) { $percent = [int][Math]::Floor(($received * 100) / $total) }
+                    if ($percent -gt 99 -and $received -lt $total) { $percent = 99 }
                     $deltaTime = ($elapsed - $lastWrite) / 1000.0
                     $deltaBytes = $received - $lastBytes
                     $speed = 0
@@ -357,69 +440,106 @@ try {
                     $lastBytes = $received
                 }
             }
+            Write-Status 'download' 100 $received $total 0 'İndirme tamamlandı'
         } finally {
-            $fileStream.Close()
-            $netStream.Close()
+            try { $fileStream.Close() } catch {}
+            try { $netStream.Close() } catch {}
         }
     } finally {
-        $response.Close()
+        try { $response.Close() } catch {}
     }
 
     Write-Status 'verify' 100 0 0 0 'Doğrulanıyor'
+    Log 'indirme tamamlandi'
 
-    $info = Get-Item -LiteralPath $tmp
-    if ($info.Length -lt 1024) { throw 'Indirilen dosya gecersiz' }
+    $info = Get-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+    if (-not $info) { throw 'İndirilen dosya bulunamadı' }
+    if ($info.Length -lt 1024) { throw 'İndirilen dosya geçersiz' }
     $stream = [IO.File]::OpenRead($tmp)
-    try { $b1 = $stream.ReadByte(); $b2 = $stream.ReadByte() } finally { $stream.Close() }
-    if ($b1 -ne 0x4d -or $b2 -ne 0x5a) { throw 'Gecerli bir kurulum dosyasi degil' }
+    try {
+        $b1 = $stream.ReadByte()
+        $b2 = $stream.ReadByte()
+    } finally {
+        try { $stream.Close() } catch {}
+    }
+    if ($b1 -ne 0x4d -or $b2 -ne 0x5a) { throw 'Geçerli bir kurulum dosyası değil' }
     $expected = ([string]$job.hash).ToLower()
     if ($expected) {
-        $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToLower()
-        if ($actual -ne $expected) { throw 'Dosya dogrulamasi basarisiz' }
+        $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower()
+        if ($actual -ne $expected) { throw 'Dosya doğrulaması başarısız' }
     }
+    Log 'dogrulama tamamlandi'
 
     Write-Status 'install' 100 0 0 0 'Kuruluyor'
+    Log 'kurulum basliyor'
 
-    $proc = Start-Process -FilePath $tmp -ArgumentList @('/S', '--updated') -WindowStyle Hidden -Wait -PassThru
-    Write-Log ('kurulum cikis kodu ' + $proc.ExitCode)
+    $proc = Start-Process -FilePath $tmp -ArgumentList @('/S', '--updated') -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+    Log ('kurulum cikis kodu ' + $proc.ExitCode)
+    if ($proc.ExitCode -ne 0) { Log ('kurulum uyari kodu: ' + $proc.ExitCode) }
 } catch {
     $failed = $true
-    $message = [string]$_.Exception.Message
-    Write-Log $message
-    Write-Status 'error' 0 0 0 0 $message
+    $errMsg = [string]$_.Exception.Message
+    if (-not $errMsg) { $errMsg = 'Bilinmeyen hata' }
+    Log ('HATA: ' + $errMsg)
+    Write-Status 'error' 0 0 0 0 $errMsg
     Start-Sleep -Seconds 4
 } finally {
-    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    try { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } catch {}
+    try { Remove-Item -LiteralPath $startFlag -Force -ErrorAction SilentlyContinue } catch {}
 }
 
 if (-not $failed) {
     Write-Status 'done' 100 0 0 0 ''
-    Start-Sleep -Milliseconds 800
+    Log 'guncelleme basarili'
+    Start-Sleep -Milliseconds 1200
 }
-
-Stop-HtmlServer
 
 $target = ''
-try { $target = Find-App $job } catch { Write-Log $_.Exception.Message }
-if (-not $target) {
-    Write-Log 'uygulama bulunamadi'
-    exit 1
+try { $target = Find-App $job } catch { Log ('Find-App hatasi: ' + $_.Exception.Message) }
+if ($target) {
+    Log ('uygulama baslatiliyor: ' + $target)
+    try {
+        $wd = Split-Path -Parent $target
+        Start-Process -FilePath $target -WorkingDirectory $wd -WindowStyle Normal -ErrorAction SilentlyContinue | Out-Null
+    } catch {
+        Log ('start hatasi: ' + $_.Exception.Message)
+        try { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $target + '"') -ErrorAction SilentlyContinue | Out-Null } catch {}
+    }
+} else {
+    Log 'uygulama bulunamadi'
 }
-try {
-    Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $target + '"') -WindowStyle Hidden
-} catch {
-    try { Start-Process -FilePath $target -WorkingDirectory (Split-Path -Parent $target) -WindowStyle Hidden } catch { Write-Log $_.Exception.Message }
-}
+
+Log 'updater bitti'
+exit 0
 `.replace('__PREFIX__', DOWNLOAD_PATH_PREFIX);
 
 const LINUX_SCRIPT = `#!/bin/sh
 DIR=$(cd "$(dirname "$0")" && pwd)
 JOB="$DIR/job.env"
 LOG="$DIR/updater.log"
-STATUS="$DIR/status.json"
-log() { echo "$(date '+%Y-%m-%dT%H:%M:%S') $1" >> "$LOG" 2>/dev/null; }
+STATUS="$DIR/status.js"
+TMPLOG="${TMPDIR:-/tmp}/anka-web-updater/updater.log"
+mkdir -p "$(dirname "$TMPLOG")" 2>/dev/null
+
+log() {
+    line="$(date '+%Y-%m-%dT%H:%M:%S') $1"
+    echo "$line" >> "$LOG" 2>/dev/null
+    echo "$line" >> "$TMPLOG" 2>/dev/null
+}
+
+json_escape() {
+    printf '%s' "$1" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g' | tr -d '\\r\\n'
+}
+
 write_status() {
-    printf '{"phase":"%s","percent":%d,"received":%d,"total":%d,"speed":%.2f%s}' "$1" "$2" "$3" "$4" "$5" "$6" > "$STATUS" 2>/dev/null
+    phase="$1"; percent="$2"; received="$3"; total="$4"; speed="$5"; msg="$6"
+    json="{\\"phase\\":\\"$phase\\",\\"percent\\":$percent,\\"received\\":$received,\\"total\\":$total,\\"speed\\":$speed"
+    if [ -n "$msg" ]; then
+        esc=$(json_escape "$msg")
+        json="$json,\\"message\\":\\"$esc\\""
+    fi
+    json="$json}"
+    printf 'window.__updateStatus && window.__updateStatus(%s);' "$json" > "$STATUS" 2>/dev/null
 }
 
 find_bin() {
@@ -429,8 +549,12 @@ find_bin() {
     command -v "$1" 2>/dev/null
 }
 
-if [ ! -f "$JOB" ]; then exit 1; fi
-. "$JOB"
+if [ ! -f "$JOB" ]; then
+    log 'job.env bulunamadi'
+    exit 1
+fi
+
+. "$JOB" 2>/dev/null
 rm -f "$JOB"
 trap '' HUP
 
@@ -438,11 +562,32 @@ HTML_FILE="$DIR/updater.html"
 if [ -f "$HTML_FILE" ]; then
     if command -v xdg-open >/dev/null 2>&1; then
         xdg-open "file://$HTML_FILE" >/dev/null 2>&1 &
+    elif command -v gio >/dev/null 2>&1; then
+        gio open "file://$HTML_FILE" >/dev/null 2>&1 &
     fi
 fi
 
 TMP="$DIR/anka-web-$ANKA_VERSION.AppImage.part"
 rm -f "$TMP"
+
+write_status "download" 0 0 0 0 "Hazırlanıyor"
+
+case "$ANKA_URL" in
+    "__PREFIX__"*) ;;
+    *) write_status "error" 0 0 0 0 "Gecersiz adres"; log "gecersiz adres"; exit 1 ;;
+esac
+
+n=0
+while kill -0 "$ANKA_PID" 2>/dev/null && [ "$n" -lt 100 ]; do
+    n=$((n+1))
+    sleep 0.2
+done
+if kill -0 "$ANKA_PID" 2>/dev/null; then
+    kill -TERM "$ANKA_PID" 2>/dev/null
+    sleep 1
+    kill -KILL "$ANKA_PID" 2>/dev/null
+fi
+sleep 0.3
 
 remote_size() {
     if command -v curl >/dev/null 2>&1; then
@@ -462,86 +607,87 @@ fetch() {
     fi
 }
 
-case "$ANKA_URL" in
-    "__PREFIX__"*) ;;
-    *) write_status "error" 0 0 0 0 ',"message":"Gecersiz adres"'; exit 1 ;;
-esac
-
-write_status "download" 0 0 0 0 ""
-
-n=0
-while kill -0 "$ANKA_PID" 2>/dev/null && [ "$n" -lt 100 ]; do
-    n=$((n+1))
-    sleep 0.2
-done
-if kill -0 "$ANKA_PID" 2>/dev/null; then
-    kill -TERM "$ANKA_PID" 2>/dev/null
-    sleep 1
-    kill -KILL "$ANKA_PID" 2>/dev/null
-fi
-sleep 0.3
-
 TOTAL=$(remote_size)
 [ -n "$TOTAL" ] || TOTAL=0
 
 fetch "$ANKA_URL" "$TMP" &
 FPID=$!
 PREV=0
-PREVT=0
 while kill -0 "$FPID" 2>/dev/null; do
     CUR=0
-    [ -f "$TMP" ] && CUR=$(wc -c < "$TMP" | tr -d '[:space:]')
+    if [ -f "$TMP" ]; then
+        CUR=$(wc -c < "$TMP" 2>/dev/null | tr -d '[:space:]')
+    fi
     [ -n "$CUR" ] || CUR=0
     PCT=0
-    [ "$TOTAL" -gt 0 ] && PCT=$((CUR*100/TOTAL))
-    [ "$PCT" -gt 99 ] && PCT=99
-    NOW=$(date +%s%N 2>/dev/null || date +%s)
+    if [ "$TOTAL" -gt 0 ]; then
+        PCT=$((CUR*100/TOTAL))
+        [ "$PCT" -gt 99 ] && [ "$CUR" -lt "$TOTAL" ] && PCT=99
+    fi
     SPD=$(( (CUR-PREV)*5 ))
     [ "$SPD" -ge 0 ] || SPD=0
     PREV=$CUR
-    write_status "download" "$PCT" "$CUR" "$TOTAL" "$SPD" ""
+    write_status "download" "$PCT" "$CUR" "$TOTAL" "$SPD" "İndiriliyor"
     sleep 0.2
 done
-wait "$FPID" || { write_status "error" 0 0 0 0 ',"message":"Indirme basarisiz"'; exit 1; }
+wait "$FPID" || { write_status "error" 0 0 0 0 "Indirme basarisiz"; log "indirme basarisiz"; exit 1; }
 
-write_status "verify" 100 0 0 0 ""
+write_status "verify" 100 0 0 0 "Doğrulanıyor"
+log "indirme tamamlandi"
 
 SIZE=$(wc -c < "$TMP" 2>/dev/null | tr -d '[:space:]')
-[ -n "$SIZE" ] && [ "$SIZE" -ge 1024 ] || { write_status "error" 0 0 0 0 ',"message":"Gecersiz dosya"'; exit 1; }
+if [ -z "$SIZE" ] || [ "$SIZE" -lt 1024 ]; then
+    write_status "error" 0 0 0 0 "Gecersiz dosya"
+    log "gecersiz dosya"
+    exit 1
+fi
 MAGIC=$(head -c 4 "$TMP" | od -An -tx1 | tr -d '[:space:]')
-[ "$MAGIC" = "7f454c46" ] || { write_status "error" 0 0 0 0 ',"message":"Gecerli AppImage degil"'; exit 1; }
+if [ "$MAGIC" != "7f454c46" ]; then
+    write_status "error" 0 0 0 0 "Gecerli AppImage degil"
+    log "gecerli appimage degil"
+    exit 1
+fi
 if [ -n "$ANKA_HASH" ]; then
+    SUM=""
     if command -v sha256sum >/dev/null 2>&1; then
         SUM=$(sha256sum "$TMP" | cut -d' ' -f1)
     elif command -v shasum >/dev/null 2>&1; then
         SUM=$(shasum -a 256 "$TMP" | cut -d' ' -f1)
-    else
-        write_status "error" 0 0 0 0 ',"message":"sha256 yok"'; exit 1
     fi
-    [ "$SUM" = "$ANKA_HASH" ] || { write_status "error" 0 0 0 0 ',"message":"Dogrulama basarisiz"'; exit 1; }
+    if [ "$SUM" != "$ANKA_HASH" ]; then
+        write_status "error" 0 0 0 0 "Dogrulama basarisiz"
+        log "dogrulama basarisiz"
+        exit 1
+    fi
 fi
 
-write_status "install" 100 0 0 0 ""
+write_status "install" 100 0 0 0 "Kuruluyor"
+log "kurulum basliyor"
 
-mkdir -p "$(dirname "$ANKA_DEST")" || { write_status "error" 0 0 0 0 ',"message":"Hedef olusturulamadi"'; exit 1; }
+mkdir -p "$(dirname "$ANKA_DEST")" || { write_status "error" 0 0 0 0 "Hedef olusturulamadi"; log "hedef olusturulamadi"; exit 1; }
 if cp -f "$TMP" "$ANKA_DEST.new" && chmod 755 "$ANKA_DEST.new" && mv -f "$ANKA_DEST.new" "$ANKA_DEST"; then
     rm -f "$TMP"
     log "guncelleme tamamlandi: $ANKA_VERSION"
 else
     rm -f "$ANKA_DEST.new"
-    write_status "error" 0 0 0 0 ',"message":"Dosya degistirilemedi"'; exit 1
+    write_status "error" 0 0 0 0 "Dosya degistirilemedi"
+    log "dosya degistirilemedi"
+    exit 1
 fi
 
 write_status "done" 100 0 0 0 ""
 
 sleep 0.5
-[ -x "$ANKA_DEST" ] || exit 0
-unset APPIMAGE APPDIR ARGV0 OWD
-if command -v setsid >/dev/null 2>&1; then
-    setsid "$ANKA_DEST" >/dev/null 2>&1 </dev/null &
-else
-    nohup "$ANKA_DEST" >/dev/null 2>&1 </dev/null &
+if [ -x "$ANKA_DEST" ]; then
+    unset APPIMAGE APPDIR ARGV0 OWD
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "$ANKA_DEST" >/dev/null 2>&1 </dev/null &
+    else
+        nohup "$ANKA_DEST" >/dev/null 2>&1 </dev/null &
+    fi
 fi
+
+log "updater bitti"
 sleep 1
 exit 0
 `.replace('__PREFIX__', DOWNLOAD_URL_PREFIX);
@@ -641,8 +787,10 @@ function bootUi(version) {
     }
 
     function emit(action) {
-        if (ipc) ipc.send('anka-updater:action', action);
-        else queue.push(action);
+        try {
+            if (ipc) ipc.send('anka-updater:action', action);
+            else queue.push(action);
+        } catch (err) {}
     }
 
     function setIcon(kind, cls) {
@@ -780,8 +928,6 @@ const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
 });
 
 if (!Array.isArray(state.targets)) state.targets = [];
-
-let ensurePromise = null;
 
 function safeJson(value) {
     return JSON.stringify(value)
@@ -1138,7 +1284,18 @@ function cleanEnv(extra) {
 
 function runProcess(command, args, extraEnv) {
     return new Promise((resolve, reject) => {
-        const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: false, windowsHide: true, env: cleanEnv(extraEnv) });
+        let child;
+        try {
+            child = spawn(command, args, {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                shell: false,
+                windowsHide: true,
+                env: cleanEnv(extraEnv)
+            });
+        } catch (err) {
+            reject(err);
+            return;
+        }
         let out = '';
         let err = '';
         child.stdout.on('data', (chunk) => {
@@ -1154,17 +1311,23 @@ function runProcess(command, args, extraEnv) {
 
 function launchDetached(command, args, cwd, extraEnv) {
     return new Promise((resolve, reject) => {
-        const child = spawn(command, args, {
-            detached: true,
-            stdio: 'ignore',
-            shell: false,
-            windowsHide: true,
-            cwd: cwd,
-            env: cleanEnv(extraEnv)
-        });
+        let child;
+        try {
+            child = spawn(command, args, {
+                detached: true,
+                stdio: 'ignore',
+                shell: false,
+                windowsHide: true,
+                cwd: cwd,
+                env: cleanEnv(extraEnv)
+            });
+        } catch (err) {
+            reject(err);
+            return;
+        }
         child.once('error', reject);
         child.once('spawn', () => {
-            child.unref();
+            try { child.unref(); } catch (err) {}
             resolve();
         });
     });
@@ -1191,9 +1354,10 @@ function quitSoon() {
     }, 150);
 }
 
-function systemPath(...parts) {
+function systemPath() {
+    const parts = Array.prototype.slice.call(arguments);
     const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
-    return path.join(root, 'System32', ...parts);
+    return path.join.apply(path, [root, 'System32'].concat(parts));
 }
 
 function updaterDir() {
@@ -1202,7 +1366,9 @@ function updaterDir() {
 
 function prepareUpdaterDir() {
     const dir = updaterDir();
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try {
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    } catch (err) {}
     return dir;
 }
 
@@ -1215,8 +1381,13 @@ function writeIfChanged(file, content, mode) {
     }
     if (current === content) return false;
     const temp = file + '.tmp-' + process.pid;
-    fs.writeFileSync(temp, content, { mode: mode });
-    fs.renameSync(temp, file);
+    try {
+        fs.writeFileSync(temp, content, { mode: mode });
+        fs.renameSync(temp, file);
+    } catch (err) {
+        try { fs.rmSync(temp, { force: true }); } catch (e) {}
+        throw err;
+    }
     return true;
 }
 
@@ -1227,152 +1398,6 @@ async function waitClaim(file, limit) {
         await sleep(CLAIM_POLL);
     }
     return !fs.existsSync(file);
-}
-
-function xmlEscape(value) {
-    return String(value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
-
-function windowsTaskXml(script) {
-    const name = process.env.USERNAME || os.userInfo().username;
-    const user = (process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + name;
-    const powershell = systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const args = '-NoProfile -NoLogo -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + script + '"';
-    return [
-        '<?xml version="1.0" encoding="UTF-16"?>',
-        '<Task version="1.4" xmlns="' + WIN_TASK_NAMESPACE + '">',
-        '  <RegistrationInfo>',
-        '    <Description>Anka Web Updater</Description>',
-        '  </RegistrationInfo>',
-        '  <Principals>',
-        '    <Principal id="Author">',
-        '      <UserId>' + xmlEscape(user) + '</UserId>',
-        '      <LogonType>InteractiveToken</LogonType>',
-        '      <RunLevel>LeastPrivilege</RunLevel>',
-        '    </Principal>',
-        '  </Principals>',
-        '  <Settings>',
-        '    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>',
-        '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>',
-        '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>',
-        '    <AllowHardTerminate>true</AllowHardTerminate>',
-        '    <StartWhenAvailable>true</StartWhenAvailable>',
-        '    <AllowStartOnDemand>true</AllowStartOnDemand>',
-        '    <Enabled>true</Enabled>',
-        '    <Hidden>true</Hidden>',
-        '    <ExecutionTimeLimit>PT30M</ExecutionTimeLimit>',
-        '    <Priority>7</Priority>',
-        '  </Settings>',
-        '  <Actions Context="Author">',
-        '    <Exec>',
-        '      <Command>' + xmlEscape(powershell) + '</Command>',
-        '      <Arguments>' + xmlEscape(args) + '</Arguments>',
-        '    </Exec>',
-        '  </Actions>',
-        '</Task>'
-    ].join('\r\n');
-}
-
-async function createWindowsTask(dir, script) {
-    const xmlFile = path.join(dir, WIN_TASK_XML);
-    const xml = windowsTaskXml(script);
-    fs.writeFileSync(xmlFile, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]), { mode: 0o600 });
-    try {
-        const result = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/xml', xmlFile, '/f']);
-        if (result.code !== 0) {
-            const fallbackResult = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/tr', `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${script}"`, '/sc', 'ONCE', '/st', '00:00', '/f']);
-            return fallbackResult.code === 0;
-        }
-        return true;
-    } catch (err) {
-        return false;
-    } finally {
-        try {
-            fs.rmSync(xmlFile, { force: true });
-        } catch (cleanupErr) {}
-    }
-}
-
-async function ensureWindowsTask() {
-    const dir = prepareUpdaterDir();
-    const script = path.join(dir, WIN_SCRIPT_FILE);
-    writeIfChanged(script, '\uFEFF' + WIN_TASK_SCRIPT, 0o600);
-
-    const htmlFile = path.join(dir, 'updater.html');
-    writeIfChanged(htmlFile, HTML_PAGE, 0o600);
-
-    const markerFile = path.join(dir, WIN_TASK_MARKER);
-    let marker = null;
-    try {
-        marker = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
-    } catch (err) {
-        marker = null;
-    }
-
-    let exists = false;
-    try {
-        const query = await runProcess(systemPath('schtasks.exe'), ['/query', '/tn', TASK_NAME]);
-        exists = query.code === 0;
-    } catch (err) {
-        exists = false;
-    }
-
-    if (exists && marker && marker.script === script && marker.v === TASK_VERSION) return;
-
-    if (exists) {
-        try {
-            await runProcess(systemPath('schtasks.exe'), ['/delete', '/tn', TASK_NAME, '/f']);
-        } catch (err) {}
-    }
-
-    try {
-        fs.rmSync(markerFile, { force: true });
-    } catch (err) {}
-
-    const created = await createWindowsTask(dir, script);
-    if (!created) throw new Error('Güncelleme görevi oluşturulamadı');
-
-    try {
-        fs.writeFileSync(markerFile, JSON.stringify({ script: script, v: TASK_VERSION }), { mode: 0o600 });
-    } catch (err) {}
-}
-
-async function triggerWindows(job) {
-    await ensureBackground();
-    const dir = prepareUpdaterDir();
-    const jobFile = path.join(dir, WIN_JOB_FILE);
-    fs.writeFileSync(jobFile, JSON.stringify(job), { mode: 0o600 });
-
-    let result;
-    try {
-        result = await runProcess(systemPath('schtasks.exe'), ['/run', '/tn', TASK_NAME]);
-    } catch (err) {
-        result = { code: 1 };
-    }
-
-    if (result.code !== 0) {
-        try {
-            await launchDetached('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, WIN_SCRIPT_FILE)], dir);
-        } catch (fallbackErr) {
-            fs.rmSync(jobFile, { force: true });
-            throw new Error('Güncelleme görevi başlatılamadı');
-        }
-    }
-
-    if (!(await waitClaim(jobFile, CLAIM_WAIT))) {
-        try {
-            if (fs.existsSync(jobFile)) {
-                await launchDetached('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, WIN_SCRIPT_FILE)], dir);
-                if (await waitClaim(jobFile, CLAIM_WAIT)) return;
-            }
-        } catch (err) {}
-        fs.rmSync(jobFile, { force: true });
-        throw new Error('Güncelleme görevi yanıt vermedi');
-    }
 }
 
 function userInstallDir() {
@@ -1412,32 +1437,6 @@ function linuxUnitContent(script) {
     ].join('\n');
 }
 
-async function ensureLinuxService() {
-    const dir = prepareUpdaterDir();
-    const script = path.join(dir, LINUX_SCRIPT_FILE);
-    writeIfChanged(script, LINUX_SCRIPT, 0o755);
-    try {
-        fs.chmodSync(script, 0o755);
-    } catch (err) {}
-
-    const htmlFile = path.join(dir, 'updater.html');
-    let html = HTML_PAGE;
-    writeIfChanged(htmlFile, html, 0o644);
-
-    const systemctl = findBin('systemctl');
-    if (!systemctl) return;
-
-    const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-    const unitDir = path.join(configHome, 'systemd', 'user');
-    fs.mkdirSync(unitDir, { recursive: true, mode: 0o755 });
-    const changed = writeIfChanged(path.join(unitDir, LINUX_UNIT), linuxUnitContent(script), 0o644);
-    if (changed) {
-        try {
-            await runProcess(systemctl, ['--user', 'daemon-reload']);
-        } catch (err) {}
-    }
-}
-
 function linuxJobContent(target, version) {
     const lines = [
         'ANKA_PID=' + shellQuote(process.pid),
@@ -1452,21 +1451,53 @@ function linuxJobContent(target, version) {
     return lines.join('\n') + '\n';
 }
 
+let linuxUnitEnsured = false;
+
+async function ensureLinuxService() {
+    if (linuxUnitEnsured) return;
+    const dir = prepareUpdaterDir();
+    const script = path.join(dir, LINUX_SCRIPT_FILE);
+    writeIfChanged(script, LINUX_SCRIPT, 0o755);
+    try { fs.chmodSync(script, 0o755); } catch (err) {}
+    writeIfChanged(path.join(dir, 'updater.html'), HTML_PAGE, 0o644);
+
+    const systemctl = findBin('systemctl');
+    if (systemctl) {
+        try {
+            const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+            const unitDir = path.join(configHome, 'systemd', 'user');
+            fs.mkdirSync(unitDir, { recursive: true, mode: 0o755 });
+            const changed = writeIfChanged(path.join(unitDir, 'anka-web-updater.service'), linuxUnitContent(script), 0o644);
+            if (changed) {
+                await safeAsync(() => runProcess(systemctl, ['--user', 'daemon-reload']));
+            }
+        } catch (err) {
+            logWarn('linux service setup', err);
+        }
+    }
+    linuxUnitEnsured = true;
+}
+
 async function triggerLinux(target, version) {
-    await ensureBackground();
+    await ensureLinuxService();
     const dir = prepareUpdaterDir();
     const script = path.join(dir, LINUX_SCRIPT_FILE);
     const jobFile = path.join(dir, LINUX_JOB_FILE);
-    fs.writeFileSync(jobFile, linuxJobContent(target, version), { mode: 0o600 });
+
+    try {
+        fs.writeFileSync(jobFile, linuxJobContent(target, version), { mode: 0o600 });
+    } catch (err) {
+        throw new Error('Görev dosyası yazılamadı: ' + err.message);
+    }
 
     let claimed = false;
     const systemctl = findBin('systemctl');
     if (systemctl) {
         try {
-            const result = await runProcess(systemctl, ['--user', 'start', '--no-block', LINUX_UNIT]);
+            const result = await runProcess(systemctl, ['--user', 'start', '--no-block', 'anka-web-updater.service']);
             if (result.code === 0) claimed = await waitClaim(jobFile, CLAIM_WAIT);
         } catch (err) {
-            claimed = false;
+            logWarn('systemctl start', err);
         }
     }
 
@@ -1475,37 +1506,127 @@ async function triggerLinux(target, version) {
             await launchDetached(SH_BIN, [script], dir);
             claimed = await waitClaim(jobFile, CLAIM_WAIT);
         } catch (err) {
-            claimed = false;
+            logWarn('direct launch', err);
+        }
+    }
+
+    if (!claimed && fs.existsSync(jobFile)) {
+        try {
+            await launchDetached('nohup', [SH_BIN, script], dir);
+            claimed = await waitClaim(jobFile, CLAIM_WAIT);
+        } catch (err) {
+            logWarn('nohup launch', err);
         }
     }
 
     if (!claimed) {
-        fs.rmSync(jobFile, { force: true });
+        try { fs.rmSync(jobFile, { force: true }); } catch (e) {}
         throw new Error('Güncelleme servisi başlatılamadı');
     }
 }
 
-function ensureBackground() {
-    if (!ensurePromise) {
-        let work;
-        if (process.platform === 'win32') work = ensureWindowsTask();
-        else if (process.platform === 'linux') work = ensureLinuxService();
-        else work = Promise.resolve();
-        ensurePromise = work.catch((err) => {
-            ensurePromise = null;
-            throw err;
-        });
+let winEnsured = false;
+
+async function ensureWindowsScripts() {
+    if (winEnsured) return;
+    const dir = prepareUpdaterDir();
+    const script = path.join(dir, WIN_SCRIPT_FILE);
+    writeIfChanged(script, '\uFEFF' + WIN_TASK_SCRIPT, 0o600);
+    writeIfChanged(path.join(dir, 'updater.html'), HTML_PAGE, 0o644);
+    try { fs.rmSync(path.join(dir, 'status.js'), { force: true }); } catch (err) {}
+    try { fs.rmSync(path.join(dir, 'started.flag'), { force: true }); } catch (err) {}
+    winEnsured = true;
+}
+
+function findPowerShell() {
+    const candidates = [
+        systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe'),
+        systemPath('WindowsPowerShell', 'v1.0', 'pwsh.exe'),
+        'powershell.exe',
+        'pwsh.exe'
+    ];
+    for (const candidate of candidates) {
+        try {
+            if (candidate.indexOf(path.sep) >= 0) {
+                fs.accessSync(candidate, fs.constants.F_OK);
+            }
+            return candidate;
+        } catch (err) {}
     }
-    return ensurePromise;
+    return 'powershell.exe';
+}
+
+async function triggerWindows(target, version, jobInfo) {
+    await ensureWindowsScripts();
+    const dir = prepareUpdaterDir();
+    const script = path.join(dir, WIN_SCRIPT_FILE);
+    const jobFile = path.join(dir, WIN_JOB_FILE);
+    const statusFile = path.join(dir, 'status.js');
+
+    try { fs.rmSync(statusFile, { force: true }); } catch (err) {}
+
+    const job = {
+        pid: jobInfo.pid,
+        url: target.url,
+        hash: target.hash || '',
+        version: version,
+        exec: jobInfo.exec,
+        proc: jobInfo.proc,
+        name: jobInfo.name
+    };
+
+    try {
+        fs.writeFileSync(jobFile, JSON.stringify(job), { mode: 0o600 });
+    } catch (err) {
+        throw new Error('Görev dosyası yazılamadı: ' + err.message);
+    }
+
+    const ps = findPowerShell();
+    const args = [
+        '-NoProfile',
+        '-NonInteractive',
+        '-WindowStyle', 'Hidden',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', script
+    ];
+
+    logInfo('powershell launch', ps);
+
+    let launched = false;
+    try {
+        await launchDetached(ps, args, dir);
+        launched = true;
+    } catch (err) {
+        logWarn('powershell launch failed', err);
+    }
+
+    if (!launched) {
+        try {
+            await launchDetached('cmd.exe', ['/c', 'start', '/b', ps].concat(args), dir);
+            launched = true;
+        } catch (err) {
+            logWarn('cmd start failed', err);
+        }
+    }
+
+    if (!(await waitClaim(jobFile, CLAIM_WAIT))) {
+        logWarn('claim timeout, retry');
+        try {
+            await launchDetached(ps, args, dir);
+        } catch (err) {
+            logWarn('retry failed', err);
+        }
+        if (!(await waitClaim(jobFile, CLAIM_WAIT))) {
+            try { fs.rmSync(jobFile, { force: true }); } catch (e) {}
+            throw new Error('Güncelleme görevi başlatılamadı. Log: ' + (mainLogPath || ''));
+        }
+    }
 }
 
 async function launchBackgroundUpdate(target, version) {
     if (process.platform === 'win32') {
-        await triggerWindows({
+        await triggerWindows(target, version, {
             pid: process.pid,
-            url: target.url,
-            hash: target.hash || '',
-            version: version,
             exec: app.isPackaged ? process.execPath : '',
             proc: path.parse(process.execPath).name,
             name: app.getName()
@@ -1522,10 +1643,17 @@ async function launchBackgroundUpdate(target, version) {
 function setupWindow(win, currentVersion, options) {
     if (!win || win.isDestroyed() || win.__ankaUpdater) return;
 
-    const contents = win.webContents;
-    const installed = String(currentVersion || app.getVersion());
+    let contents;
+    try {
+        contents = win.webContents;
+    } catch (err) {
+        return;
+    }
+    if (!contents) return;
+
+    const installed = String(currentVersion || safeCall(() => app.getVersion(), '0.0.0'));
     const startManual = !!(options && options.manual);
-    const updatedTo = takeMarker(installed);
+    const updatedTo = safeCall(() => takeMarker(installed), '');
 
     let announce = updatedTo ? 'Anka Web Sürümü ' + updatedTo + ' kuruldu' : '';
     let destroyed = false;
@@ -1545,11 +1673,16 @@ function setupWindow(win, currentVersion, options) {
             await contents.executeJavaScript('(' + BOOT_SOURCE + ')(' + UI_VERSION + ')');
             uiReady = true;
             if (!pollTimer) {
-                const hasIpc = await contents.executeJavaScript('Boolean(window.__ankaUpdater && window.__ankaUpdater.ipc)');
-                if (!hasIpc) startPoll();
+                try {
+                    const hasIpc = await contents.executeJavaScript('Boolean(window.__ankaUpdater && window.__ankaUpdater.ipc)');
+                    if (!hasIpc) startPoll();
+                } catch (err) {
+                    startPoll();
+                }
             }
             return true;
         } catch (err) {
+            logWarn('ensureUi', err);
             return false;
         }
     }
@@ -1558,7 +1691,9 @@ function setupWindow(win, currentVersion, options) {
         if (!(await ensureUi())) return;
         try {
             await contents.executeJavaScript('window.__ankaUpdater&&window.__ankaUpdater.render(' + safeJson(view) + ')');
-        } catch (err) {}
+        } catch (err) {
+            logWarn('send', err);
+        }
     }
 
     function paint() {
@@ -1653,6 +1788,7 @@ function setupWindow(win, currentVersion, options) {
             paint();
         } catch (err) {
             if (ctl.signal.aborted || destroyed) return;
+            logWarn('check', err);
             if (manual) await send({ view: 'error', message: err && err.message ? err.message : 'İnternet bağlantısı yok' });
         } finally {
             busy = false;
@@ -1681,6 +1817,7 @@ function setupWindow(win, currentVersion, options) {
             if (destroyed) return;
             quitSoon();
         } catch (err) {
+            logError('startBackgroundUpdate', err);
             installing = false;
             removeMarker();
             resetState();
@@ -1730,17 +1867,13 @@ function setupWindow(win, currentVersion, options) {
         clearInterval(intervalTimer);
         clearInterval(pollTimer);
         if (abortCtl) abortCtl.abort();
-        try {
-            ipcMain.removeListener(ACTION_CHANNEL, onAction);
-        } catch (err) {}
+        try { ipcMain.removeListener(ACTION_CHANNEL, onAction); } catch (err) {}
         try {
             contents.removeListener('did-start-loading', onStartLoading);
             contents.removeListener('did-finish-load', onFinishLoad);
             win.removeListener('focus', onFocus);
         } catch (err) {}
-        try {
-            delete win.__ankaUpdater;
-        } catch (err) {}
+        try { delete win.__ankaUpdater; } catch (err) {}
     }
 
     ipcMain.on(ACTION_CHANNEL, onAction);
@@ -1765,7 +1898,10 @@ function setupWindow(win, currentVersion, options) {
 }
 
 function init(targetWin, currentVersion, options) {
-    ensureBackground().catch(() => {});
+    safeAsync(async () => {
+        if (process.platform === 'win32') await ensureWindowsScripts();
+        else if (process.platform === 'linux') await ensureLinuxService();
+    });
 
     if (targetWin) {
         setupWindow(targetWin, currentVersion, options);
@@ -1775,8 +1911,12 @@ function init(targetWin, currentVersion, options) {
     BrowserWindow.getAllWindows().forEach((win) => setupWindow(win, currentVersion, options));
 
     app.on('browser-window-created', (event, win) => {
-        if (win.getParentWindow()) return;
-        setupWindow(win, currentVersion, options);
+        try {
+            if (win.getParentWindow()) return;
+            setupWindow(win, currentVersion, options);
+        } catch (err) {
+            logWarn('browser-window-created', err);
+        }
     });
 }
 
