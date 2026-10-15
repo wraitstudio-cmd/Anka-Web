@@ -228,11 +228,15 @@ try {
     Write-Log ('kurulum cikis kodu ' + $proc.ExitCode)
 } catch {
     Write-Log $_.Exception.Message
-    Draw-UI "Anka Web Güncelleniyor" "HATA: $_" 0 "Güncelleme iptal edildi."
-    Start-Sleep -Seconds 5
+    Draw-UI "Anka Web Güncelleniyor" "HATA: $_" 0 "Güncelleme yarıda kesildi!"
+    
+    Write-Host ""
+    Write-Host " [!] Devam etmek ve bu pencereyi kapatmak için ENTER tuşuna basın..." -ForegroundColor Red
+    Read-Host # Kullanıcı Enter'a basana kadar süreci burada kilitler, pencere kapanmaz!
 } finally {
     Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
 }
+
 
 Draw-UI "Anka Web Güncelleniyor" "Anka Web başlatılıyor..." 100 "İşlem tamamlandı!"
 Start-Sleep -Milliseconds 500
