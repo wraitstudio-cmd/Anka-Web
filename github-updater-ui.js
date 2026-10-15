@@ -38,6 +38,7 @@ const WIN_JOB_FILE = 'job.json';
 const WIN_SCRIPT_FILE = 'anka-updater.ps1';
 const WIN_TASK_MARKER = 'task.json';
 const WIN_TASK_XML = 'task.xml';
+const WIN_TASK_NAMESPACE = 'http://schemas.microsoft.com/windows/2004/02/mit/task';
 const LINUX_JOB_FILE = 'job.env';
 const LINUX_SCRIPT_FILE = 'anka-updater.sh';
 const ACTION_CHANNEL = 'anka-updater:action';
@@ -57,43 +58,47 @@ const SH_BIN = '/bin/sh';
 const WIN_TASK_SCRIPT = `$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $jobFile = Join-Path $dir 'job.json'
 $logFile = Join-Path $dir 'updater.log'
 function Write-Log($m) { try { Add-Content -Path $logFile -Value ((Get-Date -Format 's') + ' ' + $m) } catch {} }
 
-# Konsol Arayüzü Tasarımı
-function Draw-UI($title, $status, $percent, $details) {
-    Clear-Host
-    $w = [Console]::WindowWidth
+function Get-Width {
+    $w = 80
+    try { $w = [Console]::WindowWidth } catch {}
     if ($w -lt 40) { $w = 50 }
-    
-    # Başlık Alanı
-    Write-Host ("=" * $w) -ForegroundColor Cyan
-    Write-Host "   $title" -ForegroundColor White -Bold
-    Write-Host ("=" * $w) -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host " Durum: " -NoNewline -ForegroundColor Gray
-    Write-Host $status -ForegroundColor Yellow
-    Write-Host ""
+    return $w
+}
 
-    # Gerçek İlerleme Çubuğu (Progress Bar)
-    $barWidth = $w - 12
-    $progress = [Math]::Max(0, [Math]::Min($barWidth, [Math]::Round(($percent / 100) * $barWidth)))
-    $rest = $barWidth - $progress
-    
-    Write-NoNewline " ["
-    Write-NoNewline ("#" * $progress) -ForegroundColor Green
-    Write-NoNewline ("." * $rest) -ForegroundColor DarkGray
-    Write-Host ("] {0,3}%" -f [int]$percent) -ForegroundColor White
+function Write-Line($text, $color) {
+    $w = Get-Width
+    $t = [string]$text
+    if ($t.Length -gt ($w - 1)) { $t = $t.Substring(0, $w - 1) }
+    Write-Host ($t.PadRight($w - 1)) -ForegroundColor $color
+}
 
-    # Detaylar alanı (Hız, boyut vb.)
-    if ($details) {
-        Write-Host ""
-        Write-Host " Bilgi: $details" -ForegroundColor Gray
-    }
-    Write-Host ""
-    Write-Host ("-" * $w) -ForegroundColor DarkGray
+function Draw-UI($title, $status, $percent, $details) {
+    try { [Console]::CursorVisible = $false } catch {}
+    try { [Console]::SetCursorPosition(0, 0) } catch {}
+    $w = Get-Width
+    $barWidth = [Math]::Max(10, $w - 14)
+    $p = [Math]::Max(0, [Math]::Min(100, [int]$percent))
+    $fill = [int][Math]::Round(($p / 100) * $barWidth)
+    Write-Line ('=' * ($w - 1)) 'Cyan'
+    Write-Line ('   ' + $title) 'White'
+    Write-Line ('=' * ($w - 1)) 'Cyan'
+    Write-Line '' 'Gray'
+    Write-Line (' Durum: ' + $status) 'Yellow'
+    Write-Line '' 'Gray'
+    Write-Host ' [' -NoNewline -ForegroundColor White
+    Write-Host ('#' * $fill) -NoNewline -ForegroundColor Green
+    Write-Host ('.' * ($barWidth - $fill)) -NoNewline -ForegroundColor DarkGray
+    Write-Host ('] {0,3}%' -f $p) -ForegroundColor White
+    Write-Line '' 'Gray'
+    Write-Line (' Bilgi: ' + $details) 'Gray'
+    Write-Line '' 'Gray'
+    Write-Line ('-' * ($w - 1)) 'DarkGray'
 }
 
 function Test-Exe($p) {
@@ -153,11 +158,13 @@ try { $job = Get-Content -Raw -Encoding UTF8 -LiteralPath $jobFile | ConvertFrom
 Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
 if (-not $job) { exit 1 }
 
-# Pencere Başlığını Ayarla
-$host.UI.RawUI.WindowTitle = "Anka Web Güncelleyici"
-Draw-UI "Anka Web Güncelleniyor" "Eski sürüm kapatılıyor..." 0 "Süreçler denetleniyor"
+try { $host.UI.RawUI.WindowTitle = 'Anka Web Güncelleyici' } catch {}
+try { Clear-Host } catch {}
+Draw-UI 'Anka Web Güncelleniyor' 'Eski sürüm kapatılıyor...' 0 'Süreçler denetleniyor'
 
+$title = 'Anka Web Güncelleniyor'
 $tmp = Join-Path $dir ('anka-web-' + [string]$job.version + '.exe')
+$failed = $false
 try {
     $uri = [Uri]([string]$job.url)
     if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'github.com' -or -not $uri.AbsolutePath.StartsWith('__PREFIX__')) { throw 'Gecersiz adres' }
@@ -169,47 +176,51 @@ try {
     }
     Start-Sleep -Milliseconds 700
 
-    Draw-UI "Anka Web Güncelleniyor" "Yeni sürüm indiriliyor..." 0 "Bağlantı kuruluyor..."
+    Draw-UI $title 'Yeni sürüm indiriliyor...' 0 'Bağlantı kuruluyor...'
 
-    # CANLI PROGRESS BAR VE GERÇEK İNDİRME DÖNGÜSÜ
-    $webClient = New-Object System.Net.WebClient
-    $webClient.Headers.Add("User-Agent", "AnkaWeb-Updater")
-    
-    $startClock = [Diagnostics.Stopwatch]::StartNew()
-    
-    # İndirme olaylarını yakalama
-    $onProgress = {
-        param($sender, $e)
-        $percent = $e.ProgressPercentage
-        $totalMB = "{0:N2}" -f ($e.TotalBytesToReceive / 1MB)
-        $receivedMB = "{0:N2}" -f ($e.BytesReceived / 1MB)
-        
-        $elapsedSec = $sender.ExtendedData.Clock.Elapsed.TotalSeconds
-        if ($elapsedSec -gt 0) {
-            $speed = "{0:N2} MB/s" -f (($e.BytesReceived / 1MB) / $elapsedSec)
-        } else {
-            $speed = "Hesaplanıyor..."
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+
+    $request = [Net.HttpWebRequest]::Create($uri)
+    $request.UserAgent = 'AnkaWeb-Updater'
+    $request.AllowAutoRedirect = $true
+    $request.Timeout = 30000
+    $request.ReadWriteTimeout = 30000
+    $response = $request.GetResponse()
+    try {
+        $total = [long]$response.ContentLength
+        $netStream = $response.GetResponseStream()
+        $fileStream = [IO.File]::Create($tmp)
+        try {
+            $buffer = New-Object byte[] 65536
+            $received = [long]0
+            $clock = [Diagnostics.Stopwatch]::StartNew()
+            $lastDraw = [long]-1000
+            while (($read = $netStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $fileStream.Write($buffer, 0, $read)
+                $received += $read
+                $now = $clock.ElapsedMilliseconds
+                if (($now - $lastDraw) -ge 150) {
+                    $lastDraw = $now
+                    $percent = 0
+                    if ($total -gt 0) { $percent = [int][Math]::Floor(($received * 100) / $total) }
+                    $seconds = [Math]::Max(0.001, $now / 1000)
+                    $speed = '{0:N2} MB/s' -f (($received / 1MB) / $seconds)
+                    $totalText = '?'
+                    if ($total -gt 0) { $totalText = '{0:N2}' -f ($total / 1MB) }
+                    $details = ('{0:N2} MB / {1} MB ({2})' -f ($received / 1MB), $totalText, $speed)
+                    Draw-UI $title 'Yeni paket indiriliyor...' $percent $details
+                }
+            }
+        } finally {
+            $fileStream.Close()
+            $netStream.Close()
         }
-        
-        $details = "$receivedMB MB / $totalMB MB ($speed)"
-        Draw-UI "Anka Web Güncelleniyor" "Yeni paket indiriliyor..." $percent $details
+    } finally {
+        $response.Close()
     }
 
-    # Özel saat verisini webClient nesnesine bağlama
-    $extendedData = New-Object PSObject -Property @{ Clock = $startClock }
-    $webClient | Add-Member -MemberType NoteProperty -Name ExtendedData -Value $extendedData
-    
-    $webClient.add_DownloadProgressChanged($onProgress)
-    
-    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
-    
-    # Asenkron indirmeyi başlat ve bitene kadar bekle
-    $webClient.DownloadFileAsync($uri, $tmp)
-    while ($webClient.IsBusy) { Start-Sleep -Milliseconds 100 }
-    $startClock.Stop()
+    Draw-UI $title 'Dosya doğrulanıyor...' 100 'SHA256 kontrol ediliyor'
 
-    Draw-UI "Anka Web Güncelleniyor" "Dosya doğrulanıyor..." 95 "SHA256 kontrol ediliyor"
-    
     $info = Get-Item -LiteralPath $tmp
     if ($info.Length -lt 1024) { throw 'Indirilen dosya gecersiz' }
     $stream = [IO.File]::OpenRead($tmp)
@@ -221,25 +232,28 @@ try {
         if ($actual -ne $expected) { throw 'Dosya dogrulamasi basarisiz' }
     }
 
-    Draw-UI "Anka Web Güncelleniyor" "Sessiz kurulum yapılıyor..." 98 "Lütfen bekleyin, tarayıcı açılacaktır."
-    
-    # Kurulumu arka planda çalıştır ama bitmesini bekle
+    Draw-UI $title 'Sessiz kurulum yapılıyor...' 100 'Lütfen bekleyin, tarayıcı açılacaktır.'
+
     $proc = Start-Process -FilePath $tmp -ArgumentList @('/S', '--updated') -WindowStyle Hidden -Wait -PassThru
     Write-Log ('kurulum cikis kodu ' + $proc.ExitCode)
 } catch {
-    Write-Log $_.Exception.Message
-    Draw-UI "Anka Web Güncelleniyor" "HATA: $_" 0 "Güncelleme yarıda kesildi!"
-    
-    Write-Host ""
-    Write-Host " [!] Devam etmek ve bu pencereyi kapatmak için ENTER tuşuna basın..." -ForegroundColor Red
-    Read-Host # Kullanıcı Enter'a basana kadar süreci burada kilitler, pencere kapanmaz!
+    $failed = $true
+    $message = [string]$_.Exception.Message
+    Write-Log $message
+    Draw-UI $title ('HATA: ' + $message) 0 'Güncelleme yarıda kesildi!'
+    Write-Host ''
+    Write-Host (' [!] ' + $message) -ForegroundColor Red
+    Write-Host ''
+    Read-Host "Kapatmak için ENTER'a basın..."
 } finally {
     Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
 }
 
-
-Draw-UI "Anka Web Güncelleniyor" "Anka Web başlatılıyor..." 100 "İşlem tamamlandı!"
-Start-Sleep -Milliseconds 500
+if (-not $failed) {
+    Draw-UI $title 'Anka Web başlatılıyor...' 100 'İşlem tamamlandı!'
+    Start-Sleep -Milliseconds 500
+}
+try { [Console]::CursorVisible = $true } catch {}
 $target = ''
 try { $target = Find-App $job } catch { Write-Log $_.Exception.Message }
 if (-not $target) {
@@ -254,19 +268,122 @@ try {
 `.replace('__PREFIX__', DOWNLOAD_PATH_PREFIX);
 
 const LINUX_SCRIPT = `#!/bin/sh
-exec </dev/null >/dev/null 2>&1
-trap '' HUP
 DIR=$(cd "$(dirname "$0")" && pwd)
+SELF="$DIR/$(basename "$0")"
 JOB="$DIR/job.env"
 RUN="$DIR/job.run"
 LOG="$DIR/updater.log"
 log() { echo "$(date '+%Y-%m-%dT%H:%M:%S') $1" >> "$LOG" 2>/dev/null; }
-[ -f "$JOB" ] || exit 1
-mv -f "$JOB" "$RUN" 2>/dev/null || exit 1
+
+find_bin() {
+    for d in /usr/bin /bin /usr/local/bin /usr/sbin /sbin; do
+        if [ -x "$d/$1" ]; then
+            printf '%s' "$d/$1"
+            return 0
+        fi
+    done
+    command -v "$1" 2>/dev/null
+}
+
+run_in_terminal() {
+    BIN=$(find_bin "$1") || return 1
+    [ -n "$BIN" ] || return 1
+    case "$1" in
+        gnome-terminal) "$BIN" -- /bin/sh "$SELF" --run visible & ;;
+        xfce4-terminal) "$BIN" --disable-server -x /bin/sh "$SELF" --run visible & ;;
+        mate-terminal) "$BIN" -x /bin/sh "$SELF" --run visible & ;;
+        konsole) "$BIN" --nofork -e /bin/sh "$SELF" --run visible & ;;
+        kitty) "$BIN" /bin/sh "$SELF" --run visible & ;;
+        *) "$BIN" -e /bin/sh "$SELF" --run visible & ;;
+    esac
+    t=0
+    while [ -f "$RUN" ] && [ "$t" -lt 40 ]; do
+        sleep 0.2
+        t=$((t+1))
+    done
+    [ -f "$RUN" ] && return 1
+    return 0
+}
+
+if [ "$1" != "--run" ]; then
+    exec </dev/null >/dev/null 2>&1
+    trap '' HUP
+    [ -f "$JOB" ] || exit 1
+    mv -f "$JOB" "$RUN" 2>/dev/null || exit 1
+    . "$RUN"
+    for term in xfce4-terminal gnome-terminal kgx konsole mate-terminal lxterminal qterminal tilix kitty alacritty x-terminal-emulator xterm; do
+        if run_in_terminal "$term"; then
+            exit 0
+        fi
+    done
+    exec /bin/sh "$SELF" --run quiet
+fi
+
+[ -f "$RUN" ] || exit 0
 . "$RUN"
 rm -f "$RUN"
+trap '' HUP
+
+VISIBLE=0
+[ "$2" = "visible" ] && VISIBLE=1
+if [ "$VISIBLE" != "1" ]; then
+    exec </dev/null >/dev/null 2>&1
+fi
+
 TMP="$DIR/anka-web-$ANKA_VERSION.AppImage.part"
 rm -f "$TMP"
+
+COLS=$(tput cols 2>/dev/null)
+case "$COLS" in
+    ''|*[!0-9]*) COLS=60 ;;
+esac
+[ "$COLS" -ge 40 ] || COLS=50
+BW=$((COLS-12))
+
+rep() {
+    s=""
+    i=0
+    while [ "$i" -lt "$2" ]; do
+        s="$s$1"
+        i=$((i+1))
+    done
+    printf '%s' "$s"
+}
+
+EQ=$(rep '=' $((COLS-1)))
+DASH=$(rep '-' $((COLS-1)))
+
+mb() {
+    printf '%d.%d' $(($1/1048576)) $((($1%1048576)*10/1048576))
+}
+
+draw() {
+    [ "$VISIBLE" = "1" ] || return 0
+    p=$2
+    [ "$p" -lt 0 ] && p=0
+    [ "$p" -gt 100 ] && p=100
+    fill=$((p*BW/100))
+    rest=$((BW-fill))
+    printf '\\033[H'
+    printf '\\033[36m%s\\033[0m\\033[K\\n' "$EQ"
+    printf '\\033[1;37m   Anka Web Güncelleniyor\\033[0m\\033[K\\n'
+    printf '\\033[36m%s\\033[0m\\033[K\\n' "$EQ"
+    printf '\\033[K\\n'
+    printf ' \\033[90mDurum:\\033[0m \\033[33m%s\\033[0m\\033[K\\n' "$1"
+    printf '\\033[K\\n'
+    printf ' [\\033[32m%s\\033[90m%s\\033[0m] %3d%%\\033[K\\n' "$(rep '#' "$fill")" "$(rep '.' "$rest")" "$p"
+    printf '\\033[K\\n'
+    printf ' \\033[90mBilgi: %s\\033[0m\\033[K\\n' "$3"
+    printf '\\033[K\\n'
+    printf '\\033[90m%s\\033[0m\\033[K\\n' "$DASH"
+}
+
+if [ "$VISIBLE" = "1" ]; then
+    printf '\\033]0;Anka Web Güncelleyici\\007'
+    printf '\\033[2J\\033[H\\033[?25l'
+    trap 'printf "\\033[?25h"' EXIT
+fi
+
 relaunch() {
     sleep 0.5
     [ -x "$ANKA_DEST" ] || return 0
@@ -277,7 +394,28 @@ relaunch() {
         nohup "$ANKA_DEST" >/dev/null 2>&1 </dev/null &
     fi
 }
-fail() { log "$1"; rm -f "$TMP"; relaunch; exit 1; }
+
+fail() {
+    log "$1"
+    rm -f "$TMP"
+    if [ "$VISIBLE" = "1" ]; then
+        draw "HATA: $1" 0 "Güncelleme yarıda kesildi!"
+        printf '\\n \\033[31m[!] %s\\033[0m\\n\\n' "$1"
+        printf ' Kapatmak için ENTER tuşuna basın...'
+        read -r ANSWER
+    fi
+    relaunch
+    exit 1
+}
+
+remote_size() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsIL --connect-timeout 15 -A AnkaWeb-Updater "$ANKA_URL" 2>/dev/null | tr -d '\\r' | grep -i '^content-length:' | tail -n 1 | tr -dc '0-9'
+    elif command -v wget >/dev/null 2>&1; then
+        wget --spider -S -q -T 30 -t 1 -U AnkaWeb-Updater "$ANKA_URL" 2>&1 | tr -d '\\r' | grep -i 'content-length:' | tail -n 1 | tr -dc '0-9'
+    fi
+}
+
 fetch() {
     if command -v curl >/dev/null 2>&1; then
         curl -fsSL --retry 3 --retry-delay 1 --connect-timeout 15 --max-time 900 -A AnkaWeb-Updater -o "$2" "$1"
@@ -287,10 +425,14 @@ fetch() {
         return 127
     fi
 }
+
+draw "Eski sürüm kapatılıyor..." 0 "Süreçler denetleniyor"
+
 case "$ANKA_URL" in
     "__PREFIX__"*) ;;
     *) fail "gecersiz adres" ;;
 esac
+
 n=0
 while kill -0 "$ANKA_PID" 2>/dev/null && [ "$n" -lt 150 ]; do
     n=$((n+1))
@@ -302,7 +444,33 @@ if kill -0 "$ANKA_PID" 2>/dev/null; then
     kill -KILL "$ANKA_PID" 2>/dev/null
 fi
 sleep 0.5
-fetch "$ANKA_URL" "$TMP" || fail "indirme basarisiz"
+
+draw "Yeni sürüm indiriliyor..." 0 "Bağlantı kuruluyor..."
+
+TOTAL=""
+[ "$VISIBLE" = "1" ] && TOTAL=$(remote_size)
+[ -n "$TOTAL" ] || TOTAL=0
+
+fetch "$ANKA_URL" "$TMP" &
+FPID=$!
+PREV=0
+while kill -0 "$FPID" 2>/dev/null; do
+    CUR=0
+    [ -f "$TMP" ] && CUR=$(wc -c < "$TMP" | tr -d '[:space:]')
+    [ -n "$CUR" ] || CUR=0
+    PCT=0
+    [ "$TOTAL" -gt 0 ] && PCT=$((CUR*100/TOTAL))
+    [ "$PCT" -gt 99 ] && PCT=99
+    SPD=$(( (CUR-PREV)*2 ))
+    [ "$SPD" -ge 0 ] || SPD=0
+    PREV=$CUR
+    draw "Yeni paket indiriliyor..." "$PCT" "$(mb "$CUR") MB / $(mb "$TOTAL") MB ($(mb "$SPD") MB/s)"
+    sleep 0.5
+done
+wait "$FPID" || fail "indirme basarisiz"
+
+draw "Dosya doğrulanıyor..." 100 "SHA256 kontrol ediliyor"
+
 SIZE=$(wc -c < "$TMP" 2>/dev/null | tr -d '[:space:]')
 [ -n "$SIZE" ] && [ "$SIZE" -ge 1024 ] || fail "indirilen dosya gecersiz"
 MAGIC=$(head -c 4 "$TMP" | od -An -tx1 | tr -d '[:space:]')
@@ -317,6 +485,9 @@ if [ -n "$ANKA_HASH" ]; then
     fi
     [ "$SUM" = "$ANKA_HASH" ] || fail "dosya dogrulamasi basarisiz"
 fi
+
+draw "Kurulum yapılıyor..." 100 "Lütfen bekleyin, tarayıcı açılacaktır."
+
 mkdir -p "$(dirname "$ANKA_DEST")" || fail "hedef klasor olusturulamadi"
 if cp -f "$TMP" "$ANKA_DEST.new" && chmod 755 "$ANKA_DEST.new" && mv -f "$ANKA_DEST.new" "$ANKA_DEST"; then
     rm -f "$TMP"
@@ -325,7 +496,10 @@ else
     rm -f "$ANKA_DEST.new"
     fail "dosya degistirilemedi"
 fi
+
+draw "Anka Web başlatılıyor..." 100 "İşlem tamamlandı!"
 relaunch
+sleep 1
 exit 0
 `.replace('__PREFIX__', DOWNLOAD_URL_PREFIX);
 
@@ -1027,7 +1201,7 @@ function windowsTaskXml(script) {
     const args = '-NoProfile -NoLogo -ExecutionPolicy Bypass -File "' + script + '"';
     return [
         '<?xml version="1.0" encoding="UTF-16"?>',
-        '<Task version="1.2" xmlns="http://microsoft.com">',
+        '<Task version="1.2" xmlns="' + WIN_TASK_NAMESPACE + '">',
         '  <RegistrationInfo>',
         '    <Description>Anka Web Updater</Description>',
         '  </RegistrationInfo>',
@@ -1065,8 +1239,6 @@ async function createWindowsTask(dir, script) {
     const xml = windowsTaskXml(script);
     fs.writeFileSync(xmlFile, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]), { mode: 0o600 });
     try {
-        await runProcess(systemPath('schtasks.exe'), ['/delete', '/tn', TASK_NAME, '/f']).catch(() => {});
-        
         const result = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/xml', xmlFile, '/f']);
         return result.code === 0;
     } catch (err) {
@@ -1077,7 +1249,6 @@ async function createWindowsTask(dir, script) {
         } catch (cleanupErr) {}
     }
 }
-
 
 async function ensureWindowsTask() {
     const dir = prepareUpdaterDir();
@@ -1092,15 +1263,28 @@ async function ensureWindowsTask() {
         marker = null;
     }
 
-    const query = await runProcess(systemPath('schtasks.exe'), ['/query', '/tn', TASK_NAME]);
-    const exists = query.code === 0;
+    let exists = false;
+    try {
+        const query = await runProcess(systemPath('schtasks.exe'), ['/query', '/tn', TASK_NAME]);
+        exists = query.code === 0;
+    } catch (err) {
+        exists = false;
+    }
+
     if (exists && marker && marker.script === script && marker.v === TASK_VERSION) return;
 
-    const created = await createWindowsTask(dir, script);
-    if (!created) {
-        if (exists) return;
-        throw new Error('Güncelleme görevi oluşturulamadı');
+    if (exists) {
+        try {
+            await runProcess(systemPath('schtasks.exe'), ['/delete', '/tn', TASK_NAME, '/f']);
+        } catch (err) {}
     }
+
+    try {
+        fs.rmSync(markerFile, { force: true });
+    } catch (err) {}
+
+    const created = await createWindowsTask(dir, script);
+    if (!created) throw new Error('Güncelleme görevi oluşturulamadı');
 
     try {
         fs.writeFileSync(markerFile, JSON.stringify({ script: script, v: TASK_VERSION }), { mode: 0o600 });
