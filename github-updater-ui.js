@@ -12,7 +12,8 @@ const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO +
 const MANIFEST_PATH = '/' + OWNER + '/' + REPO + '/refs/heads/main/latest.yml';
 const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
-const UI_VERSION = 13;
+const LATEST_API_PATH = '/repos/' + OWNER + '/' + REPO + '/releases/latest';
+const UI_VERSION = 14;
 const FIRST_CHECK_DELAY = 1000;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
@@ -23,6 +24,7 @@ const MAX_REDIRECTS = 5;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES = 600 * 1024 * 1024;
+const MIN_DOWNLOAD_BYTES = 1024;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_MARKER_BYTES = 4096;
 const MARKER_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
@@ -33,28 +35,21 @@ const MARKER_FILE = 'anka-last-update.json';
 const ACTION_CHANNEL = 'anka-updater:action';
 const ACTIONS = new Set(['later', 'close', 'install', 'retry', 'update', 'skip']);
 const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
-const FILE_RE = /^[A-Za-z0-9._-]{1,120}$/;
+const FILE_RE = /^[A-Za-z0-9._+()@ -]{1,200}$/;
+const TAG_RE = /^[A-Za-z0-9._-]{1,100}$/;
+const HASH_RE = /^[a-f0-9]{64}$/;
 const DIGEST_RE = /^sha256:([A-Fa-f0-9]{64})$/;
 const PKG_RE = /^[a-z0-9][a-z0-9+._-]{0,100}$/i;
 const SKIP_BIN_RE = /(chrome-sandbox|chrome_crashpad_handler|\.so(\.|$)|\.sh$|\.pak$|\.bin$|\.dat$|\.json$)/i;
 const TRANSIENT_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET', 'EPIPE']);
-const EXTENSIONS = { exe: '.exe', msi: '.msi', deb: '.deb', rpm: '.rpm', appimage: '.AppImage', targz: '.tar.gz', win: '.exe' };
-const ASSET_MATCH = {
-    exe: (name) => /\.exe$/i.test(name) && !/portable/i.test(name),
-    msi: (name) => /\.msi$/i.test(name),
-    deb: (name) => /\.deb$/i.test(name),
-    rpm: (name) => /\.rpm$/i.test(name),
-    appimage: (name) => /\.appimage$/i.test(name),
-    targz: (name) => /\.tar\.gz$/i.test(name)
-};
+const EXTENSIONS = { exe: '.exe', msi: '.msi', deb: '.deb', rpm: '.rpm', appimage: '.AppImage', targz: '.tar.gz' };
 const MAGIC = {
     exe: [0x4d, 0x5a],
     msi: [0xd0, 0xcf, 0x11, 0xe0],
     deb: [0x21, 0x3c, 0x61, 0x72, 0x63, 0x68, 0x3e],
     rpm: [0xed, 0xab, 0xee, 0xdb],
     appimage: [0x7f, 0x45, 0x4c, 0x46],
-    targz: [0x1f, 0x8b],
-    win: [0x4d, 0x5a]
+    targz: [0x1f, 0x8b]
 };
 const DEB_IDS = new Set(['debian', 'ubuntu', 'linuxmint', 'pop', 'elementary', 'kali', 'raspbian', 'zorin', 'mx', 'devuan', 'neon', 'tuxedo', 'deepin', 'parrot', 'pureos', 'lmde', 'pardus']);
 const RPM_IDS = new Set(['rhel', 'fedora', 'centos', 'rocky', 'almalinux', 'ol', 'suse', 'opensuse', 'opensuse-leap', 'opensuse-tumbleweed', 'sles', 'sled', 'mageia', 'openmandriva', 'pclinuxos', 'rosa', 'altlinux', 'alt', 'amzn', 'nobara', 'eurolinux', 'cloudlinux', 'scientific', 'redos', 'openeuler', 'euleros', 'tizen', 'qubes', 'berry', 'vine', 'turbolinux', 'asianux', 'clearos', 'geckolinux']);
@@ -311,6 +306,8 @@ const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
     targets: []
 });
 
+if (!Array.isArray(state.targets)) state.targets = [];
+
 function safeJson(value) {
     return JSON.stringify(value)
         .replace(/</g, '\\u003c')
@@ -357,7 +354,7 @@ function compareVersions(a, b) {
 
 function parseManifest(text) {
     const out = Object.create(null);
-    String(text).split(/\r?\n/).forEach((line) => {
+    String(text).replace(/^\uFEFF/, '').split(/\r?\n/).forEach((line) => {
         const match = /^([A-Za-z0-9_]+):[ \t]*(.*)$/.exec(line);
         if (!match) return;
         let value = match[2].trim();
@@ -392,10 +389,10 @@ function downloadAllow(url, redirected) {
     return url.hostname === 'github.com' && url.pathname.startsWith(DOWNLOAD_PATH_PREFIX);
 }
 
-function releaseAllow(version) {
+function releaseAllow(apiPath) {
     return (url, redirected) => !redirected
         && url.hostname === 'api.github.com'
-        && url.pathname === RELEASE_API_PREFIX + 'v' + version;
+        && url.pathname === apiPath;
 }
 
 function networkError(err) {
@@ -539,7 +536,7 @@ function linuxKinds() {
 }
 
 function platformKinds() {
-    if (process.platform === 'win32') return ['exe', 'win', 'msi'];
+    if (process.platform === 'win32') return ['exe', 'msi'];
     if (process.platform === 'linux') {
         if (process.arch !== 'x64') throw new Error('Bu işlemci mimarisi için paket yok');
         return linuxKinds();
@@ -547,17 +544,33 @@ function platformKinds() {
     return null;
 }
 
-function buildTarget(kind, raw, version) {
-    const ext = EXTENSIONS[kind] || '.bin';
+function detectKind(name) {
+    const lower = String(name).toLowerCase();
+    if (lower.endsWith('.tar.gz')) return 'targz';
+    if (lower.endsWith('.appimage')) return 'appimage';
+    if (lower.endsWith('.deb')) return 'deb';
+    if (lower.endsWith('.rpm')) return 'rpm';
+    if (lower.endsWith('.msi')) return 'msi';
+    if (lower.endsWith('.exe')) return 'exe';
+    return null;
+}
+
+function archMismatch(name) {
+    if (process.arch === 'x64') {
+        return /(arm64|aarch64|armv7|armhf|i386|i686|ia32)/i.test(name) || /x86(?![_-]?64)/i.test(name);
+    }
+    if (process.arch === 'ia32') return /(x64|x86[_-]?64|amd64|arm64|aarch64)/i.test(name);
+    return false;
+}
+
+function buildTarget(raw, hash) {
     let url;
     try {
-        url = new URL(raw);
+        url = new URL(String(raw || '').trim());
     } catch (err) {
         return null;
     }
 
-    const expectedPrefix = DOWNLOAD_PATH_PREFIX + 'v' + version + '/';
-    const name = url.pathname.slice(expectedPrefix.length);
     const valid = url.protocol === 'https:'
         && url.hostname === 'github.com'
         && !url.username
@@ -565,71 +578,91 @@ function buildTarget(kind, raw, version) {
         && !url.port
         && !url.search
         && !url.hash
-        && url.pathname.startsWith(expectedPrefix)
-        && FILE_RE.test(name);
+        && url.pathname.startsWith(DOWNLOAD_PATH_PREFIX);
     if (!valid) return null;
 
-    return { kind: kind === 'win' ? 'exe' : kind, ext: ext, url: url.toString(), name: name, hash: '' };
+    const rest = url.pathname.slice(DOWNLOAD_PATH_PREFIX.length).split('/');
+    if (rest.length !== 2 || !TAG_RE.test(rest[0]) || !rest[1]) return null;
+
+    let name;
+    try {
+        name = decodeURIComponent(rest[1]);
+    } catch (err) {
+        return null;
+    }
+    if (!FILE_RE.test(name) || name.includes('..')) return null;
+
+    const kind = detectKind(name);
+    if (!kind) return null;
+
+    return { kind: kind, ext: EXTENSIONS[kind], url: url.toString(), name: name, hash: hash || '' };
 }
 
-function collectTargets(manifest, version, assets, kinds) {
-    const list = [];
-    const seen = new Set();
-    const byName = new Map();
-    assets.forEach((asset) => byName.set(asset.name, asset));
+function collectTargets(manifest, assets, kinds) {
+    const found = new Map();
+    const hashes = new Map();
+    assets.forEach((asset) => hashes.set(asset.name, asset.hash));
 
-    const add = (target, hash) => {
-        if (!target || seen.has(target.url)) return;
-        seen.add(target.url);
-        target.hash = hash || '';
-        list.push(target);
+    const add = (target) => {
+        if (!target || kinds.indexOf(target.kind) < 0) return;
+        const existing = found.get(target.url);
+        if (existing) {
+            if (!existing.hash && target.hash) existing.hash = target.hash;
+            return;
+        }
+        found.set(target.url, target);
     };
 
-    for (const kind of kinds) {
-        const raw = manifest['url_' + kind];
-        if (raw) {
-            const target = buildTarget(kind, raw, version);
-            if (target) {
-                const asset = byName.get(target.name);
-                if (asset) add(target, asset.hash);
-                else if (!assets.length) add(target, '');
-            }
-        }
+    Object.keys(manifest).forEach((key) => {
+        if (!/^url_/.test(key)) return;
+        const target = buildTarget(manifest[key], '');
+        if (!target) return;
+        const declared = String(manifest['sha256_' + key.slice(4)] || '').trim().toLowerCase();
+        target.hash = hashes.get(target.name) || (HASH_RE.test(declared) ? declared : '');
+        add(target);
+    });
 
-        const matcher = ASSET_MATCH[kind];
-        if (!matcher) continue;
-        for (const asset of assets) {
-            if (!matcher(asset.name)) continue;
-            add(buildTarget(kind, asset.url, version), asset.hash);
-        }
-    }
+    assets.forEach((asset) => {
+        if (/portable/i.test(asset.name) || archMismatch(asset.name)) return;
+        add(buildTarget(asset.url, asset.hash));
+    });
 
-    return list;
+    return Array.from(found.values()).sort((a, b) => kinds.indexOf(a.kind) - kinds.indexOf(b.kind));
+}
+
+async function fetchReleaseJson(apiPath, signal) {
+    const res = await get('https://api.github.com' + apiPath, {
+        allow: releaseAllow(apiPath),
+        accept: 'application/vnd.github+json',
+        timeout: REQUEST_TIMEOUT,
+        redirects: false,
+        signal: signal
+    }, 0);
+    return JSON.parse((await readLimited(res, MAX_JSON_BYTES)).toString('utf8'));
 }
 
 async function fetchRelease(version, signal) {
-    const url = 'https://api.github.com' + RELEASE_API_PREFIX + 'v' + version;
-    try {
-        const res = await get(url, {
-            allow: releaseAllow(version),
-            accept: 'application/vnd.github+json',
-            timeout: REQUEST_TIMEOUT,
-            redirects: false,
-            signal: signal
-        }, 0);
+    const paths = [RELEASE_API_PREFIX + 'v' + version, RELEASE_API_PREFIX + version, LATEST_API_PATH];
+    for (const apiPath of paths) {
+        if (signal.aborted) break;
+        try {
+            const release = await fetchReleaseJson(apiPath, signal);
+            if (!release || typeof release !== 'object') continue;
+            if (apiPath === LATEST_API_PATH && compareVersions(String(release.tag_name || ''), version) !== 0) continue;
 
-        const release = JSON.parse((await readLimited(res, MAX_JSON_BYTES)).toString('utf8'));
-        const list = release && Array.isArray(release.assets) ? release.assets : [];
-        const assets = [];
-        list.forEach((item) => {
-            if (!item || typeof item.name !== 'string' || typeof item.browser_download_url !== 'string') return;
-            const match = DIGEST_RE.exec(String(item.digest || ''));
-            assets.push({ name: item.name, url: item.browser_download_url, hash: match ? match[1].toLowerCase() : '' });
-        });
-        return { assets: assets, notes: cleanNotes(release && release.body) };
-    } catch (e) {
-        return { assets: [], notes: '' };
+            const list = Array.isArray(release.assets) ? release.assets : [];
+            const assets = [];
+            list.forEach((item) => {
+                if (!item || typeof item.name !== 'string' || typeof item.browser_download_url !== 'string') return;
+                const match = DIGEST_RE.exec(String(item.digest || ''));
+                assets.push({ name: item.name, url: item.browser_download_url, hash: match ? match[1].toLowerCase() : '' });
+            });
+            return { assets: assets, notes: cleanNotes(release.body) };
+        } catch (err) {
+            if (err && (err.status === 403 || err.status === 429)) break;
+        }
     }
+    return { assets: [], notes: '' };
 }
 
 function updatesDir() {
@@ -713,14 +746,6 @@ function takeMarker(installed) {
     return data.to;
 }
 
-function sameHash(a, b) {
-    if (!a || !b) return true;
-    const x = Buffer.from(String(a), 'hex');
-    const y = Buffer.from(String(b), 'hex');
-    if (x.length !== 32 || y.length !== 32) return true;
-    return crypto.timingSafeEqual(x, y);
-}
-
 function validMagic(kind, file) {
     const magic = MAGIC[kind];
     if (!magic) return true;
@@ -728,10 +753,10 @@ function validMagic(kind, file) {
     try {
         fd = fs.openSync(file, 'r');
         const head = Buffer.alloc(magic.length);
-        if (fs.readSync(fd, head, 0, magic.length, 0) !== magic.length) return true;
+        if (fs.readSync(fd, head, 0, magic.length, 0) !== magic.length) return false;
         return magic.every((byte, index) => head[index] === byte);
     } catch (err) {
-        return true;
+        return false;
     } finally {
         if (fd !== undefined) {
             try {
@@ -826,7 +851,8 @@ async function download(target, version, signal, onProgress) {
             });
         });
 
-        if (target.hash && !sameHash(hash.digest('hex'), target.hash)) throw new Error('Dosya doğrulaması başarısız');
+        if (fs.statSync(partPath).size < MIN_DOWNLOAD_BYTES) throw new Error('İndirilen dosya geçersiz');
+        if (target.hash && hash.digest('hex') !== target.hash) throw new Error('Dosya doğrulaması başarısız');
         if (!validMagic(target.kind, partPath)) throw new Error('İndirilen dosya geçerli bir kurulum dosyası değil');
         fs.renameSync(partPath, finalPath);
         return finalPath;
@@ -1268,8 +1294,8 @@ function setupWindow(win, currentVersion, options) {
 
             if (state.version !== version || !state.targets.length) {
                 const release = await fetchRelease(version, ctl.signal);
-                const targets = collectTargets(manifest, version, release.assets, kinds);
-                if (!targets.length) throw new Error('Bu sistem için uygun güncelleme paketi bulunamadı');
+                const targets = collectTargets(manifest, release.assets, kinds);
+                if (!targets.length) throw new Error('Bu sistem için uygun güncelleme paketi bulunamadı (aranan: ' + kinds.join(', ') + ')');
 
                 state.version = version;
                 state.targets = targets;
