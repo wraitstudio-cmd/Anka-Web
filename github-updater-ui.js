@@ -14,7 +14,7 @@ const DOWNLOAD_URL_PREFIX = 'https://github.com' + DOWNLOAD_PATH_PREFIX;
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
 const LATEST_API_PATH = '/repos/' + OWNER + '/' + REPO + '/releases/latest';
 const UI_VERSION = 16;
-const TASK_VERSION = 3;
+const TASK_VERSION = 4;
 const FIRST_CHECK_DELAY = 1000;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
@@ -1065,6 +1065,8 @@ async function createWindowsTask(dir, script) {
     const xml = windowsTaskXml(script);
     fs.writeFileSync(xmlFile, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]), { mode: 0o600 });
     try {
+        await runProcess(systemPath('schtasks.exe'), ['/delete', '/tn', TASK_NAME, '/f']).catch(() => {});
+        
         const result = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/xml', xmlFile, '/f']);
         return result.code === 0;
     } catch (err) {
@@ -1075,6 +1077,7 @@ async function createWindowsTask(dir, script) {
         } catch (cleanupErr) {}
     }
 }
+
 
 async function ensureWindowsTask() {
     const dir = prepareUpdaterDir();
