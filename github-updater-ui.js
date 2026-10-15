@@ -61,6 +61,41 @@ $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $jobFile = Join-Path $dir 'job.json'
 $logFile = Join-Path $dir 'updater.log'
 function Write-Log($m) { try { Add-Content -Path $logFile -Value ((Get-Date -Format 's') + ' ' + $m) } catch {} }
+
+# Konsol Arayüzü Tasarımı
+function Draw-UI($title, $status, $percent, $details) {
+    Clear-Host
+    $w = [Console]::WindowWidth
+    if ($w -lt 40) { $w = 50 }
+    
+    # Başlık Alanı
+    Write-Host ("=" * $w) -ForegroundColor Cyan
+    Write-Host "   $title" -ForegroundColor White -Bold
+    Write-Host ("=" * $w) -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host " Durum: " -NoNewline -ForegroundColor Gray
+    Write-Host $status -ForegroundColor Yellow
+    Write-Host ""
+
+    # Gerçek İlerleme Çubuğu (Progress Bar)
+    $barWidth = $w - 12
+    $progress = [Math]::Max(0, [Math]::Min($barWidth, [Math]::Round(($percent / 100) * $barWidth)))
+    $rest = $barWidth - $progress
+    
+    Write-NoNewline " ["
+    Write-NoNewline ("#" * $progress) -ForegroundColor Green
+    Write-NoNewline ("." * $rest) -ForegroundColor DarkGray
+    Write-Host ("] {0,3}%" -f [int]$percent) -ForegroundColor White
+
+    # Detaylar alanı (Hız, boyut vb.)
+    if ($details) {
+        Write-Host ""
+        Write-Host " Bilgi: $details" -ForegroundColor Gray
+    }
+    Write-Host ""
+    Write-Host ("-" * $w) -ForegroundColor DarkGray
+}
+
 function Test-Exe($p) {
     if (-not $p) { return $false }
     if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return $false }
@@ -69,12 +104,14 @@ function Test-Exe($p) {
     if ($n -match '^(unins|uninstall|electron|squirrel|update)') { return $false }
     return $true
 }
+
 function Find-InDir($d) {
     if (-not $d -or -not (Test-Path -LiteralPath $d -PathType Container)) { return '' }
     $f = Get-ChildItem -LiteralPath $d -Filter '*.exe' -File -ErrorAction SilentlyContinue | Where-Object { Test-Exe $_.FullName } | Sort-Object Length -Descending | Select-Object -First 1
     if ($f) { return $f.FullName }
     return ''
 }
+
 function Find-App($job) {
     $self = [string]$job.exec
     if (Test-Exe $self) { return $self }
@@ -109,11 +146,17 @@ function Find-App($job) {
     }
     return ''
 }
+
 if (-not (Test-Path -LiteralPath $jobFile)) { exit 1 }
 $job = $null
 try { $job = Get-Content -Raw -Encoding UTF8 -LiteralPath $jobFile | ConvertFrom-Json } catch {}
 Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
 if (-not $job) { exit 1 }
+
+# Pencere Başlığını Ayarla
+$host.UI.RawUI.WindowTitle = "Anka Web Güncelleyici"
+Draw-UI "Anka Web Güncelleniyor" "Eski sürüm kapatılıyor..." 0 "Süreçler denetleniyor"
+
 $tmp = Join-Path $dir ('anka-web-' + [string]$job.version + '.exe')
 try {
     $uri = [Uri]([string]$job.url)
@@ -125,18 +168,48 @@ try {
         try { $alive.Kill(); $alive.WaitForExit(10000) | Out-Null } catch {}
     }
     Start-Sleep -Milliseconds 700
-    $ok = $false
-    for ($i = 1; $i -le 3 -and -not $ok; $i++) {
-        try {
-            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
-            Invoke-WebRequest -Uri $uri.AbsoluteUri -OutFile $tmp -UseBasicParsing -UserAgent 'AnkaWeb-Updater' -TimeoutSec 900
-            $ok = $true
-        } catch {
-            Write-Log ('indirme denemesi ' + $i + ': ' + $_.Exception.Message)
-            Start-Sleep -Seconds $i
+
+    Draw-UI "Anka Web Güncelleniyor" "Yeni sürüm indiriliyor..." 0 "Bağlantı kuruluyor..."
+
+    # CANLI PROGRESS BAR VE GERÇEK İNDİRME DÖNGÜSÜ
+    $webClient = New-Object System.Net.WebClient
+    $webClient.Headers.Add("User-Agent", "AnkaWeb-Updater")
+    
+    $startClock = [Diagnostics.Stopwatch]::StartNew()
+    
+    # İndirme olaylarını yakalama
+    $onProgress = {
+        param($sender, $e)
+        $percent = $e.ProgressPercentage
+        $totalMB = "{0:N2}" -f ($e.TotalBytesToReceive / 1MB)
+        $receivedMB = "{0:N2}" -f ($e.BytesReceived / 1MB)
+        
+        $elapsedSec = $sender.ExtendedData.Clock.Elapsed.TotalSeconds
+        if ($elapsedSec -gt 0) {
+            $speed = "{0:N2} MB/s" -f (($e.BytesReceived / 1MB) / $elapsedSec)
+        } else {
+            $speed = "Hesaplanıyor..."
         }
+        
+        $details = "$receivedMB MB / $totalMB MB ($speed)"
+        Draw-UI "Anka Web Güncelleniyor" "Yeni paket indiriliyor..." $percent $details
     }
-    if (-not $ok) { throw 'Indirme basarisiz' }
+
+    # Özel saat verisini webClient nesnesine bağlama
+    $extendedData = New-Object PSObject -Property @{ Clock = $startClock }
+    $webClient | Add-Member -MemberType NoteProperty -Name ExtendedData -Value $extendedData
+    
+    $webClient.add_DownloadProgressChanged($onProgress)
+    
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+    
+    # Asenkron indirmeyi başlat ve bitene kadar bekle
+    $webClient.DownloadFileAsync($uri, $tmp)
+    while ($webClient.IsBusy) { Start-Sleep -Milliseconds 100 }
+    $startClock.Stop()
+
+    Draw-UI "Anka Web Güncelleniyor" "Dosya doğrulanıyor..." 95 "SHA256 kontrol ediliyor"
+    
     $info = Get-Item -LiteralPath $tmp
     if ($info.Length -lt 1024) { throw 'Indirilen dosya gecersiz' }
     $stream = [IO.File]::OpenRead($tmp)
@@ -147,13 +220,21 @@ try {
         $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToLower()
         if ($actual -ne $expected) { throw 'Dosya dogrulamasi basarisiz' }
     }
+
+    Draw-UI "Anka Web Güncelleniyor" "Sessiz kurulum yapılıyor..." 98 "Lütfen bekleyin, tarayıcı açılacaktır."
+    
+    # Kurulumu arka planda çalıştır ama bitmesini bekle
     $proc = Start-Process -FilePath $tmp -ArgumentList @('/S', '--updated') -WindowStyle Hidden -Wait -PassThru
     Write-Log ('kurulum cikis kodu ' + $proc.ExitCode)
 } catch {
     Write-Log $_.Exception.Message
+    Draw-UI "Anka Web Güncelleniyor" "HATA: $_" 0 "Güncelleme iptal edildi."
+    Start-Sleep -Seconds 5
 } finally {
     Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
 }
+
+Draw-UI "Anka Web Güncelleniyor" "Anka Web başlatılıyor..." 100 "İşlem tamamlandı!"
 Start-Sleep -Milliseconds 500
 $target = ''
 try { $target = Find-App $job } catch { Write-Log $_.Exception.Message }
@@ -939,10 +1020,10 @@ function windowsTaskXml(script) {
     const name = process.env.USERNAME || os.userInfo().username;
     const user = (process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + name;
     const powershell = systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const args = '-NoProfile -NonInteractive -NoLogo -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + script + '"';
+    const args = '-NoProfile -NoLogo -ExecutionPolicy Bypass -File "' + script + '"';
     return [
         '<?xml version="1.0" encoding="UTF-16"?>',
-        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
+        '<Task version="1.2" xmlns="http://microsoft.com">',
         '  <RegistrationInfo>',
         '    <Description>Anka Web Updater</Description>',
         '  </RegistrationInfo>',
@@ -961,7 +1042,7 @@ function windowsTaskXml(script) {
         '    <StartWhenAvailable>true</StartWhenAvailable>',
         '    <AllowStartOnDemand>true</AllowStartOnDemand>',
         '    <Enabled>true</Enabled>',
-        '    <Hidden>true</Hidden>',
+        '    <Hidden>false</Hidden>',
         '    <ExecutionTimeLimit>PT30M</ExecutionTimeLimit>',
         '    <Priority>7</Priority>',
         '  </Settings>',
