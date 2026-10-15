@@ -13,9 +13,9 @@ const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const DOWNLOAD_URL_PREFIX = 'https://github.com' + DOWNLOAD_PATH_PREFIX;
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
 const LATEST_API_PATH = '/repos/' + OWNER + '/' + REPO + '/releases/latest';
-const UI_VERSION = 17;
-const TASK_VERSION = 5;
-const FIRST_CHECK_DELAY = 1000;
+const UI_VERSION = 18;
+const TASK_VERSION = 6;
+const FIRST_CHECK_DELAY = 800;
 const CHECK_INTERVAL = 5 * 60 * 1000;
 const FOCUS_CHECK_GAP = 60 * 1000;
 const REQUEST_TIMEOUT = 10000;
@@ -26,16 +26,17 @@ const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_MARKER_BYTES = 4096;
 const MARKER_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const NOTES_MAX = 600;
-const POLL_MS = 250;
-const HANDOFF_DELAY = 800;
-const CLAIM_WAIT = 10000;
-const CLAIM_POLL = 100;
+const POLL_MS = 200;
+const HANDOFF_DELAY = 500;
+const CLAIM_WAIT = 15000;
+const CLAIM_POLL = 80;
 const MARKER_FILE = 'anka-last-update.json';
 const UPDATER_DIR = 'updater';
 const TASK_NAME = 'AnkaWebUpdater';
 const LINUX_UNIT = 'anka-web-updater.service';
 const WIN_JOB_FILE = 'job.json';
 const WIN_SCRIPT_FILE = 'anka-updater.ps1';
+const WIN_STATUS_FILE = 'status.json';
 const WIN_TASK_MARKER = 'task.json';
 const WIN_TASK_XML = 'task.xml';
 const WIN_TASK_NAMESPACE = 'http://schemas.microsoft.com/windows/2004/02/mit/task';
@@ -55,16 +56,124 @@ const GUI_ENV = ['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR', 
 const BIN_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/local/bin'];
 const SH_BIN = '/bin/sh';
 
+const HTML_PAGE = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Anka Web Güncelleniyor</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(135deg,#0a0a0f 0%,#15151f 50%,#0a0a0f 100%);color:#f4f4f5;display:flex;align-items:center;justify-content:center}
+.bg{position:fixed;inset:0;background:radial-gradient(circle at 25% 35%,rgba(255,71,87,.1) 0%,transparent 45%),radial-gradient(circle at 75% 65%,rgba(255,122,69,.08) 0%,transparent 45%);animation:bgPulse 6s ease-in-out infinite}
+@keyframes bgPulse{0%,100%{opacity:.6}50%{opacity:1}}
+.card{position:relative;width:min(440px,calc(100vw - 40px));background:rgba(22,22,28,.9);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,.09);border-radius:22px;padding:36px 32px;box-shadow:0 28px 56px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.02) inset;animation:cardIn .5s cubic-bezier(.16,1,.3,1) both}
+@keyframes cardIn{from{opacity:0;transform:translateY(32px) scale(.94)}to{opacity:1;transform:none}}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;border-radius:22px 22px 0 0;background:linear-gradient(90deg,#ff4757,#ff7a45,#ff4757);background-size:200% 100%;animation:shimmer 1.8s linear infinite}
+@keyframes shimmer{to{background-position:-200% 0}}
+.icon{width:68px;height:68px;margin:0 auto 22px;border-radius:18px;display:grid;place-items:center;background:linear-gradient(135deg,#ff4757,#ff7a45);position:relative;animation:bob 2.2s ease-in-out infinite;transition:background .3s ease}
+@keyframes bob{0%,100%{transform:translateY(-3px)}50%{transform:translateY(3px)}}
+.icon::after{content:'';position:absolute;inset:-3px;border-radius:20px;border:2px solid rgba(255,71,87,.5);opacity:0;animation:ring 2s ease-out infinite}
+@keyframes ring{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.35);opacity:0}}
+.icon svg{width:32px;height:32px;fill:none;stroke:#fff;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+.icon.done{background:linear-gradient(135deg,#10b981,#34d399);animation:none}
+.icon.done::after{animation:none}
+.icon.done svg{animation:pop .45s cubic-bezier(.34,1.56,.64,1) both}
+@keyframes pop{from{transform:scale(.3);opacity:0}to{transform:scale(1);opacity:1}}
+.icon.err{background:linear-gradient(135deg,#ef4444,#dc2626);animation:none}
+.icon.err::after{border-color:rgba(239,68,68,.5);animation:none}
+.title{font-size:20px;font-weight:700;text-align:center;margin-bottom:6px;letter-spacing:-.01em}
+.subtitle{font-size:13px;color:#a1a1aa;text-align:center;margin-bottom:24px}
+.progress-track{height:7px;border-radius:4px;background:rgba(255,255,255,.07);overflow:hidden;margin-bottom:10px}
+.progress-bar{height:100%;border-radius:4px;background:linear-gradient(90deg,#ff4757,#ff7a45,#ff4757);background-size:200% 100%;animation:shimmer 1.4s linear infinite;transform-origin:left;transform:scaleX(0);transition:transform .25s cubic-bezier(.4,0,.2,1);will-change:transform}
+.progress-info{display:flex;justify-content:space-between;font-size:12px;color:#71717a;margin-bottom:18px}
+.progress-info .pct{color:#ff4757;font-weight:700}
+.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:20px}
+.stat{background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.05);border-radius:10px;padding:10px 8px;text-align:center}
+.stat-value{font-size:14px;font-weight:700;color:#f4f4f5;font-variant-numeric:tabular-nums}
+.stat-label{font-size:10px;color:#71717a;text-transform:uppercase;letter-spacing:.6px;margin-top:3px;font-weight:600}
+.status{display:flex;align-items:center;justify-content:center;gap:8px;font-size:12px;color:#a1a1aa;min-height:18px}
+.spinner{width:12px;height:12px;border:2px solid rgba(255,255,255,.15);border-top-color:#ff4757;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner.hidden{display:none}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="card">
+<div class="icon" id="icon"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg></div>
+<h1 class="title" id="title">Anka Web Güncelleniyor</h1>
+<p class="subtitle" id="subtitle">Sürüm __VERSION__ hazırlanıyor</p>
+<div class="stats" id="stats">
+<div class="stat"><div class="stat-value" id="statPercent">0%</div><div class="stat-label">İlerleme</div></div>
+<div class="stat"><div class="stat-value" id="statSpeed">0 MB/s</div><div class="stat-label">Hız</div></div>
+<div class="stat"><div class="stat-value" id="statSize">0 MB</div><div class="stat-label">Boyut</div></div>
+</div>
+<div class="progress-track"><div class="progress-bar" id="bar"></div></div>
+<div class="progress-info"><span id="progressText">Hazırlanıyor</span><span class="pct" id="progressPercent">0%</span></div>
+<div class="status"><span class="spinner" id="spinner"></span><span id="statusText">Bağlantı kuruluyor</span></div>
+</div>
+<script>
+(function(){
+'use strict';
+var bar=document.getElementById('bar'),title=document.getElementById('title'),subtitle=document.getElementById('subtitle'),statusText=document.getElementById('statusText'),spinner=document.getElementById('spinner'),icon=document.getElementById('icon'),statPercent=document.getElementById('statPercent'),statSpeed=document.getElementById('statSpeed'),statSize=document.getElementById('statSize'),progressText=document.getElementById('progressText'),progressPercent=document.getElementById('progressPercent');
+var lastPhase='',lastPercent=-1,running=true;
+function fmtBytes(b){if(!b||b<0)return'0 MB';var mb=b/1048576;if(mb>=1024)return(mb/1024).toFixed(2)+' GB';return mb.toFixed(2)+' MB'}
+function fmtSpeed(bps){if(!bps||bps<0)return'0 MB/s';var mbps=bps/1048576;if(mbps>=1024)return(mbps/1024).toFixed(2)+' GB/s';return mbps.toFixed(2)+' MB/s'}
+function setIcon(t){if(t==='done'){icon.className='icon done';icon.innerHTML='<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'}else if(t==='error'){icon.className='icon err';icon.innerHTML='<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/></svg>'}else{icon.className='icon';icon.innerHTML='<svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>'}}
+function setStatus(msg,showSpinner){statusText.textContent=msg;if(showSpinner===false)spinner.classList.add('hidden');else spinner.classList.remove('hidden')}
+function update(d){
+var phase=d.phase||'download',percent=Math.max(0,Math.min(100,d.percent||0));
+if(phase!==lastPhase){
+lastPhase=phase;
+if(phase==='download'){title.textContent='Anka Web Güncelleniyor';subtitle.textContent='Sürüm __VERSION__ indiriliyor';setIcon('download');setStatus('İndiriliyor...',true)}
+else if(phase==='verify'){title.textContent='Dosya Doğrulanıyor';subtitle.textContent='SHA256 bütünlük kontrolü';setIcon('download');setStatus('Doğrulanıyor...',true);bar.style.transform='scaleX(1)';progressPercent.textContent='100%';statPercent.textContent='100%';progressText.textContent='Doğrulanıyor'}
+else if(phase==='install'){title.textContent='Kurulum Yapılıyor';subtitle.textContent='Lütfen bekleyin, birkaç saniye sürebilir';setIcon('download');setStatus('Sessiz kurulum çalışıyor...',true);bar.style.transform='scaleX(1)';progressPercent.textContent='100%';statPercent.textContent='100%';progressText.textContent='Kuruluyor'}
+else if(phase==='done'){title.textContent='Güncelleme Tamamlandı';subtitle.textContent='Anka Web başlatılıyor';setIcon('done');setStatus('Başarıyla tamamlandı',false);bar.style.transform='scaleX(1)';progressPercent.textContent='100%';statPercent.textContent='100%';progressText.textContent='Tamamlandı';statSpeed.textContent='—';statSize.textContent='—';running=false;setTimeout(function(){window.close()},2000)}
+else if(phase==='error'){title.textContent='Güncelleme Hatası';subtitle.textContent=d.message||'Bilinmeyen hata';setIcon('error');setStatus('Hata: '+(d.message||'Bilinmeyen hata'),false);progressText.textContent='Başarısız';running=false}
+}
+if(phase==='download'){
+if(percent!==lastPercent){lastPercent=percent;bar.style.transform='scaleX('+(percent/100)+')';progressPercent.textContent=percent+'%';statPercent.textContent=percent+'%'}
+var received=d.received||0,total=d.total||0,speed=d.speed||0;
+statSpeed.textContent=fmtSpeed(speed*1048576);
+statSize.textContent=fmtBytes(received)+(total>0?' / '+fmtBytes(total):'');
+progressText.textContent='İndiriliyor';
+setStatus(fmtBytes(received)+(total>0?' / '+fmtBytes(total):'')+'  •  '+fmtSpeed(speed*1048576),true)
+}
+}
+var statusUrl='__STATUS_URL__';
+function poll(){
+if(!running)return;
+var req=new XMLHttpRequest();
+req.open('GET',statusUrl+'?t='+Date.now(),true);
+req.timeout=4000;
+req.onload=function(){if(req.status===200){try{update(JSON.parse(req.responseText))}catch(e){}}setTimeout(poll,150)};
+req.onerror=function(){setTimeout(poll,400)};
+req.ontimeout=function(){setTimeout(poll,400)};
+req.send();
+}
+poll();
+})();
+</script>
+</body>
+</html>`;
+
 const WIN_TASK_SCRIPT = `$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
-try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $jobFile = Join-Path $dir 'job.json'
 $logFile = Join-Path $dir 'updater.log'
+$statusFile = Join-Path $dir 'status.json'
 function Write-Log($m) { try { Add-Content -Path $logFile -Value ((Get-Date -Format 's') + ' ' + $m) } catch {} }
+function Write-Status($phase, $percent, $received, $total, $speed, $message) {
+    $obj = @{ phase = $phase; percent = [int]$percent; received = [long]$received; total = [long]$total; speed = [double]$speed }
+    if ($message) { $obj.message = $message }
+    try { [IO.File]::WriteAllText($statusFile, ($obj | ConvertTo-Json -Compress), [Text.Encoding]::UTF8) } catch {}
+}
 
-$htmlFile = Join-Path $dir 'updater.html'
 $server = $null
 $port = 0
 
@@ -77,20 +186,32 @@ function Start-HtmlServer {
         $listener.Start()
         $script:server = $listener
         $script:port = $port
-        $job = Start-Job -ScriptBlock {
-            param($L, $P)
+        Start-Job -ScriptBlock {
+            param($L, $H)
             while ($L.IsListening) {
                 try {
                     $ctx = $L.GetContext()
-                    $html = [IO.File]::ReadAllText($P)
-                    $buffer = [Text.Encoding]::UTF8.GetBytes($html)
-                    $ctx.Response.ContentType = 'text/html; charset=utf-8'
-                    $ctx.Response.ContentLength64 = $buffer.Length
-                    $ctx.Response.OutputStream.Write($buffer, 0, $buffer.Length)
+                    $path = $ctx.Request.Url.AbsolutePath
+                    if ($path -eq '/status.json') {
+                        $file = Join-Path (Split-Path $H -Parent) 'status.json'
+                        if (Test-Path $file) {
+                            $buf = [IO.File]::ReadAllBytes($file)
+                            $ctx.Response.ContentType = 'application/json; charset=utf-8'
+                            $ctx.Response.ContentLength64 = $buf.Length
+                            $ctx.Response.OutputStream.Write($buf, 0, $buf.Length)
+                        } else {
+                            $ctx.Response.StatusCode = 204
+                        }
+                    } else {
+                        $buf = [IO.File]::ReadAllBytes($H)
+                        $ctx.Response.ContentType = 'text/html; charset=utf-8'
+                        $ctx.Response.ContentLength64 = $buf.Length
+                        $ctx.Response.OutputStream.Write($buf, 0, $buf.Length)
+                    }
                     $ctx.Response.OutputStream.Close()
                 } catch {}
             }
-        } -ArgumentList $listener, $HtmlPath
+        } -ArgumentList $listener, $HtmlPath | Out-Null
         return $true
     } catch {
         return $false
@@ -102,6 +223,8 @@ function Stop-HtmlServer {
         try { $script:server.Stop() } catch {}
         try { $script:server.Close() } catch {}
     }
+    Get-Job | Where-Object { $_.State -eq 'Running' } | Stop-Job -ErrorAction SilentlyContinue
+    Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue
 }
 
 function Open-Browser {
@@ -110,10 +233,11 @@ function Open-Browser {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName = $Url
         $psi.UseShellExecute = $true
+        $psi.WindowStyle = 'Hidden'
         [System.Diagnostics.Process]::Start($psi) | Out-Null
         return $true
     } catch {
-        try { Start-Process $Url } catch { return $false }
+        try { Start-Process $Url -WindowStyle Hidden } catch { return $false }
     }
 }
 
@@ -174,31 +298,29 @@ try { $job = Get-Content -Raw -Encoding UTF8 -LiteralPath $jobFile | ConvertFrom
 Remove-Item -LiteralPath $jobFile -Force -ErrorAction SilentlyContinue
 if (-not $job) { exit 1 }
 
-$title = 'Anka Web Güncelleniyor'
 $tmp = Join-Path $dir ('anka-web-' + [string]$job.version + '.exe')
 $failed = $false
 $htmlFile = Join-Path $dir 'updater.html'
 
 try {
+    Write-Status 'download' 0 0 0 0 'Hazırlanıyor'
     $uri = [Uri]([string]$job.url)
     if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'github.com' -or -not $uri.AbsolutePath.StartsWith('__PREFIX__')) { throw 'Gecersiz adres' }
 
     $procId = [int]$job.pid
-    try { Wait-Process -Id $procId -Timeout 30 } catch {}
+    try { Wait-Process -Id $procId -Timeout 20 } catch {}
     $alive = Get-Process -Id $procId -ErrorAction SilentlyContinue
     if ($alive -and $alive.ProcessName -eq [string]$job.proc) {
-        try { $alive.Kill(); $alive.WaitForExit(10000) | Out-Null } catch {}
+        try { $alive.Kill(); $alive.WaitForExit(8000) | Out-Null } catch {}
     }
-    Start-Sleep -Milliseconds 700
+    Start-Sleep -Milliseconds 400
 
     $html = [IO.File]::ReadAllText($htmlFile)
     $html = $html -replace '__VERSION__', [string]$job.version
-    $html = $html -replace '__TITLE__', $title
     [IO.File]::WriteAllText($htmlFile, $html, [Text.Encoding]::UTF8)
 
     if (Start-HtmlServer $htmlFile) {
-        $url = "http://127.0.0.1:$($script:port)/"
-        Open-Browser $url | Out-Null
+        Open-Browser "http://127.0.0.1:$($script:port)/" | Out-Null
     }
 
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
@@ -214,24 +336,25 @@ try {
         $netStream = $response.GetResponseStream()
         $fileStream = [IO.File]::Create($tmp)
         try {
-            $buffer = New-Object byte[] 65536
+            $buffer = New-Object byte[] 262144
             $received = [long]0
             $clock = [Diagnostics.Stopwatch]::StartNew()
+            $lastWrite = [long]0
+            $lastBytes = [long]0
             while (($read = $netStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
                 $fileStream.Write($buffer, 0, $read)
                 $received += $read
                 $elapsed = $clock.ElapsedMilliseconds
-                if ($elapsed -gt 0) {
+                if (($elapsed - $lastWrite) -ge 120) {
                     $percent = 0
                     if ($total -gt 0) { $percent = [int][Math]::Floor(($received * 100) / $total) }
-                    $speed = ($received / 1MB) / ($elapsed / 1000)
-                    $status = @{
-                        percent = $percent
-                        received = $received
-                        total = $total
-                        speed = [Math]::Round($speed, 2)
-                    } | ConvertTo-Json -Compress
-                    [IO.File]::WriteAllText((Join-Path $dir 'status.json'), $status, [Text.Encoding]::UTF8)
+                    $deltaTime = ($elapsed - $lastWrite) / 1000.0
+                    $deltaBytes = $received - $lastBytes
+                    $speed = 0
+                    if ($deltaTime -gt 0) { $speed = ($deltaBytes / 1MB) / $deltaTime }
+                    Write-Status 'download' $percent $received $total $speed 'İndiriliyor'
+                    $lastWrite = $elapsed
+                    $lastBytes = $received
                 }
             }
         } finally {
@@ -242,8 +365,7 @@ try {
         $response.Close()
     }
 
-    $status = @{ percent = 100; received = 0; total = 0; speed = 0; phase = 'verify' } | ConvertTo-Json -Compress
-    [IO.File]::WriteAllText((Join-Path $dir 'status.json'), $status, [Text.Encoding]::UTF8)
+    Write-Status 'verify' 100 0 0 0 'Doğrulanıyor'
 
     $info = Get-Item -LiteralPath $tmp
     if ($info.Length -lt 1024) { throw 'Indirilen dosya gecersiz' }
@@ -256,8 +378,7 @@ try {
         if ($actual -ne $expected) { throw 'Dosya dogrulamasi basarisiz' }
     }
 
-    $status = @{ percent = 100; received = 0; total = 0; speed = 0; phase = 'install' } | ConvertTo-Json -Compress
-    [IO.File]::WriteAllText((Join-Path $dir 'status.json'), $status, [Text.Encoding]::UTF8)
+    Write-Status 'install' 100 0 0 0 'Kuruluyor'
 
     $proc = Start-Process -FilePath $tmp -ArgumentList @('/S', '--updated') -WindowStyle Hidden -Wait -PassThru
     Write-Log ('kurulum cikis kodu ' + $proc.ExitCode)
@@ -265,19 +386,18 @@ try {
     $failed = $true
     $message = [string]$_.Exception.Message
     Write-Log $message
-    $status = @{ percent = 0; received = 0; total = 0; speed = 0; phase = 'error'; message = $message } | ConvertTo-Json -Compress
-    [IO.File]::WriteAllText((Join-Path $dir 'status.json'), $status, [Text.Encoding]::UTF8)
-    Start-Sleep -Seconds 5
+    Write-Status 'error' 0 0 0 0 $message
+    Start-Sleep -Seconds 4
 } finally {
     Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-    Stop-HtmlServer
 }
 
 if (-not $failed) {
-    $status = @{ percent = 100; received = 0; total = 0; speed = 0; phase = 'done' } | ConvertTo-Json -Compress
-    [IO.File]::WriteAllText((Join-Path $dir 'status.json'), $status, [Text.Encoding]::UTF8)
-    Start-Sleep -Milliseconds 500
+    Write-Status 'done' 100 0 0 0 ''
+    Start-Sleep -Milliseconds 800
 }
+
+Stop-HtmlServer
 
 $target = ''
 try { $target = Find-App $job } catch { Write-Log $_.Exception.Message }
@@ -286,9 +406,9 @@ if (-not $target) {
     exit 1
 }
 try {
-    Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $target + '"')
+    Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $target + '"') -WindowStyle Hidden
 } catch {
-    try { Start-Process -FilePath $target -WorkingDirectory (Split-Path -Parent $target) } catch { Write-Log $_.Exception.Message }
+    try { Start-Process -FilePath $target -WorkingDirectory (Split-Path -Parent $target) -WindowStyle Hidden } catch { Write-Log $_.Exception.Message }
 }
 `.replace('__PREFIX__', DOWNLOAD_PATH_PREFIX);
 
@@ -296,22 +416,20 @@ const LINUX_SCRIPT = `#!/bin/sh
 DIR=$(cd "$(dirname "$0")" && pwd)
 JOB="$DIR/job.env"
 LOG="$DIR/updater.log"
+STATUS="$DIR/status.json"
 log() { echo "$(date '+%Y-%m-%dT%H:%M:%S') $1" >> "$LOG" 2>/dev/null; }
+write_status() {
+    printf '{"phase":"%s","percent":%d,"received":%d,"total":%d,"speed":%.2f%s}' "$1" "$2" "$3" "$4" "$5" "$6" > "$STATUS" 2>/dev/null
+}
 
 find_bin() {
     for d in /usr/bin /bin /usr/local/bin /usr/sbin /sbin; do
-        if [ -x "$d/$1" ]; then
-            printf '%s' "$d/$1"
-            return 0
-        fi
+        if [ -x "$d/$1" ]; then printf '%s' "$d/$1"; return 0; fi
     done
     command -v "$1" 2>/dev/null
 }
 
-if [ ! -f "$JOB" ]; then
-    exit 1
-fi
-
+if [ ! -f "$JOB" ]; then exit 1; fi
 . "$JOB"
 rm -f "$JOB"
 trap '' HUP
@@ -325,10 +443,6 @@ fi
 
 TMP="$DIR/anka-web-$ANKA_VERSION.AppImage.part"
 rm -f "$TMP"
-
-write_status() {
-    printf '{"percent":%d,"received":%d,"total":%d,"speed":%.2f,"phase":"%s"}' "$1" "$2" "$3" "$4" "$5" > "$DIR/status.json"
-}
 
 remote_size() {
     if command -v curl >/dev/null 2>&1; then
@@ -350,28 +464,30 @@ fetch() {
 
 case "$ANKA_URL" in
     "__PREFIX__"*) ;;
-    *) write_status 0 0 0 0 "error"; exit 1 ;;
+    *) write_status "error" 0 0 0 0 ',"message":"Gecersiz adres"'; exit 1 ;;
 esac
 
+write_status "download" 0 0 0 0 ""
+
 n=0
-while kill -0 "$ANKA_PID" 2>/dev/null && [ "$n" -lt 150 ]; do
+while kill -0 "$ANKA_PID" 2>/dev/null && [ "$n" -lt 100 ]; do
     n=$((n+1))
     sleep 0.2
 done
 if kill -0 "$ANKA_PID" 2>/dev/null; then
     kill -TERM "$ANKA_PID" 2>/dev/null
-    sleep 2
+    sleep 1
     kill -KILL "$ANKA_PID" 2>/dev/null
 fi
-sleep 0.5
+sleep 0.3
 
-write_status 0 0 0 0 "download"
 TOTAL=$(remote_size)
 [ -n "$TOTAL" ] || TOTAL=0
 
 fetch "$ANKA_URL" "$TMP" &
 FPID=$!
 PREV=0
+PREVT=0
 while kill -0 "$FPID" 2>/dev/null; do
     CUR=0
     [ -f "$TMP" ] && CUR=$(wc -c < "$TMP" | tr -d '[:space:]')
@@ -379,43 +495,44 @@ while kill -0 "$FPID" 2>/dev/null; do
     PCT=0
     [ "$TOTAL" -gt 0 ] && PCT=$((CUR*100/TOTAL))
     [ "$PCT" -gt 99 ] && PCT=99
-    SPD=$(( (CUR-PREV)*2 ))
+    NOW=$(date +%s%N 2>/dev/null || date +%s)
+    SPD=$(( (CUR-PREV)*5 ))
     [ "$SPD" -ge 0 ] || SPD=0
     PREV=$CUR
-    write_status "$PCT" "$CUR" "$TOTAL" "$SPD" "download"
-    sleep 0.5
+    write_status "download" "$PCT" "$CUR" "$TOTAL" "$SPD" ""
+    sleep 0.2
 done
-wait "$FPID" || { write_status 0 0 0 0 "error"; exit 1; }
+wait "$FPID" || { write_status "error" 0 0 0 0 ',"message":"Indirme basarisiz"'; exit 1; }
 
-write_status 100 0 0 0 "verify"
+write_status "verify" 100 0 0 0 ""
 
 SIZE=$(wc -c < "$TMP" 2>/dev/null | tr -d '[:space:]')
-[ -n "$SIZE" ] && [ "$SIZE" -ge 1024 ] || { write_status 0 0 0 0 "error"; exit 1; }
+[ -n "$SIZE" ] && [ "$SIZE" -ge 1024 ] || { write_status "error" 0 0 0 0 ',"message":"Gecersiz dosya"'; exit 1; }
 MAGIC=$(head -c 4 "$TMP" | od -An -tx1 | tr -d '[:space:]')
-[ "$MAGIC" = "7f454c46" ] || { write_status 0 0 0 0 "error"; exit 1; }
+[ "$MAGIC" = "7f454c46" ] || { write_status "error" 0 0 0 0 ',"message":"Gecerli AppImage degil"'; exit 1; }
 if [ -n "$ANKA_HASH" ]; then
     if command -v sha256sum >/dev/null 2>&1; then
         SUM=$(sha256sum "$TMP" | cut -d' ' -f1)
     elif command -v shasum >/dev/null 2>&1; then
         SUM=$(shasum -a 256 "$TMP" | cut -d' ' -f1)
     else
-        write_status 0 0 0 0 "error"; exit 1
+        write_status "error" 0 0 0 0 ',"message":"sha256 yok"'; exit 1
     fi
-    [ "$SUM" = "$ANKA_HASH" ] || { write_status 0 0 0 0 "error"; exit 1; }
+    [ "$SUM" = "$ANKA_HASH" ] || { write_status "error" 0 0 0 0 ',"message":"Dogrulama basarisiz"'; exit 1; }
 fi
 
-write_status 100 0 0 0 "install"
+write_status "install" 100 0 0 0 ""
 
-mkdir -p "$(dirname "$ANKA_DEST")" || { write_status 0 0 0 0 "error"; exit 1; }
+mkdir -p "$(dirname "$ANKA_DEST")" || { write_status "error" 0 0 0 0 ',"message":"Hedef olusturulamadi"'; exit 1; }
 if cp -f "$TMP" "$ANKA_DEST.new" && chmod 755 "$ANKA_DEST.new" && mv -f "$ANKA_DEST.new" "$ANKA_DEST"; then
     rm -f "$TMP"
     log "guncelleme tamamlandi: $ANKA_VERSION"
 else
     rm -f "$ANKA_DEST.new"
-    write_status 0 0 0 0 "error"; exit 1
+    write_status "error" 0 0 0 0 ',"message":"Dosya degistirilemedi"'; exit 1
 fi
 
-write_status 100 0 0 0 "done"
+write_status "done" 100 0 0 0 ""
 
 sleep 0.5
 [ -x "$ANKA_DEST" ] || exit 0
@@ -425,87 +542,9 @@ if command -v setsid >/dev/null 2>&1; then
 else
     nohup "$ANKA_DEST" >/dev/null 2>&1 </dev/null &
 fi
-
 sleep 1
 exit 0
 `.replace('__PREFIX__', DOWNLOAD_URL_PREFIX);
-
-const HTML_TEMPLATE = `<!DOCTYPE html>
-<html lang="tr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>__TITLE__</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;background:linear-gradient(135deg,#0f0f13 0%,#1a1a24 50%,#0f0f13 100%);color:#f4f4f5;min-height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden}
-.bg{position:fixed;inset:0;background:radial-gradient(circle at 20% 30%,rgba(255,71,87,.08) 0%,transparent 50%),radial-gradient(circle at 80% 70%,rgba(255,122,69,.06) 0%,transparent 50%);animation:pulse 8s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
-.card{position:relative;width:min(480px,calc(100vw - 48px));background:rgba(24,24,27,.85);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.08);border-radius:24px;padding:40px;box-shadow:0 32px 64px rgba(0,0,0,.5);animation:cardIn .6s cubic-bezier(.16,1,.3,1) both}
-@keyframes cardIn{from{opacity:0;transform:translateY(40px) scale(.92)}to{opacity:1;transform:none}}
-.card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:24px 24px 0 0;background:linear-gradient(90deg,#ff4757,#ff7a45,#ff4757);background-size:200% 100%;animation:shimmer 2s linear infinite}
-@keyframes shimmer{to{background-position:-200% 0}}
-.icon{width:72px;height:72px;margin:0 auto 24px;border-radius:20px;display:grid;place-items:center;background:linear-gradient(135deg,#ff4757,#ff7a45);position:relative;animation:bob 2s ease-in-out infinite}
-@keyframes bob{0%,100%{transform:translateY(-4px)}50%{transform:translateY(4px)}}
-.icon::after{content:'';position:absolute;inset:0;border-radius:20px;border:3px solid #ff4757;opacity:0;animation:ring 2s ease-out infinite}
-@keyframes ring{0%{transform:scale(1);opacity:.6}100%{transform:scale(1.4);opacity:0}}
-.icon svg{width:36px;height:36px;fill:none;stroke:#fff;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
-.icon.done{background:linear-gradient(135deg,#10b981,#34d399);animation:none}
-.icon.done::after{animation:none}
-.icon.done svg{animation:pop .5s cubic-bezier(.34,1.56,.64,1) both}
-@keyframes pop{from{transform:scale(.3);opacity:0}to{transform:scale(1);opacity:1}}
-.icon.err{background:#ef4444;animation:none}
-.icon.err::after{border-color:#ef4444;animation:none}
-.title{font-size:22px;font-weight:700;text-align:center;margin-bottom:8px}
-.subtitle{font-size:14px;color:#a1a1aa;text-align:center;margin-bottom:28px}
-.progress-wrap{margin-bottom:20px}
-.progress-track{height:8px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden;margin-bottom:12px}
-.progress-bar{height:100%;border-radius:4px;background:linear-gradient(90deg,#ff4757,#ff7a45,#ff4757);background-size:200% 100%;animation:shimmer 1.5s linear infinite;transform-origin:left;transform:scaleX(0);transition:transform .3s ease-out}
-.progress-info{display:flex;justify-content:space-between;font-size:13px;color:#a1a1aa}
-.progress-info span:last-child{color:#ff4757;font-weight:600}
-.status{font-size:13px;color:#71717a;text-align:center;margin-top:16px;min-height:20px}
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.2);border-top-color:#ff4757;border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;vertical-align:middle}
-@keyframes spin{to{transform:rotate(360deg)}}
-.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px}
-.stat{background:rgba(255,255,255,.04);border-radius:12px;padding:12px;text-align:center}
-.stat-value{font-size:16px;font-weight:700;color:#f4f4f5}
-.stat-label{font-size:11px;color:#71717a;text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
-@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-</style>
-</head>
-<body>
-<div class="bg"></div>
-<div class="card">
-<div class="icon" id="icon"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg></div>
-<h1 class="title" id="title">Anka Web Güncelleniyor</h1>
-<p class="subtitle" id="subtitle">Sürüm __VERSION__ yükleniyor</p>
-<div class="stats" id="stats">
-<div class="stat"><div class="stat-value" id="statPercent">0%</div><div class="stat-label">İlerleme</div></div>
-<div class="stat"><div class="stat-value" id="statSpeed">0 MB/s</div><div class="stat-label">Hız</div></div>
-<div class="stat"><div class="stat-value" id="statSize">0 MB</div><div class="stat-label">Boyut</div></div>
-</div>
-<div class="progress-wrap">
-<div class="progress-track"><div class="progress-bar" id="bar"></div></div>
-<div class="progress-info"><span id="progressText">Hazırlanıyor...</span><span id="progressPercent">0%</span></div>
-</div>
-<div class="status" id="status"><span class="spinner"></span>Bağlantı kuruluyor...</div>
-</div>
-<script>
-(function(){
-'use strict';
-var bar=document.getElementById('bar'),title=document.getElementById('title'),subtitle=document.getElementById('subtitle'),status=document.getElementById('status'),icon=document.getElementById('icon'),statPercent=document.getElementById('statPercent'),statSpeed=document.getElementById('statSpeed'),statSize=document.getElementById('statSize'),progressText=document.getElementById('progressText'),progressPercent=document.getElementById('progressPercent');
-var lastPhase='',lastPercent=-1;
-function formatBytes(b){if(!b||b<0)return'0 MB';var mb=b/1048576;if(mb>=1024)return(mb/1024).toFixed(2)+' GB';return mb.toFixed(2)+' MB'}
-function formatSpeed(bps){if(!bps||bps<0)return'0 MB/s';var mbps=bps/1048576;if(mbps>=1024)return(mbps/1024).toFixed(2)+' GB/s';return mbps.toFixed(2)+' MB/s'}
-function setIcon(type){if(type==='done'){icon.className='icon done';icon.innerHTML='<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'}else if(type==='error'){icon.className='icon err';icon.innerHTML='<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/></svg>'}else{icon.className='icon';icon.innerHTML='<svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>'}}
-function update(data){var phase=data.phase||'download',percent=Math.max(0,Math.min(100,data.percent||0));if(phase!==lastPhase){lastPhase=phase;if(phase==='download'){title.textContent='Anka Web Güncelleniyor';subtitle.textContent='Sürüm __VERSION__ indiriliyor';setIcon('download')}else if(phase==='verify'){title.textContent='Dosya Doğrulanıyor';subtitle.textContent='SHA256 kontrol ediliyor';setIcon('download');status.innerHTML='<span class="spinner"></span>Bütünlük kontrolü yapılıyor...'}else if(phase==='install'){title.textContent='Kurulum Yapılıyor';subtitle.textContent='Lütfen bekleyin...';setIcon('download');status.innerHTML='<span class="spinner"></span>Sessiz kurulum çalışıyor...'}else if(phase==='done'){title.textContent='Güncelleme Tamamlandı';subtitle.textContent='Anka Web başlatılıyor...';setIcon('done');status.textContent='İşlem başarıyla tamamlandı';statPercent.textContent='100%';progressPercent.textContent='100%';bar.style.transform='scaleX(1)';progressText.textContent='Tamamlandı'}else if(phase==='error'){title.textContent='Güncelleme Hatası';subtitle.textContent=data.message||'Bilinmeyen hata';setIcon('error');status.textContent='Hata: '+(data.message||'Bilinmeyen hata');progressText.textContent='Başarısız'}}
-if(phase==='download'){if(percent!==lastPercent){lastPercent=percent;bar.style.transform='scaleX('+(percent/100)+')';progressPercent.textContent=percent+'%';statPercent.textContent=percent+'%'}var received=data.received||0,total=data.total||0,speed=data.speed||0;statSpeed.textContent=formatSpeed(speed*1048576);statSize.textContent=formatBytes(received)+(total>0?' / '+formatBytes(total):'');progressText.textContent='İndiriliyor...';status.innerHTML='<span class="spinner"></span>'+formatBytes(received)+(total>0?' / '+formatBytes(total):'')+' ('+formatSpeed(speed*1048576)+')'}}
-function poll(){fetch('status.json?t='+Date.now()).then(function(r){if(!r.ok)throw new Error('no');return r.json()}).then(function(data){update(data)}).catch(function(){}).finally(function(){setTimeout(poll,300)})}
-poll();
-})();
-</script>
-</body>
-</html>`;
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
 
@@ -1202,7 +1241,7 @@ function windowsTaskXml(script) {
     const name = process.env.USERNAME || os.userInfo().username;
     const user = (process.env.USERDOMAIN ? process.env.USERDOMAIN + '\\' : '') + name;
     const powershell = systemPath('WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const args = '-NoProfile -NoLogo -ExecutionPolicy Bypass -File "' + script + '"';
+    const args = '-NoProfile -NoLogo -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + script + '"';
     return [
         '<?xml version="1.0" encoding="UTF-16"?>',
         '<Task version="1.4" xmlns="' + WIN_TASK_NAMESPACE + '">',
@@ -1224,7 +1263,7 @@ function windowsTaskXml(script) {
         '    <StartWhenAvailable>true</StartWhenAvailable>',
         '    <AllowStartOnDemand>true</AllowStartOnDemand>',
         '    <Enabled>true</Enabled>',
-        '    <Hidden>false</Hidden>',
+        '    <Hidden>true</Hidden>',
         '    <ExecutionTimeLimit>PT30M</ExecutionTimeLimit>',
         '    <Priority>7</Priority>',
         '  </Settings>',
@@ -1245,7 +1284,7 @@ async function createWindowsTask(dir, script) {
     try {
         const result = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/xml', xmlFile, '/f']);
         if (result.code !== 0) {
-            const fallbackResult = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/tr', `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${script}"`, '/sc', 'ONCE', '/st', '00:00', '/f']);
+            const fallbackResult = await runProcess(systemPath('schtasks.exe'), ['/create', '/tn', TASK_NAME, '/tr', `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${script}"`, '/sc', 'ONCE', '/st', '00:00', '/f']);
             return fallbackResult.code === 0;
         }
         return true;
@@ -1264,7 +1303,7 @@ async function ensureWindowsTask() {
     writeIfChanged(script, '\uFEFF' + WIN_TASK_SCRIPT, 0o600);
 
     const htmlFile = path.join(dir, 'updater.html');
-    writeIfChanged(htmlFile, HTML_TEMPLATE, 0o600);
+    writeIfChanged(htmlFile, HTML_PAGE, 0o600);
 
     const markerFile = path.join(dir, WIN_TASK_MARKER);
     let marker = null;
@@ -1317,7 +1356,7 @@ async function triggerWindows(job) {
 
     if (result.code !== 0) {
         try {
-            await launchDetached('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, WIN_SCRIPT_FILE)], dir);
+            await launchDetached('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, WIN_SCRIPT_FILE)], dir);
         } catch (fallbackErr) {
             fs.rmSync(jobFile, { force: true });
             throw new Error('Güncelleme görevi başlatılamadı');
@@ -1325,6 +1364,12 @@ async function triggerWindows(job) {
     }
 
     if (!(await waitClaim(jobFile, CLAIM_WAIT))) {
+        try {
+            if (fs.existsSync(jobFile)) {
+                await launchDetached('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, WIN_SCRIPT_FILE)], dir);
+                if (await waitClaim(jobFile, CLAIM_WAIT)) return;
+            }
+        } catch (err) {}
         fs.rmSync(jobFile, { force: true });
         throw new Error('Güncelleme görevi yanıt vermedi');
     }
@@ -1376,7 +1421,8 @@ async function ensureLinuxService() {
     } catch (err) {}
 
     const htmlFile = path.join(dir, 'updater.html');
-    writeIfChanged(htmlFile, HTML_TEMPLATE, 0o644);
+    let html = HTML_PAGE;
+    writeIfChanged(htmlFile, html, 0o644);
 
     const systemctl = findBin('systemctl');
     if (!systemctl) return;
