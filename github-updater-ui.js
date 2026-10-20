@@ -1803,16 +1803,11 @@ async function downloadAndInstall(target, version, splash) {
 
     push({ phase: 'prepare', percent: -1, version: version });
 
-    let res;
-    try {
-        res = await get(target.url, {
-            allow: downloadAllow,
-            timeout: REQUEST_TIMEOUT,
-            redirects: true
-        }, 0);
-    } catch (err) {
-        throw err;
-    }
+    const res = await get(target.url, {
+        allow: downloadAllow,
+        timeout: REQUEST_TIMEOUT,
+        redirects: true
+    }, 0);
 
     const total = parseInt(res.headers['content-length'], 10) || 0;
     let lastPush = 0;
@@ -2094,9 +2089,7 @@ function setupWindow(win, currentVersion, options) {
 
             await downloadAndInstall(target, version, splash);
 
-            if (splash) {
-                splash.update({ phase: 'done', percent: 100, version: version });
-            }
+            if (splash) splash.update({ phase: 'done', percent: 100, version: version });
             await sleep(HANDOFF_DELAY);
             if (destroyed) return;
             if (splash) splash.close();
