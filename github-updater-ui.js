@@ -5,7 +5,6 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { app, ipcMain, BrowserWindow } = require('electron');
-const { createSplash } = require('./splash');
 
 const OWNER = 'wraitstudio-cmd';
 const REPO = 'Anka-Web';
@@ -1791,43 +1790,6 @@ async function launchBackgroundUpdate(target, version, file) {
     throw new Error('Bu platformda otomatik güncelleme desteklenmiyor');
 }
 
-async function downloadAndInstall(target, version, splash) {
-    const dir = prepareUpdaterDir();
-    cleanDownloads(dir);
-    const file = path.join(dir, DOWNLOAD_PREFIX + version + target.ext);
-
-    const push = (info) => {
-        if (!splash) return;
-        splash.update(info);
-    };
-
-    push({ phase: 'prepare', percent: -1, version: version });
-
-    const res = await get(target.url, {
-        allow: downloadAllow,
-        timeout: REQUEST_TIMEOUT,
-        redirects: true
-    }, 0);
-
-    const total = parseInt(res.headers['content-length'], 10) || 0;
-    let lastPush = 0;
-    const result = await saveStream(res, file, total, (info) => {
-        const now = Date.now();
-        if (info.percent < 100 && now - lastPush < 80) return;
-        lastPush = now;
-        push(Object.assign({ phase: 'download', version: version }, info));
-    });
-
-    push({ phase: 'verify', percent: 100, version: version });
-    if (target.hash && result.hash !== target.hash) throw new Error('Dosya doğrulaması başarısız');
-
-    push({ phase: 'install', percent: 100, version: version });
-    writeMarker(String(safeCall(() => app.getVersion(), '0.0.0')), version);
-    await launchBackgroundUpdate(target, version, file);
-
-    return file;
-}
-
 async function installUpdate(options) {
     const opts = options || {};
     const manifest = opts.manifest || Object.create(null);
@@ -1840,11 +1802,12 @@ async function installUpdate(options) {
     const kinds = platformKinds();
     if (!kinds) throw new Error('Bu platformda otomatik güncelleme desteklenmiyor');
 
+    const ctl = new AbortController();
     emit({ phase: 'prepare', percent: -1, version: version });
 
     let targets = collectTargets(manifest, [], kinds);
     if (!targets.length || !targets[0].hash) {
-        const release = await fetchRelease(version, new AbortController().signal);
+        const release = await fetchRelease(version, ctl.signal);
         const merged = collectTargets(manifest, release.assets, kinds);
         if (merged.length) targets = merged;
     }
@@ -1859,13 +1822,13 @@ async function installUpdate(options) {
         const res = await get(target.url, {
             allow: downloadAllow,
             timeout: REQUEST_TIMEOUT,
-            redirects: true
+            redirects: true,
+            signal: ctl.signal
         }, 0);
         const total = parseInt(res.headers['content-length'], 10) || 0;
         const result = await saveStream(res, file, total, (info) => {
             emit(Object.assign({ phase: 'download', version: version }, info));
         });
-        emit({ phase: 'verify', percent: 100, version: version });
         if (target.hash && result.hash !== target.hash) throw new Error('Dosya doğrulaması başarısız');
 
         emit({ phase: 'install', percent: 100, version: version });
@@ -2068,14 +2031,6 @@ function setupWindow(win, currentVersion, options) {
         installing = true;
         clearPromptTimer();
 
-        let splash = null;
-        try {
-            splash = createSplash();
-            splash.open();
-        } catch (err) {
-            logWarn('splash open', err);
-        }
-
         try {
             const target = state.targets[0];
             const version = state.version;
@@ -2084,31 +2039,19 @@ function setupWindow(win, currentVersion, options) {
             state.percent = 100;
             state.kind = target.kind;
             state.detail = '';
+            paint();
 
-            send(null);
+            writeMarker(installed, version);
+            await launchBackgroundUpdate(target, version, '');
 
-            await downloadAndInstall(target, version, splash);
-
-            if (splash) splash.update({ phase: 'done', percent: 100, version: version });
             await sleep(HANDOFF_DELAY);
             if (destroyed) return;
-            if (splash) splash.close();
             quitSoon();
         } catch (err) {
             logError('startBackgroundUpdate', err);
             installing = false;
             removeMarker();
             resetState();
-            if (splash) {
-                splash.update({
-                    phase: 'error',
-                    percent: 0,
-                    version: state.version || '',
-                    message: err && err.message ? err.message : 'Güncelleme başlatılamadı'
-                });
-                await sleep(2200);
-                splash.close();
-            }
             if (!destroyed) await send({ view: 'error', message: err && err.message ? err.message : 'Güncelleme başlatılamadı' });
         }
     }
