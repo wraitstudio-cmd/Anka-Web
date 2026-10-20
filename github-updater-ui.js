@@ -2,6 +2,7 @@ const https = require('https');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { app, ipcMain, BrowserWindow } = require('electron');
 
@@ -24,6 +25,8 @@ const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_MARKER_BYTES = 4096;
+const MAX_DOWNLOAD_BYTES = 800 * 1024 * 1024;
+const PROGRESS_MS = 90;
 const MARKER_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const NOTES_MAX = 600;
 const POLL_MS = 200;
@@ -32,6 +35,7 @@ const CLAIM_WAIT = 25000;
 const CLAIM_POLL = 50;
 const MARKER_FILE = 'anka-last-update.json';
 const UPDATER_DIR = 'updater';
+const DOWNLOAD_PREFIX = 'download-';
 const WIN_JOB_FILE = 'job.json';
 const WIN_SCRIPT_FILE = 'anka-updater.ps1';
 const WIN_VBS_FILE = 'launch.vbs';
@@ -137,7 +141,10 @@ function installGlobalHandlers() {
 }
 
 initLogging();
-installGlobalHandlers();
+if (!global.__ankaUpdaterHandlers) {
+    global.__ankaUpdaterHandlers = true;
+    installGlobalHandlers();
+}
 
 function safeCall(fn, fallback) {
     try {
@@ -157,115 +164,6 @@ async function safeAsync(fn, fallback) {
         return fallback;
     }
 }
-
-const HTML_PAGE = [
-'<!DOCTYPE html>',
-'<html lang="tr">',
-'<head>',
-'<meta charset="UTF-8">',
-'<meta name="viewport" content="width=device-width,initial-scale=1">',
-'<title>Anka Web Güncelleniyor</title>',
-'<style>',
-'*{margin:0;padding:0;box-sizing:border-box}',
-'html,body{height:100%;overflow:hidden}',
-'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(135deg,#0a0a0f 0%,#15151f 50%,#0a0a0f 100%);color:#f4f4f5;display:flex;align-items:center;justify-content:center}',
-'.bg{position:fixed;inset:0;background:radial-gradient(circle at 25% 35%,rgba(255,71,87,.1) 0%,transparent 45%),radial-gradient(circle at 75% 65%,rgba(255,122,69,.08) 0%,transparent 45%);animation:bgPulse 6s ease-in-out infinite}',
-'@keyframes bgPulse{0%,100%{opacity:.6}50%{opacity:1}}',
-'.card{position:relative;width:min(440px,calc(100vw - 40px));background:rgba(22,22,28,.9);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,.09);border-radius:22px;padding:36px 32px;box-shadow:0 28px 56px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.02) inset;animation:cardIn .5s cubic-bezier(.16,1,.3,1) both}',
-'@keyframes cardIn{from{opacity:0;transform:translateY(32px) scale(.94)}to{opacity:1;transform:none}}',
-'.card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;border-radius:22px 22px 0 0;background:linear-gradient(90deg,#ff4757,#ff7a45,#ff4757);background-size:200% 100%;animation:shimmer 1.8s linear infinite}',
-'@keyframes shimmer{to{background-position:-200% 0}}',
-'.icon{width:68px;height:68px;margin:0 auto 22px;border-radius:18px;display:grid;place-items:center;background:linear-gradient(135deg,#ff4757,#ff7a45);position:relative;animation:bob 2.2s ease-in-out infinite}',
-'@keyframes bob{0%,100%{transform:translateY(-3px)}50%{transform:translateY(3px)}}',
-'.icon::after{content:"";position:absolute;inset:-3px;border-radius:20px;border:2px solid rgba(255,71,87,.5);opacity:0;animation:ring 2s ease-out infinite}',
-'@keyframes ring{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.35);opacity:0}}',
-'.icon svg{width:32px;height:32px;fill:none;stroke:#fff;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}',
-'.icon.done{background:linear-gradient(135deg,#10b981,#34d399);animation:none}',
-'.icon.done::after{animation:none}',
-'.icon.done svg{animation:pop .45s cubic-bezier(.34,1.56,.64,1) both}',
-'@keyframes pop{from{transform:scale(.3);opacity:0}to{transform:scale(1);opacity:1}}',
-'.icon.err{background:linear-gradient(135deg,#ef4444,#dc2626);animation:none}',
-'.icon.err::after{border-color:rgba(239,68,68,.5);animation:none}',
-'.title{font-size:20px;font-weight:700;text-align:center;margin-bottom:6px;letter-spacing:-.01em}',
-'.subtitle{font-size:13px;color:#a1a1aa;text-align:center;margin-bottom:24px;word-break:break-word}',
-'.progress-track{height:7px;border-radius:4px;background:rgba(255,255,255,.07);overflow:hidden;margin-bottom:10px}',
-'.progress-bar{height:100%;border-radius:4px;background:linear-gradient(90deg,#ff4757,#ff7a45,#ff4757);background-size:200% 100%;animation:shimmer 1.4s linear infinite;transform-origin:left;transform:scaleX(0);transition:transform .25s cubic-bezier(.4,0,.2,1);will-change:transform}',
-'.progress-info{display:flex;justify-content:space-between;font-size:12px;color:#71717a;margin-bottom:18px}',
-'.progress-info .pct{color:#ff4757;font-weight:700}',
-'.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:20px}',
-'.stat{background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.05);border-radius:10px;padding:10px 8px;text-align:center}',
-'.stat-value{font-size:14px;font-weight:700;color:#f4f4f5;font-variant-numeric:tabular-nums}',
-'.stat-label{font-size:10px;color:#71717a;text-transform:uppercase;letter-spacing:.6px;margin-top:3px;font-weight:600}',
-'.status{display:flex;align-items:center;justify-content:center;gap:8px;font-size:12px;color:#a1a1aa;min-height:18px;text-align:center}',
-'.spinner{width:12px;height:12px;border:2px solid rgba(255,255,255,.15);border-top-color:#ff4757;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}',
-'@keyframes spin{to{transform:rotate(360deg)}}',
-'.spinner.hidden{display:none}',
-'@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}',
-'</style>',
-'</head>',
-'<body>',
-'<div class="bg"></div>',
-'<div class="card">',
-'<div class="icon" id="icon"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg></div>',
-'<h1 class="title" id="title">Anka Web Güncelleniyor</h1>',
-'<p class="subtitle" id="subtitle">Sürüm __VERSION__ hazırlanıyor</p>',
-'<div class="stats" id="stats">',
-'<div class="stat"><div class="stat-value" id="statPercent">0%</div><div class="stat-label">İlerleme</div></div>',
-'<div class="stat"><div class="stat-value" id="statSpeed">0 MB/s</div><div class="stat-label">Hız</div></div>',
-'<div class="stat"><div class="stat-value" id="statSize">0 MB</div><div class="stat-label">Boyut</div></div>',
-'</div>',
-'<div class="progress-track"><div class="progress-bar" id="bar"></div></div>',
-'<div class="progress-info"><span id="progressText">Hazırlanıyor</span><span class="pct" id="progressPercent">0%</span></div>',
-'<div class="status"><span class="spinner" id="spinner"></span><span id="statusText">Bağlantı kuruluyor</span></div>',
-'</div>',
-'<script>',
-'(function(){',
-'"use strict";',
-'var bar=document.getElementById("bar"),titleEl=document.getElementById("title"),subtitle=document.getElementById("subtitle"),statusText=document.getElementById("statusText"),spinner=document.getElementById("spinner"),icon=document.getElementById("icon"),statPercent=document.getElementById("statPercent"),statSpeed=document.getElementById("statSpeed"),statSize=document.getElementById("statSize"),progressText=document.getElementById("progressText"),progressPercent=document.getElementById("progressPercent");',
-'var lastPhase="",lastPercent=-1,running=true,doneTimer=null;',
-'function fmtBytes(b){if(!b||b<0)return"0 MB";var mb=b/1048576;if(mb>=1024)return(mb/1024).toFixed(2)+" GB";return mb.toFixed(2)+" MB"}',
-'function fmtSpeed(bps){if(!bps||bps<0)return"0 MB/s";var mbps=bps/1048576;if(mbps>=1024)return(mbps/1024).toFixed(2)+" GB/s";return mbps.toFixed(2)+" MB/s"}',
-'function setIcon(t){if(t==="done"){icon.className="icon done";icon.innerHTML="<svg viewBox=\\"0 0 24 24\\"><path d=\\"M5 12.5l4.5 4.5L19 7.5\\"/></svg>"}else if(t==="error"){icon.className="icon err";icon.innerHTML="<svg viewBox=\\"0 0 24 24\\"><circle cx=\\"12\\" cy=\\"12\\" r=\\"9\\"/><path d=\\"M12 7.5v5.5M12 16.5h.01\\"/></svg>"}else{icon.className="icon";icon.innerHTML="<svg viewBox=\\"0 0 24 24\\"><path d=\\"M12 4v11M7 11l5 5 5-5M5 20h14\\"/></svg>"}}',
-'function setStatus(msg,showSpinner){statusText.textContent=msg;if(showSpinner===false)spinner.classList.add("hidden");else spinner.classList.remove("hidden")}',
-'function tryClose(){try{window.open("","_self","");window.close()}catch(e){}}',
-'function update(d){',
-'if(!d||typeof d!=="object")return;',
-'var phase=d.phase||"download",percent=Math.max(0,Math.min(100,d.percent||0));',
-'if(phase!==lastPhase){',
-'lastPhase=phase;',
-'if(phase==="download"){titleEl.textContent="Anka Web Güncelleniyor";subtitle.textContent="Sürüm __VERSION__ indiriliyor";setIcon("download");setStatus("İndiriliyor...",true)}',
-'else if(phase==="verify"){titleEl.textContent="Dosya Doğrulanıyor";subtitle.textContent="SHA256 bütünlük kontrolü";setIcon("download");setStatus("Doğrulanıyor...",true);bar.style.transform="scaleX(1)";progressPercent.textContent="100%";statPercent.textContent="100%";progressText.textContent="Doğrulanıyor"}',
-'else if(phase==="install"){titleEl.textContent="Kurulum Yapılıyor";subtitle.textContent="Lütfen bekleyin, birkaç saniye sürebilir";setIcon("download");setStatus("Sessiz kurulum çalışıyor...",true);bar.style.transform="scaleX(1)";progressPercent.textContent="100%";statPercent.textContent="100%";progressText.textContent="Kuruluyor"}',
-'else if(phase==="done"){titleEl.textContent="Anka Web Sürümüne Güncellendi";subtitle.textContent="Uygulama birazdan yeniden açılacak";setIcon("done");setStatus("Başarıyla tamamlandı",false);bar.style.transform="scaleX(1)";progressPercent.textContent="100%";statPercent.textContent="100%";progressText.textContent="Tamamlandı";statSpeed.textContent="—";statSize.textContent="—";running=false;doneTimer=setTimeout(tryClose,2500)}',
-'else if(phase==="error"){titleEl.textContent="Güncelleme Hatası";subtitle.textContent=d.message||"Bilinmeyen hata";setIcon("error");setStatus("Hata: "+(d.message||"Bilinmeyen hata"),false);progressText.textContent="Başarısız";running=false}',
-'}',
-'if(phase==="download"){',
-'if(percent!==lastPercent){lastPercent=percent;bar.style.transform="scaleX("+(percent/100)+")";progressPercent.textContent=percent+"%";statPercent.textContent=percent+"%"}',
-'var received=d.received||0,total=d.total||0,speed=d.speed||0;',
-'statSpeed.textContent=fmtSpeed(speed*1048576);',
-'statSize.textContent=fmtBytes(received)+(total>0?" / "+fmtBytes(total):"");',
-'progressText.textContent="İndiriliyor";',
-'setStatus(fmtBytes(received)+(total>0?" / "+fmtBytes(total):"")+"  •  "+fmtSpeed(speed*1048576),true)',
-'}',
-'}',
-'window.__updateStatus=update;',
-'var failCount=0;',
-'function poll(){',
-'if(!running)return;',
-'var s=document.createElement("script");',
-'s.src="status.js?t="+Date.now();',
-'s.async=true;',
-'s.onload=function(){failCount=0;s.remove()};',
-'s.onerror=function(){failCount++;s.remove()};',
-'document.head.appendChild(s);',
-'setTimeout(poll,failCount>10?600:180)',
-'}',
-'poll();',
-'})();',
-'</script>',
-'</body>',
-'</html>'
-].join('\n');
 
 const WIN_TASK_SCRIPT = [
 '$ErrorActionPreference = "SilentlyContinue"',
@@ -400,6 +298,9 @@ const WIN_TASK_SCRIPT = [
 '',
 '$tmp = Join-Path $dir ("anka-web-" + [string]$job.version + ".exe")',
 '$failed = $false',
+'$useFile = $false',
+'$pre = [string]$job.file',
+'if ($pre -and ($pre -notlike "*..*") -and $pre.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $pre -PathType Leaf)) { $tmp = $pre; $useFile = $true }',
 '',
 'try {',
 '    $urlStr = [string]$job.url',
@@ -421,6 +322,7 @@ const WIN_TASK_SCRIPT = [
 '    }',
 '    Start-Sleep -Milliseconds 400',
 '',
+'    if (-not $useFile) {',
 '    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }',
 '',
 '    Write-Status "download" 0 0 0 0 "Baglanti kuruluyor"',
@@ -467,6 +369,7 @@ const WIN_TASK_SCRIPT = [
 '        }',
 '    } finally {',
 '        try { $response.Close() } catch {}',
+'    }',
 '    }',
 '',
 '    Write-Status "verify" 100 0 0 0 "Dogrulaniyor"',
@@ -572,7 +475,11 @@ const LINUX_SCRIPT = [
 'TMPNAME=$(basename "$ANKA_URL")',
 '[ -n "$TMPNAME" ] || TMPNAME="anka-web-$ANKA_VERSION.$ANKA_KIND"',
 'TMP="$DIR/$TMPNAME"',
-'rm -f "$TMP"',
+'USEFILE=0',
+'case "$ANKA_FILE" in',
+'    "$DIR"/download-*) if [ -f "$ANKA_FILE" ]; then TMP="$ANKA_FILE"; USEFILE=1; fi ;;',
+'esac',
+'[ "$USEFILE" -eq 1 ] || rm -f "$TMP"',
 '',
 'write_status "download" 0 0 0 0 "Hazirlaniyor"',
 '',
@@ -611,6 +518,7 @@ const LINUX_SCRIPT = [
 '    fi',
 '}',
 '',
+'if [ "$USEFILE" -ne 1 ]; then',
 'TOTAL=$(remote_size)',
 '[ -n "$TOTAL" ] || TOTAL=0',
 '',
@@ -635,6 +543,7 @@ const LINUX_SCRIPT = [
 '    sleep 0.2',
 'done',
 'wait "$FPID" || { write_status "error" 0 0 0 0 "Indirme basarisiz"; log "indirme basarisiz"; exit 1; }',
+'fi',
 '',
 'write_status "verify" 100 0 0 0 "Dogrulaniyor"',
 'log "indirme tamamlandi"',
@@ -1141,6 +1050,11 @@ function releaseAllow(apiPath) {
         && url.pathname === apiPath;
 }
 
+function downloadAllow(url, redirected) {
+    if (redirected) return url.hostname === 'github.com' || /(^|\.)githubusercontent\.com$/.test(url.hostname);
+    return url.hostname === 'github.com' && url.pathname.startsWith(DOWNLOAD_PATH_PREFIX);
+}
+
 function networkError(err) {
     if (err && TRANSIENT_CODES.has(err.code)) {
         const out = new Error('İnternet bağlantısı yok');
@@ -1228,6 +1142,57 @@ function readLimited(res, max) {
     });
 }
 
+function saveStream(res, file, total, report) {
+    return new Promise((resolve, reject) => {
+        const out = fs.createWriteStream(file, { mode: 0o600 });
+        const digest = crypto.createHash('sha256');
+        let received = 0;
+        let settled = false;
+        let lastTick = Date.now();
+        let lastBytes = 0;
+
+        const fail = (err) => {
+            if (settled) return;
+            settled = true;
+            try { res.destroy(); } catch (e) {}
+            try { out.destroy(); } catch (e) {}
+            reject(networkError(err));
+        };
+
+        res.on('data', (chunk) => {
+            received += chunk.length;
+            if (received > MAX_DOWNLOAD_BYTES) {
+                fail(new Error('Dosya çok büyük'));
+                return;
+            }
+            digest.update(chunk);
+            const now = Date.now();
+            if (now - lastTick >= PROGRESS_MS) {
+                const seconds = (now - lastTick) / 1000;
+                const speed = seconds > 0 ? (received - lastBytes) / seconds : 0;
+                lastTick = now;
+                lastBytes = received;
+                const percent = total > 0 ? Math.min(99, Math.floor((received * 100) / total)) : -1;
+                report({ percent: percent, received: received, total: total, speed: speed });
+            }
+        });
+        res.on('error', fail);
+        res.on('aborted', () => fail(new Error('Bağlantı kesildi')));
+        out.on('error', fail);
+        out.on('finish', () => {
+            if (settled) return;
+            if (total > 0 && received < total) {
+                fail(new Error('Dosya eksik indirildi'));
+                return;
+            }
+            settled = true;
+            report({ percent: 100, received: received, total: total || received, speed: 0 });
+            resolve({ received: received, hash: digest.digest('hex') });
+        });
+        res.pipe(out);
+    });
+}
+
 function findBin(name) {
     for (const dir of BIN_DIRS) {
         const file = path.join(dir, name);
@@ -1259,6 +1224,7 @@ function detectLinuxDistro() {
 }
 
 function linuxPreferredKinds() {
+    if (process.env.APPIMAGE) return ['appimage', 'targz'];
     const info = detectLinuxDistro();
     const id = String(info.ID || '').toLowerCase();
     const like = ' ' + String(info.ID_LIKE || '').toLowerCase() + ' ';
@@ -1542,6 +1508,16 @@ function prepareUpdaterDir() {
     return dir;
 }
 
+function cleanDownloads(dir) {
+    try {
+        fs.readdirSync(dir).forEach((name) => {
+            if (name.indexOf(DOWNLOAD_PREFIX) === 0) {
+                try { fs.rmSync(path.join(dir, name), { force: true }); } catch (err) {}
+            }
+        });
+    } catch (err) {}
+}
+
 function writeIfChanged(file, content, mode) {
     let current = null;
     try {
@@ -1607,14 +1583,15 @@ function linuxUnitContent(script) {
     ].join('\n');
 }
 
-function linuxJobContent(target, version) {
+function linuxJobContent(target, version, file) {
     const lines = [
         'ANKA_PID=' + shellQuote(process.pid),
         'ANKA_URL=' + shellQuote(target.url),
         'ANKA_HASH=' + shellQuote(target.hash || ''),
         'ANKA_VERSION=' + shellQuote(version),
         'ANKA_KIND=' + shellQuote(target.kind),
-        'ANKA_DEST=' + shellQuote(linuxDestination())
+        'ANKA_DEST=' + shellQuote(linuxDestination()),
+        'ANKA_FILE=' + shellQuote(file || '')
     ];
     GUI_ENV.forEach((key) => {
         if (process.env[key]) lines.push('export ' + key + '=' + shellQuote(process.env[key]));
@@ -1630,7 +1607,6 @@ async function ensureLinuxService() {
     const script = path.join(dir, LINUX_SCRIPT_FILE);
     writeIfChanged(script, LINUX_SCRIPT, 0o755);
     try { fs.chmodSync(script, 0o755); } catch (err) {}
-    writeIfChanged(path.join(dir, 'updater.html'), HTML_PAGE, 0o644);
 
     const systemctl = findBin('systemctl');
     if (systemctl) {
@@ -1649,14 +1625,14 @@ async function ensureLinuxService() {
     linuxUnitEnsured = true;
 }
 
-async function triggerLinux(target, version) {
+async function triggerLinux(target, version, file) {
     await ensureLinuxService();
     const dir = prepareUpdaterDir();
     const script = path.join(dir, LINUX_SCRIPT_FILE);
     const jobFile = path.join(dir, LINUX_JOB_FILE);
 
     try {
-        fs.writeFileSync(jobFile, linuxJobContent(target, version), { mode: 0o600 });
+        fs.writeFileSync(jobFile, linuxJobContent(target, version, file), { mode: 0o600 });
     } catch (err) {
         throw new Error('Görev dosyası yazılamadı: ' + err.message);
     }
@@ -1707,7 +1683,6 @@ async function ensureWindowsScripts() {
     const dir = prepareUpdaterDir();
     const script = path.join(dir, WIN_SCRIPT_FILE);
     writeIfChanged(script, '\uFEFF' + WIN_TASK_SCRIPT, 0o600);
-    writeIfChanged(path.join(dir, 'updater.html'), HTML_PAGE, 0o644);
     try { fs.rmSync(path.join(dir, 'status.js'), { force: true }); } catch (err) {}
     winEnsured = true;
 }
@@ -1746,7 +1721,8 @@ async function triggerWindows(target, version, jobInfo) {
         version: version,
         exec: jobInfo.exec,
         proc: jobInfo.proc,
-        name: jobInfo.name
+        name: jobInfo.name,
+        file: jobInfo.file || ''
     };
 
     try {
@@ -1796,21 +1772,76 @@ async function triggerWindows(target, version, jobInfo) {
     }
 }
 
-async function launchBackgroundUpdate(target, version) {
+async function launchBackgroundUpdate(target, version, file) {
     if (process.platform === 'win32') {
         await triggerWindows(target, version, {
             pid: process.pid,
             exec: app.isPackaged ? process.execPath : '',
             proc: path.parse(process.execPath).name,
-            name: app.getName()
+            name: app.getName(),
+            file: file || ''
         });
         return;
     }
     if (process.platform === 'linux') {
-        await triggerLinux(target, version);
+        await triggerLinux(target, version, file || '');
         return;
     }
     throw new Error('Bu platformda otomatik güncelleme desteklenmiyor');
+}
+
+async function installUpdate(options) {
+    const opts = options || {};
+    const manifest = opts.manifest || Object.create(null);
+    const version = String(opts.version || manifest.version || '').trim();
+    const installed = String(opts.currentVersion || safeCall(() => app.getVersion(), '0.0.0'));
+    const emit = typeof opts.onProgress === 'function' ? opts.onProgress : function () {};
+
+    if (!VERSION_RE.test(version)) throw new Error('Manifestteki sürüm geçersiz');
+
+    const kinds = platformKinds();
+    if (!kinds) throw new Error('Bu platformda otomatik güncelleme desteklenmiyor');
+
+    const ctl = new AbortController();
+    emit({ phase: 'prepare', percent: -1, version: version });
+
+    let targets = collectTargets(manifest, [], kinds);
+    if (!targets.length || !targets[0].hash) {
+        const release = await fetchRelease(version, ctl.signal);
+        const merged = collectTargets(manifest, release.assets, kinds);
+        if (merged.length) targets = merged;
+    }
+    if (!targets.length) throw new Error('Bu sistem için uygun güncelleme paketi bulunamadı (aranan: ' + kinds.join(', ') + ')');
+
+    const target = targets[0];
+    const dir = prepareUpdaterDir();
+    cleanDownloads(dir);
+    const file = path.join(dir, DOWNLOAD_PREFIX + version + target.ext);
+
+    try {
+        const res = await get(target.url, {
+            allow: downloadAllow,
+            timeout: REQUEST_TIMEOUT,
+            redirects: true,
+            signal: ctl.signal
+        }, 0);
+        const total = parseInt(res.headers['content-length'], 10) || 0;
+        const result = await saveStream(res, file, total, (info) => {
+            emit(Object.assign({ phase: 'download', version: version }, info));
+        });
+        if (target.hash && result.hash !== target.hash) throw new Error('Dosya doğrulaması başarısız');
+
+        emit({ phase: 'install', percent: 100, version: version });
+        writeMarker(installed, version);
+        await launchBackgroundUpdate(target, version, file);
+    } catch (err) {
+        removeMarker();
+        try { fs.rmSync(file, { force: true }); } catch (e) {}
+        logError('installUpdate', err);
+        throw err;
+    }
+
+    return true;
 }
 
 function setupWindow(win, currentVersion, options) {
@@ -2011,7 +2042,7 @@ function setupWindow(win, currentVersion, options) {
             paint();
 
             writeMarker(installed, version);
-            await launchBackgroundUpdate(target, version);
+            await launchBackgroundUpdate(target, version, '');
 
             await sleep(HANDOFF_DELAY);
             if (destroyed) return;
@@ -2124,4 +2155,4 @@ function init(targetWin, currentVersion, options) {
     });
 }
 
-module.exports = { init, logPath: () => mainLogPath };
+module.exports = { init, installUpdate, logPath: () => mainLogPath };
