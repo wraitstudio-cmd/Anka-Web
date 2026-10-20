@@ -1,14 +1,11 @@
-const { ipcMain, app, BrowserWindow } = require('electron');
 const https = require('https');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { pathToFileURL } = require('url');
-const packageJson = require('../../package.json');
+const { app, ipcMain, BrowserWindow } = require('electron');
 
-const CURRENT_VERSION = packageJson.version;
 const OWNER = 'wraitstudio-cmd';
 const REPO = 'Anka-Web';
 const MANIFEST_URL = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO + '/refs/heads/main/latest.yml';
@@ -17,10 +14,12 @@ const DOWNLOAD_PATH_PREFIX = '/' + OWNER + '/' + REPO + '/releases/download/';
 const DOWNLOAD_URL_PREFIX = 'https://github.com' + DOWNLOAD_PATH_PREFIX;
 const RELEASE_API_PREFIX = '/repos/' + OWNER + '/' + REPO + '/releases/tags/';
 const LATEST_API_PATH = '/repos/' + OWNER + '/' + REPO + '/releases/latest';
-const FIRST_CHECK_DELAY = 2000;
-const CHECK_INTERVAL = 10 * 60 * 1000;
+const UI_VERSION = 21;
+const FIRST_CHECK_DELAY = 800;
+const CHECK_INTERVAL = 5 * 60 * 1000;
+const FOCUS_CHECK_GAP = 60 * 1000;
+const PROMPT_TIMEOUT = 10000;
 const REQUEST_TIMEOUT = 10000;
-const QUICK_TIMEOUT_MS = 4000;
 const MAX_REDIRECTS = 5;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
@@ -30,12 +29,10 @@ const MAX_DOWNLOAD_BYTES = 800 * 1024 * 1024;
 const PROGRESS_MS = 90;
 const MARKER_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const NOTES_MAX = 600;
-const HANDOFF_PAUSE_MS = 500;
+const POLL_MS = 200;
+const HANDOFF_DELAY = 400;
 const CLAIM_WAIT = 25000;
 const CLAIM_POLL = 50;
-const SPLASH_DELAY_MS = 350;
-const FIRST_RUN_FILE = 'anka-first-run.json';
-const SPLASH_FILE = 'anka-splash.html';
 const MARKER_FILE = 'anka-last-update.json';
 const UPDATER_DIR = 'updater';
 const DOWNLOAD_PREFIX = 'download-';
@@ -44,6 +41,7 @@ const WIN_SCRIPT_FILE = 'anka-updater.ps1';
 const WIN_VBS_FILE = 'launch.vbs';
 const LINUX_JOB_FILE = 'job.env';
 const LINUX_SCRIPT_FILE = 'anka-updater.sh';
+const ACTION_CHANNEL = 'anka-updater:action';
 const ACTIONS = new Set(['later', 'close', 'install', 'retry', 'update', 'skip']);
 const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 const FILE_RE = /^[A-Za-z0-9._+()@ -]{1,200}$/;
@@ -51,7 +49,7 @@ const TAG_RE = /^[A-Za-z0-9._-]{1,100}$/;
 const HASH_RE = /^[a-f0-9]{64}$/;
 const DIGEST_RE = /^sha256:([A-Fa-f0-9]{64})$/;
 const TRANSIENT_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET', 'EPIPE']);
-const EXTENSIONS = { exe: '.exe', msi: '.msi', deb: '.deb', rpm: '.rpm', appimage: '.AppImage' };
+const EXTENSIONS = { exe: '.exe', msi: '.msi', deb: '.deb', rpm: '.rpm', appimage: '.AppImage', targz: '.tar.gz' };
 const STRIPPED_ENV = ['APPIMAGE', 'APPDIR', 'ARGV0', 'OWD'];
 const GUI_ENV = ['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'XDG_SESSION_TYPE', 'XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP', 'LANG'];
 const BIN_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/local/bin'];
@@ -62,8 +60,6 @@ const LOG_MAX_BYTES = 1024 * 1024;
 let mainLogPath = null;
 let crashLogPath = null;
 let logFallbackConsole = false;
-let targetWin = null;
-let activeSplash = null;
 
 function testWritable(dir) {
     try {
@@ -87,6 +83,7 @@ function initLogging() {
             candidates.push(path.join(app.getPath('userData'), 'logs'));
         }
     } catch (e) {}
+
     for (const dir of candidates) {
         if (testWritable(dir)) {
             mainLogPath = path.join(dir, 'main.log');
@@ -132,9 +129,15 @@ function logError() {
 }
 
 function installGlobalHandlers() {
-    process.on('uncaughtException', (err) => { try { logError('uncaughtException', err); } catch (e) {} });
-    process.on('unhandledRejection', (reason) => { try { logError('unhandledRejection', reason); } catch (e) {} });
-    process.on('warning', (warning) => { try { logWarn('warning', warning && warning.message ? warning.message : warning); } catch (e) {} });
+    process.on('uncaughtException', (err) => {
+        try { logError('uncaughtException', err); } catch (e) {}
+    });
+    process.on('unhandledRejection', (reason) => {
+        try { logError('unhandledRejection', reason); } catch (e) {}
+    });
+    process.on('warning', (warning) => {
+        try { logWarn('warning', warning && warning.message ? warning.message : warning); } catch (e) {}
+    });
 }
 
 initLogging();
@@ -160,43 +163,6 @@ async function safeAsync(fn, fallback) {
         logError('safeAsync', err);
         return fallback;
     }
-}
-
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function transientError(message) {
-    const err = new Error(message);
-    err.transient = true;
-    return err;
-}
-
-function networkError(err) {
-    if (err && TRANSIENT_CODES.has(err.code)) {
-        const out = new Error('İnternet bağlantısı yok');
-        out.transient = true;
-        return out;
-    }
-    return err;
-}
-
-function findNotifyWindow(preferred) {
-    if (preferred && !preferred.isDestroyed()) return preferred;
-    if (targetWin && !targetWin.isDestroyed()) return targetWin;
-    try {
-        const wins = BrowserWindow.getAllWindows();
-        for (const w of wins) {
-            if (w && !w.isDestroyed()) return w;
-        }
-    } catch (e) {}
-    return null;
-}
-
-function notifyUpdateError(win, message) {
-    const target = findNotifyWindow(win);
-    if (!target) return;
-    try { target.webContents.send('update-error', message); } catch (e) {}
 }
 
 const WIN_TASK_SCRIPT = [
@@ -354,7 +320,7 @@ const WIN_TASK_SCRIPT = [
 '            try { $alive.Kill(); $alive.WaitForExit(8000) | Out-Null } catch {}',
 '        }',
 '    }',
-'    Start-Sleep -Milliseconds 300',
+'    Start-Sleep -Milliseconds 400',
 '',
 '    if (-not $useFile) {',
 '    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }',
@@ -463,8 +429,6 @@ const WIN_TASK_SCRIPT = [
 '    Log "uygulama bulunamadi"',
 '}',
 '',
-'try { Remove-Item -LiteralPath $statusFile -Force -ErrorAction SilentlyContinue } catch {}',
-'try { Remove-Item -LiteralPath $logFile -Force -ErrorAction SilentlyContinue } catch {}',
 'Log "updater bitti"',
 'exit 0'
 ].join('\r\n').replace('__PREFIX__', DOWNLOAD_PATH_PREFIX);
@@ -670,32 +634,6 @@ const LINUX_SCRIPT = [
 '    return 1',
 '}',
 '',
-'silent_install() {',
-'    if [ "$(id -u)" -eq 0 ]; then',
-'        if [ "$ANKA_KIND" = "deb" ] && command -v dpkg >/dev/null 2>&1; then',
-'            dpkg -i "$TMP" >/dev/null 2>&1 && return 0',
-'        elif [ "$ANKA_KIND" = "rpm" ] && command -v rpm >/dev/null 2>&1; then',
-'            rpm -U --replacepkgs --replacefiles --quiet "$TMP" >/dev/null 2>&1 && return 0',
-'        fi',
-'        return 1',
-'    fi',
-'    if command -v pkexec >/dev/null 2>&1; then',
-'        if [ "$ANKA_KIND" = "deb" ] && command -v dpkg >/dev/null 2>&1; then',
-'            pkexec dpkg -i "$TMP" >/dev/null 2>&1 && return 0',
-'        elif [ "$ANKA_KIND" = "rpm" ] && command -v rpm >/dev/null 2>&1; then',
-'            pkexec rpm -U --replacepkgs --replacefiles "$TMP" >/dev/null 2>&1 && return 0',
-'        fi',
-'    fi',
-'    if command -v sudo >/dev/null 2>&1; then',
-'        if [ "$ANKA_KIND" = "deb" ] && command -v dpkg >/dev/null 2>&1; then',
-'            sudo -n dpkg -i "$TMP" >/dev/null 2>&1 && return 0',
-'        elif [ "$ANKA_KIND" = "rpm" ] && command -v rpm >/dev/null 2>&1; then',
-'            sudo -n rpm -U --replacepkgs --replacefiles "$TMP" >/dev/null 2>&1 && return 0',
-'        fi',
-'    fi',
-'    return 1',
-'}',
-'',
 'OK=0',
 'case "$ANKA_KIND" in',
 '    appimage)',
@@ -707,9 +645,7 @@ const LINUX_SCRIPT = [
 '        fi',
 '        ;;',
 '    deb|rpm)',
-'        if silent_install; then',
-'            OK=1',
-'        elif open_gui "$TMP"; then',
+'        if open_gui "$TMP"; then',
 '            i=0',
 '            while [ "$i" -lt 600 ]; do',
 '                AFTER=""',
@@ -798,14 +734,272 @@ const LINUX_SCRIPT = [
 '    log "uygulama bulunamadi"',
 'fi',
 '',
-'rm -f "$STATUS" 2>/dev/null',
-'rm -f "$LOG" 2>/dev/null',
 'log "updater bitti"',
 'sleep 1',
 'exit 0'
 ].join('\n').replace('__PREFIX__', DOWNLOAD_URL_PREFIX);
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 4 });
+
+function bootUi(version) {
+    const existing = window.__ankaUpdater;
+    if (existing && existing.v === version) return true;
+
+    const oldHost = document.getElementById('anka-updater-host');
+    if (oldHost) oldHost.remove();
+
+    const host = document.createElement('div');
+    host.id = 'anka-updater-host';
+    const root = host.attachShadow({ mode: 'closed' });
+
+    root.innerHTML = `
+        <style>
+            :host { all: initial; }
+            .card { position: fixed; right: 24px; bottom: 24px; width: min(400px, calc(100vw - 32px)); box-sizing: border-box; display: flex; gap: 14px; padding: 18px; border-radius: 16px; border: 1px solid var(--border, #27272a); background: var(--panel, #18181b); color: var(--text, #f4f4f5); box-shadow: var(--shadow-pop, 0 20px 40px rgba(0,0,0,.45)); font: 13px/1.5 var(--font, system-ui, sans-serif); z-index: 2147483000; overflow: hidden; animation: cardIn .42s cubic-bezier(.16,1,.3,1) both; will-change: transform, opacity; }
+            .card.out { animation: cardOut .22s cubic-bezier(.4,0,1,1) both; }
+            .card::before { content: ''; position: absolute; left: 0; top: 0; right: 0; height: 2px; background: linear-gradient(90deg, var(--accent, #ff4757), var(--accent-2, #ff7a45)); transform-origin: left; animation: topbar .7s .1s cubic-bezier(.16,1,.3,1) both; }
+            @keyframes cardIn { from { opacity: 0; transform: translateY(28px) scale(.94); } to { opacity: 1; transform: none; } }
+            @keyframes cardOut { to { opacity: 0; transform: translateY(20px) scale(.96); } }
+            @keyframes topbar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+            .icon { position: relative; flex: 0 0 40px; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--accent, #ff4757), var(--accent-2, #ff7a45)); }
+            .icon::after { content: ''; position: absolute; inset: 0; border-radius: 12px; border: 2px solid var(--accent, #ff4757); opacity: 0; animation: ring 1.8s ease-out infinite; }
+            .icon.done::after { animation: none; }
+            .icon.err { background: #ef4444; }
+            .icon.err::after { border-color: #ef4444; }
+            .icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+            .icon.busy svg { animation: bob 1.1s ease-in-out infinite; }
+            .icon.done svg { animation: pop .45s cubic-bezier(.34,1.56,.64,1) both; }
+            @keyframes ring { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(1.55); opacity: 0; } }
+            @keyframes bob { 0%, 100% { transform: translateY(-2px); } 50% { transform: translateY(2px); } }
+            @keyframes pop { from { transform: scale(.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+            .body { flex: 1; min-width: 0; }
+            .body.swap { animation: swap .32s cubic-bezier(.16,1,.3,1); }
+            .body.shake { animation: shake .42s ease; }
+            @keyframes swap { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+            @keyframes shake { 0%, 100% { transform: none; } 20% { transform: translateX(-6px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(2px); } }
+            .title { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+            .text { margin: 0; color: var(--text-secondary, #a1a1aa); word-break: break-word; }
+            .notes { margin: 10px 0 0; max-height: 96px; overflow: auto; padding: 8px 10px; border-radius: 8px; background: var(--bg, #121214); color: var(--text-secondary, #a1a1aa); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+            .track { height: 6px; margin-top: 12px; border-radius: 3px; background: var(--hover, #27272a); overflow: hidden; }
+            .bar { height: 100%; width: 100%; border-radius: 3px; transform-origin: left; transform: scaleX(0); transition: transform .25s ease-out; background: linear-gradient(90deg, var(--accent, #ff4757), var(--accent-2, #ff7a45), var(--accent, #ff4757)); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+            @keyframes shimmer { to { background-position: -200% 0; } }
+            .actions { display: flex; gap: 8px; margin-top: 14px; }
+            .btn { flex: 1; min-height: 38px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border, #27272a); background: transparent; color: inherit; font: inherit; font-weight: 600; cursor: pointer; touch-action: manipulation; transition: background-color .15s ease, transform .1s ease, filter .15s ease; }
+            .btn:hover { background: var(--hover, #27272a); }
+            .btn:active { transform: scale(.96); }
+            .btn.primary { flex: 2; background: var(--accent, #ff4757); border-color: transparent; color: #fff; animation: glow 2s ease-in-out infinite; }
+            .btn.primary:hover { filter: brightness(1.1); }
+            @keyframes glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,71,87,0); } 50% { box-shadow: 0 0 0 5px rgba(255,71,87,.22); } }
+            [hidden] { display: none !important; }
+            @media (prefers-reduced-motion: reduce) { .card, .card::before, .icon::after, .icon svg, .body, .bar, .btn, .btn.primary { animation: none !important; transition: none !important; } }
+        </style>
+        <div class="card" role="status" aria-live="polite" hidden>
+            <div class="icon"></div>
+            <div class="body">
+                <h3 class="title"></h3>
+                <p class="text"></p>
+                <div class="notes" hidden></div>
+                <div class="track" hidden><div class="bar"></div></div>
+                <div class="actions"></div>
+            </div>
+        </div>
+    `;
+
+    const ICONS = {
+        download: '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>',
+        check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+        alert: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/></svg>',
+        info: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.5h.01"/></svg>'
+    };
+
+    const card = root.querySelector('.card');
+    const icon = root.querySelector('.icon');
+    const body = root.querySelector('.body');
+    const title = root.querySelector('.title');
+    const text = root.querySelector('.text');
+    const notes = root.querySelector('.notes');
+    const track = root.querySelector('.track');
+    const bar = root.querySelector('.bar');
+    const actions = root.querySelector('.actions');
+    const queue = [];
+    let ipc = null;
+    let hideTimer = 0;
+    let leaveTimer = 0;
+    let currentKey = '';
+
+    try {
+        if (typeof require === 'function') ipc = require('electron').ipcRenderer || null;
+    } catch (err) {
+        ipc = null;
+    }
+
+    function emit(action) {
+        try {
+            if (ipc) ipc.send('anka-updater:action', action);
+            else queue.push(action);
+        } catch (err) {}
+    }
+
+    function setIcon(kind, cls) {
+        icon.className = cls ? 'icon ' + cls : 'icon';
+        icon.innerHTML = ICONS[kind];
+    }
+
+    function animate(cls) {
+        body.className = 'body';
+        void body.offsetWidth;
+        body.className = 'body ' + cls;
+    }
+
+    function setButtons(defs) {
+        actions.replaceChildren();
+        defs.forEach((def) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = def[2] ? 'btn primary' : 'btn';
+            button.textContent = def[0];
+            button.addEventListener('click', () => emit(def[1]));
+            actions.appendChild(button);
+        });
+        actions.hidden = defs.length === 0;
+    }
+
+    function show() {
+        if (card.hidden) {
+            card.hidden = false;
+            card.classList.remove('out');
+        } else if (card.classList.contains('out')) {
+            card.classList.remove('out');
+        }
+    }
+
+    function dismiss() {
+        currentKey = '';
+        if (card.hidden || card.classList.contains('out')) return;
+        card.classList.add('out');
+        leaveTimer = setTimeout(() => {
+            card.hidden = true;
+            card.classList.remove('out');
+        }, 220);
+    }
+
+    function render(state) {
+        clearTimeout(hideTimer);
+
+        if (!state || (state.view !== 'update' && state.view !== 'error' && state.view !== 'info')) {
+            dismiss();
+            return;
+        }
+
+        clearTimeout(leaveTimer);
+
+        if (state.view === 'update') {
+            const percent = Math.max(0, Math.min(100, Number(state.percent) || 0));
+            const isReady = !!state.ready;
+            const key = 'update:' + state.version + ':' + (isReady ? 'ready' : (state.prompt ? 'prompt' : 'load'));
+
+            if (key !== currentKey) {
+                currentKey = key;
+                setIcon(isReady ? 'check' : 'download', isReady ? 'done' : 'busy');
+
+                if (state.prompt) {
+                    title.textContent = 'Anka Web Sürümü ' + state.version + ' mevcut';
+                    text.textContent = 'Güncellemeyi yüklemek istiyor musunuz?';
+                    setButtons([['Daha Sonra', 'skip'], ['Güncelle', 'update', true]]);
+                } else if (isReady) {
+                    title.textContent = 'Anka Web Sürümü ' + state.version + ' kuruluyor';
+                    text.textContent = 'Uygulama kapanacak, güncelleme arka planda kurulup Anka Web yeniden açılacak…';
+                    setButtons([]);
+                } else {
+                    title.textContent = 'Anka Web Sürümü ' + state.version + ' hazırlanıyor';
+                    setButtons([['İptal Et', 'skip']]);
+                }
+
+                notes.textContent = state.notes || '';
+                notes.hidden = !state.notes;
+                track.hidden = isReady || state.prompt;
+                animate('swap');
+            }
+
+            if (!state.prompt && !isReady) {
+                text.textContent = 'Hazırlanıyor… %' + percent + (state.detail ? ' · ' + state.detail : '');
+                bar.style.transform = 'scaleX(' + percent / 100 + ')';
+            }
+        } else if (state.view === 'error') {
+            currentKey = 'error:' + Date.now();
+            setIcon('alert', 'err');
+            title.textContent = 'Güncelleme hatası';
+            text.textContent = state.message || 'Bilinmeyen hata';
+            notes.hidden = true;
+            track.hidden = true;
+            setButtons([['Kapat', 'close'], ['Tekrar Dene', 'retry', true]]);
+            animate('shake');
+        } else {
+            currentKey = 'info:' + Date.now();
+            setIcon('info');
+            title.textContent = state.title || 'Anka Web';
+            text.textContent = state.message || '';
+            notes.hidden = true;
+            track.hidden = true;
+            setButtons([]);
+            animate('swap');
+            if (!state.sticky) hideTimer = setTimeout(dismiss, 6000);
+        }
+
+        show();
+    }
+
+    window.__ankaUpdater = Object.freeze({
+        v: version,
+        render: render,
+        pop: () => queue.shift() || null,
+        ipc: !!ipc
+    });
+
+    document.documentElement.appendChild(host);
+    return true;
+}
+
+const BOOT_SOURCE = bootUi.toString();
+
+const state = global.__ankaUpdaterState || (global.__ankaUpdaterState = {
+    phase: 'idle',
+    version: '',
+    percent: 0,
+    file: '',
+    kind: '',
+    snoozed: '',
+    notes: '',
+    detail: '',
+    targets: []
+});
+
+if (!Array.isArray(state.targets)) state.targets = [];
+
+function safeJson(value) {
+    return JSON.stringify(value)
+        .replace(/</g, '\\u003c')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
+}
+
+function sleep(ms, signal) {
+    return new Promise((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        if (signal) {
+            signal.addEventListener('abort', () => {
+                clearTimeout(timer);
+                resolve();
+            }, { once: true });
+        }
+    });
+}
+
+function transientError(message) {
+    const err = new Error(message);
+    err.transient = true;
+    return err;
+}
 
 function parseVersion(value) {
     return String(value).trim().replace(/^v/i, '').split(/[-+]/)[0].split('.').map((part) => parseInt(part, 10) || 0);
@@ -861,6 +1055,15 @@ function downloadAllow(url, redirected) {
     return url.hostname === 'github.com' && url.pathname.startsWith(DOWNLOAD_PATH_PREFIX);
 }
 
+function networkError(err) {
+    if (err && TRANSIENT_CODES.has(err.code)) {
+        const out = new Error('İnternet bağlantısı yok');
+        out.transient = true;
+        return out;
+    }
+    return err;
+}
+
 function get(url, options, depth) {
     return new Promise((resolve, reject) => {
         let target;
@@ -870,10 +1073,12 @@ function get(url, options, depth) {
             reject(new Error('Geçersiz adres'));
             return;
         }
+
         if (target.protocol !== 'https:' || target.username || target.password || !options.allow(target, depth > 0)) {
             reject(new Error('Güvenilmeyen adres engellendi'));
             return;
         }
+
         const req = https.get(target, {
             agent: agent,
             headers: { 'User-Agent': 'AnkaWeb-Updater', 'Cache-Control': 'no-cache', Accept: options.accept || '*/*' },
@@ -914,6 +1119,7 @@ function get(url, options, depth) {
             }
             resolve(res);
         });
+
         req.on('timeout', () => req.destroy(transientError('Bağlantı zaman aşımına uğradı')));
         req.on('error', (err) => reject(networkError(err)));
     });
@@ -944,6 +1150,7 @@ function saveStream(res, file, total, report) {
         let settled = false;
         let lastTick = Date.now();
         let lastBytes = 0;
+
         const fail = (err) => {
             if (settled) return;
             settled = true;
@@ -951,6 +1158,7 @@ function saveStream(res, file, total, report) {
             try { out.destroy(); } catch (e) {}
             reject(networkError(err));
         };
+
         res.on('data', (chunk) => {
             received += chunk.length;
             if (received > MAX_DOWNLOAD_BYTES) {
@@ -1016,17 +1224,17 @@ function detectLinuxDistro() {
 }
 
 function linuxPreferredKinds() {
-    if (process.env.APPIMAGE) return ['appimage'];
+    if (process.env.APPIMAGE) return ['appimage', 'targz'];
     const info = detectLinuxDistro();
     const id = String(info.ID || '').toLowerCase();
     const like = ' ' + String(info.ID_LIKE || '').toLowerCase() + ' ';
-    const debSet = ['debian', 'ubuntu', 'linuxmint', 'mint', 'pop', 'elementary', 'kali', 'raspbian', 'deepin', 'zorin', 'mx', 'neon', 'devuan', 'pardus'];
+    const debSet = ['debian', 'ubuntu', 'linuxmint', 'mint', 'pop', 'elementary', 'kali', 'raspbian', 'deepin', 'zorin', 'mx', 'neon', 'devuan'];
     const rpmSet = ['fedora', 'rhel', 'centos', 'rocky', 'almalinux', 'ol', 'opensuse', 'opensuse-leap', 'opensuse-tumbleweed', 'suse', 'sles', 'amzn', 'oracle', 'mageia'];
     const isDeb = debSet.some((x) => id === x || id.startsWith(x + '-')) || debSet.some((x) => like.indexOf(' ' + x + ' ') >= 0);
     const isRpm = rpmSet.some((x) => id === x || id.startsWith(x + '-')) || rpmSet.some((x) => like.indexOf(' ' + x + ' ') >= 0);
-    if (isDeb) return ['deb', 'appimage'];
-    if (isRpm) return ['rpm', 'appimage'];
-    return ['appimage'];
+    if (isDeb) return ['deb', 'appimage', 'targz'];
+    if (isRpm) return ['rpm', 'appimage', 'targz'];
+    return ['appimage', 'targz'];
 }
 
 function platformKinds() {
@@ -1040,6 +1248,7 @@ function platformKinds() {
 
 function detectKind(name) {
     const lower = String(name).toLowerCase();
+    if (lower.endsWith('.tar.gz')) return 'targz';
     if (lower.endsWith('.appimage')) return 'appimage';
     if (lower.endsWith('.deb')) return 'deb';
     if (lower.endsWith('.rpm')) return 'rpm';
@@ -1063,6 +1272,7 @@ function buildTarget(raw, hash) {
     } catch (err) {
         return null;
     }
+
     const valid = url.protocol === 'https:'
         && url.hostname === 'github.com'
         && !url.username
@@ -1072,8 +1282,10 @@ function buildTarget(raw, hash) {
         && !url.hash
         && url.pathname.startsWith(DOWNLOAD_PATH_PREFIX);
     if (!valid) return null;
+
     const rest = url.pathname.slice(DOWNLOAD_PATH_PREFIX.length).split('/');
     if (rest.length !== 2 || !TAG_RE.test(rest[0]) || !rest[1]) return null;
+
     let name;
     try {
         name = decodeURIComponent(rest[1]);
@@ -1081,8 +1293,10 @@ function buildTarget(raw, hash) {
         return null;
     }
     if (!FILE_RE.test(name) || name.includes('..')) return null;
+
     const kind = detectKind(name);
-    if (!kind || !EXTENSIONS[kind]) return null;
+    if (!kind) return null;
+
     return { kind: kind, ext: EXTENSIONS[kind], url: url.toString(), name: name, hash: hash || '' };
 }
 
@@ -1090,6 +1304,7 @@ function collectTargets(manifest, assets, kinds) {
     const found = new Map();
     const hashes = new Map();
     assets.forEach((asset) => hashes.set(asset.name, asset.hash));
+
     const add = (target) => {
         if (!target || kinds.indexOf(target.kind) < 0) return;
         const existing = found.get(target.url);
@@ -1099,6 +1314,7 @@ function collectTargets(manifest, assets, kinds) {
         }
         found.set(target.url, target);
     };
+
     Object.keys(manifest).forEach((key) => {
         if (!/^url_/.test(key)) return;
         const target = buildTarget(manifest[key], '');
@@ -1107,10 +1323,12 @@ function collectTargets(manifest, assets, kinds) {
         target.hash = hashes.get(target.name) || (HASH_RE.test(declared) ? declared : '');
         add(target);
     });
+
     assets.forEach((asset) => {
         if (/portable/i.test(asset.name) || archMismatch(asset.name)) return;
         add(buildTarget(asset.url, asset.hash));
     });
+
     return Array.from(found.values()).sort((a, b) => kinds.indexOf(a.kind) - kinds.indexOf(b.kind));
 }
 
@@ -1133,6 +1351,7 @@ async function fetchRelease(version, signal) {
             const release = await fetchReleaseJson(apiPath, signal);
             if (!release || typeof release !== 'object') continue;
             if (apiPath === LATEST_API_PATH && compareVersions(String(release.tag_name || ''), version) !== 0) continue;
+
             const list = Array.isArray(release.assets) ? release.assets : [];
             const assets = [];
             list.forEach((item) => {
@@ -1148,11 +1367,15 @@ async function fetchRelease(version, signal) {
     return { assets: [], notes: '' };
 }
 
-async function fetchManifest(timeoutMs) {
-    const url = MANIFEST_URL + '?t=' + Date.now();
-    const res = await get(url, { allow: manifestAllow, timeout: timeoutMs || REQUEST_TIMEOUT, redirects: false }, 0);
-    const text = (await readLimited(res, MAX_MANIFEST_BYTES)).toString('utf8');
-    return parseManifest(text);
+function resetState() {
+    state.phase = 'idle';
+    state.version = '';
+    state.percent = 0;
+    state.file = '';
+    state.kind = '';
+    state.notes = '';
+    state.detail = '';
+    state.targets = [];
 }
 
 function markerPath() {
@@ -1188,7 +1411,9 @@ function takeMarker(installed) {
 
 function cleanEnv(extra) {
     const env = Object.assign({}, process.env);
-    STRIPPED_ENV.forEach((key) => { delete env[key]; });
+    STRIPPED_ENV.forEach((key) => {
+        delete env[key];
+    });
     if (extra) Object.assign(env, extra);
     return env;
 }
@@ -1209,8 +1434,12 @@ function runProcess(command, args, extraEnv) {
         }
         let out = '';
         let err = '';
-        child.stdout.on('data', (chunk) => { if (out.length < MAX_OUTPUT_BYTES) out += chunk; });
-        child.stderr.on('data', (chunk) => { if (err.length < MAX_OUTPUT_BYTES) err += chunk; });
+        child.stdout.on('data', (chunk) => {
+            if (out.length < MAX_OUTPUT_BYTES) out += chunk;
+        });
+        child.stderr.on('data', (chunk) => {
+            if (err.length < MAX_OUTPUT_BYTES) err += chunk;
+        });
         child.once('error', reject);
         child.once('close', (code) => resolve({ code: code, out: out, err: err }));
     });
@@ -1246,10 +1475,17 @@ function quitSoon() {
             if (win && !win.isDestroyed()) win.destroy();
         });
     } catch (e) {}
+
     setTimeout(() => {
-        try { app.quit(); } catch (e) {}
+        try {
+            app.quit();
+        } catch (e) {}
         setTimeout(() => {
-            try { app.exit(0); } catch (e) { process.exit(0); }
+            try {
+                app.exit(0);
+            } catch (e) {
+                process.exit(0);
+            }
         }, 1200);
     }, 150);
 }
@@ -1266,7 +1502,9 @@ function updaterDir() {
 
 function prepareUpdaterDir() {
     const dir = updaterDir();
-    try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch (err) {}
+    try {
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    } catch (err) {}
     return dir;
 }
 
@@ -1280,15 +1518,6 @@ function cleanDownloads(dir) {
     } catch (err) {}
 }
 
-function cleanStaleFiles(dir) {
-    try {
-        fs.readdirSync(dir).forEach((name) => {
-            if (name === WIN_SCRIPT_FILE || name === LINUX_SCRIPT_FILE) return;
-            try { fs.rmSync(path.join(dir, name), { force: true }); } catch (err) {}
-        });
-    } catch (err) {}
-}
-
 function writeIfChanged(file, content, mode) {
     let current = null;
     try {
@@ -1296,10 +1525,7 @@ function writeIfChanged(file, content, mode) {
     } catch (err) {
         current = null;
     }
-    if (current === content) {
-        try { fs.chmodSync(file, mode); } catch (e) {}
-        return false;
-    }
+    if (current === content) return false;
     const temp = file + '.tmp-' + process.pid;
     try {
         fs.writeFileSync(temp, content, { mode: mode });
@@ -1381,6 +1607,7 @@ async function ensureLinuxService() {
     const script = path.join(dir, LINUX_SCRIPT_FILE);
     writeIfChanged(script, LINUX_SCRIPT, 0o755);
     try { fs.chmodSync(script, 0o755); } catch (err) {}
+
     const systemctl = findBin('systemctl');
     if (systemctl) {
         try {
@@ -1403,18 +1630,22 @@ async function triggerLinux(target, version, file) {
     const dir = prepareUpdaterDir();
     const script = path.join(dir, LINUX_SCRIPT_FILE);
     const jobFile = path.join(dir, LINUX_JOB_FILE);
+
     try {
         fs.writeFileSync(jobFile, linuxJobContent(target, version, file), { mode: 0o600 });
     } catch (err) {
         throw new Error('Görev dosyası yazılamadı: ' + err.message);
     }
+
     let claimed = false;
+
     try {
         await launchDetached(SH_BIN, [script], dir);
         claimed = await waitClaim(jobFile, 5000);
     } catch (err) {
         logWarn('direct launch', err);
     }
+
     if (!claimed && fs.existsSync(jobFile)) {
         const systemctl = findBin('systemctl');
         if (systemctl) {
@@ -1426,6 +1657,7 @@ async function triggerLinux(target, version, file) {
             }
         }
     }
+
     if (!claimed && fs.existsSync(jobFile)) {
         const nohup = findBin('nohup');
         if (nohup) {
@@ -1437,6 +1669,7 @@ async function triggerLinux(target, version, file) {
             }
         }
     }
+
     if (!claimed) {
         try { fs.rmSync(jobFile, { force: true }); } catch (e) {}
         throw new Error('Güncelleme servisi başlatılamadı. Log: ' + (mainLogPath || 'bilinmiyor'));
@@ -1478,7 +1711,9 @@ async function triggerWindows(target, version, jobInfo) {
     const script = path.join(dir, WIN_SCRIPT_FILE);
     const jobFile = path.join(dir, WIN_JOB_FILE);
     const vbsFile = path.join(dir, WIN_VBS_FILE);
+
     try { fs.rmSync(path.join(dir, 'status.js'), { force: true }); } catch (err) {}
+
     const job = {
         pid: jobInfo.pid,
         url: target.url,
@@ -1489,21 +1724,26 @@ async function triggerWindows(target, version, jobInfo) {
         name: jobInfo.name,
         file: jobInfo.file || ''
     };
+
     try {
         fs.writeFileSync(jobFile, JSON.stringify(job), { mode: 0o600 });
     } catch (err) {
         throw new Error('Görev dosyası yazılamadı: ' + err.message);
     }
+
     const ps = findPowerShell();
     const psArgs = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + vbsQuote(script);
     const cmdLine = ps + ' ' + psArgs;
     const vbsContent = 'CreateObject("WScript.Shell").Run ' + vbsQuote(cmdLine) + ', 0, False\r\n';
+
     try {
         fs.writeFileSync(vbsFile, vbsContent, { mode: 0o600 });
     } catch (err) {
         logWarn('vbs yazilamadi', err);
     }
+
     let launched = false;
+
     try {
         await launchDetached('wscript.exe', ['//B', '//Nologo', vbsFile], dir);
         launched = true;
@@ -1511,6 +1751,7 @@ async function triggerWindows(target, version, jobInfo) {
     } catch (err) {
         logWarn('vbs launch failed', err);
     }
+
     if (!launched || !(await waitClaim(jobFile, CLAIM_WAIT))) {
         if (fs.existsSync(jobFile)) {
             logWarn('vbs basarisiz, dogrudan ps deniyoruz');
@@ -1524,6 +1765,7 @@ async function triggerWindows(target, version, jobInfo) {
             }
         }
     }
+
     if (!(await waitClaim(jobFile, CLAIM_WAIT))) {
         try { fs.rmSync(jobFile, { force: true }); } catch (e) {}
         throw new Error('Güncelleme başlatılamadı. Log: ' + (mainLogPath || 'bilinmiyor'));
@@ -1554,11 +1796,15 @@ async function installUpdate(options) {
     const version = String(opts.version || manifest.version || '').trim();
     const installed = String(opts.currentVersion || safeCall(() => app.getVersion(), '0.0.0'));
     const emit = typeof opts.onProgress === 'function' ? opts.onProgress : function () {};
+
     if (!VERSION_RE.test(version)) throw new Error('Manifestteki sürüm geçersiz');
+
     const kinds = platformKinds();
     if (!kinds) throw new Error('Bu platformda otomatik güncelleme desteklenmiyor');
+
     const ctl = new AbortController();
     emit({ phase: 'prepare', percent: -1, version: version });
+
     let targets = collectTargets(manifest, [], kinds);
     if (!targets.length || !targets[0].hash) {
         const release = await fetchRelease(version, ctl.signal);
@@ -1566,10 +1812,12 @@ async function installUpdate(options) {
         if (merged.length) targets = merged;
     }
     if (!targets.length) throw new Error('Bu sistem için uygun güncelleme paketi bulunamadı (aranan: ' + kinds.join(', ') + ')');
+
     const target = targets[0];
     const dir = prepareUpdaterDir();
     cleanDownloads(dir);
     const file = path.join(dir, DOWNLOAD_PREFIX + version + target.ext);
+
     try {
         const res = await get(target.url, {
             allow: downloadAllow,
@@ -1582,7 +1830,7 @@ async function installUpdate(options) {
             emit(Object.assign({ phase: 'download', version: version }, info));
         });
         if (target.hash && result.hash !== target.hash) throw new Error('Dosya doğrulaması başarısız');
-        logInfo('download complete', version, target.kind, result.received);
+
         emit({ phase: 'install', percent: 100, version: version });
         writeMarker(installed, version);
         await launchBackgroundUpdate(target, version, file);
@@ -1592,363 +1840,319 @@ async function installUpdate(options) {
         logError('installUpdate', err);
         throw err;
     }
+
     return true;
 }
 
-function buildSplashHtml(logoUrl) {
-    const mark = logoUrl ? '<img src="' + logoUrl + '" alt="" draggable="false" onerror="this.remove()">' : 'A';
-    return `<!DOCTYPE html>
-<html lang="tr">
-<head>
-<meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-<meta name="color-scheme" content="dark light">
-<title>Anka Web</title>
-<style>
-:root{--bg:#121214;--panel:#18181b;--border:#27272a;--text:#f4f4f5;--muted:#a1a1aa;--track:#27272a;--accent:#ff4757;--accent-2:#ff7a45}
-@media (prefers-color-scheme:light){:root{--bg:#f4f4f5;--panel:#ffffff;--border:#e4e4e7;--text:#18181b;--muted:#71717a;--track:#e4e4e7}}
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%;overflow:hidden;user-select:none;-webkit-user-select:none;cursor:default}
-body{display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--text);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans","Helvetica Neue",Arial,sans-serif;-webkit-app-region:drag}
-.glow{position:fixed;top:0;right:0;bottom:0;left:0;background:radial-gradient(circle at 50% 30%,rgba(255,71,87,.16),transparent 55%);pointer-events:none}
-.card{position:relative;width:calc(100% - 24px);height:calc(100% - 24px);display:flex;flex-direction:column;justify-content:space-between;padding:30px 32px 26px;background:var(--panel);border:1px solid var(--border);border-radius:20px;overflow:hidden;animation:in .45s cubic-bezier(.16,1,.3,1) both}
-.card::before{content:"";position:absolute;left:0;top:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),var(--accent-2),var(--accent));background-size:200% 100%;animation:flow 1.6s linear infinite}
-.brand{display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:10px}
-.mark{position:relative;display:grid;place-items:center;width:72px;height:72px;border-radius:20px;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;font-size:30px;font-weight:700}
-.mark img{width:46px;height:46px;object-fit:contain;position:relative;z-index:1}
-.mark::after{content:"";position:absolute;top:0;right:0;bottom:0;left:0;border-radius:20px;border:2px solid var(--accent);opacity:0;animation:ring 2s ease-out infinite}
-.name{font-size:18px;font-weight:700;letter-spacing:-.01em}
-.bottom{display:flex;flex-direction:column;gap:10px}
-.status{display:flex;align-items:center;justify-content:center;gap:9px;font-size:13px;font-weight:600}
-.spin{flex:0 0 13px;width:13px;height:13px;border:2px solid var(--track);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
-.track{height:5px;border-radius:3px;background:var(--track);overflow:hidden}
-.bar{height:100%;width:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent-2));transform-origin:left;transform:scaleX(0);transition:transform .2s ease-out;will-change:transform}
-.bar.indeterminate{width:38%;transform:none;transition:none;animation:slide 1.1s ease-in-out infinite}
-.detail{min-height:17px;text-align:center;color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-@keyframes in{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
-@keyframes flow{to{background-position:-200% 0}}
-@keyframes ring{0%{transform:scale(1);opacity:.55}100%{transform:scale(1.4);opacity:0}}
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes slide{0%{margin-left:-38%}100%{margin-left:100%}}
-@media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;animation-iteration-count:1!important}}
-</style>
-</head>
-<body>
-<div class="glow"></div>
-<div class="card">
-<div class="brand">
-<div class="mark">${mark}</div>
-<div class="name">Anka Web</div>
-</div>
-<div class="bottom">
-<div class="status"><span class="spin"></span><span>Uygulama En Son Sürüme Güncelleniyor...</span></div>
-<div class="track"><div class="bar indeterminate" id="bar"></div></div>
-<div class="detail" id="detail">Güncellemeler denetleniyor</div>
-</div>
-</div>
-<script>
-(function () {
-    var bar = document.getElementById("bar");
-    var detail = document.getElementById("detail");
-    function size(b) {
-        if (!b || b < 0) return "0 MB";
-        var m = b / 1048576;
-        return m >= 1024 ? (m / 1024).toFixed(2) + " GB" : m.toFixed(1) + " MB";
-    }
-    window.__p = function (d) {
-        if (!d) return;
-        var pct = typeof d.percent === "number" ? d.percent : -1;
-        if (pct < 0) {
-            bar.className = "bar indeterminate";
-        } else {
-            bar.className = "bar";
-            bar.style.transform = "scaleX(" + Math.min(1, pct / 100) + ")";
-        }
-        var ver = d.version ? "Sürüm " + d.version : "";
-        if (d.phase === "download") {
-            detail.textContent = (ver ? ver + " · " : "") + (pct >= 0 ? "%" + pct + " · " : "") + size(d.received) + (d.total > 0 ? " / " + size(d.total) : "") + (d.speed > 0 ? " · " + size(d.speed) + "/sn" : "");
-        } else if (d.phase === "install") {
-            detail.textContent = "Sessiz kurulum başlatılıyor";
-        } else if (d.phase === "restart") {
-            detail.textContent = "Uygulama yeniden başlatılıyor";
-        } else {
-            detail.textContent = ver ? ver + " hazırlanıyor" : "Güncellemeler denetleniyor";
-        }
-    };
-})();
-</script>
-</body>
-</html>`;
-}
+function setupWindow(win, currentVersion, options) {
+    if (!win || win.isDestroyed() || win.__ankaUpdater) return;
 
-function createSplash() {
-    let win = null;
-    let ready = false;
-    let latest = null;
-    function push() {
-        if (!win || !ready || !latest || win.isDestroyed()) return;
-        win.webContents.executeJavaScript('window.__p&&window.__p(' + JSON.stringify(latest) + ')').catch(() => {});
+    let contents;
+    try {
+        contents = win.webContents;
+    } catch (err) {
+        return;
     }
-    return {
-        open() {
-            if (win) return;
-            try {
-                const logo = path.join(app.getAppPath(), 'icons', 'logo.png');
-                const hasLogo = fs.existsSync(logo);
-                const dir = app.getPath('userData');
-                const file = path.join(dir, SPLASH_FILE);
-                fs.mkdirSync(dir, { recursive: true });
-                writeIfChanged(file, buildSplashHtml(hasLogo ? pathToFileURL(logo).href : ''), 0o600);
-                const options = {
-                    width: 460,
-                    height: 320,
-                    frame: false,
-                    resizable: false,
-                    maximizable: false,
-                    minimizable: false,
-                    fullscreenable: false,
-                    show: false,
-                    center: true,
-                    alwaysOnTop: true,
-                    backgroundColor: '#121214',
-                    webPreferences: {
-                        nodeIntegration: false,
-                        contextIsolation: true,
-                        sandbox: true,
-                        devTools: false,
-                        spellcheck: false
-                    }
-                };
-                if (hasLogo) options.icon = logo;
-                win = new BrowserWindow(options);
-                win.removeMenu();
-                win.once('ready-to-show', () => {
-                    if (win && !win.isDestroyed()) win.show();
-                });
-                win.webContents.on('did-finish-load', () => {
-                    ready = true;
-                    push();
-                });
-                win.on('closed', () => {
-                    win = null;
-                    ready = false;
-                });
-                win.loadFile(file).catch(() => {});
-            } catch (err) {
-                win = null;
+    if (!contents) return;
+
+    const installed = String(currentVersion || safeCall(() => app.getVersion(), '0.0.0'));
+    const startManual = !!(options && options.manual);
+    const updatedTo = safeCall(() => takeMarker(installed), '');
+
+    let announce = updatedTo ? 'Anka Web ' + updatedTo + ' sürümüne güncellendi' : '';
+    let destroyed = false;
+    let busy = false;
+    let installing = false;
+    let uiReady = false;
+    let lastCheck = 0;
+    let firstTimer = null;
+    let intervalTimer = null;
+    let pollTimer = null;
+    let promptTimer = null;
+    let abortCtl = null;
+
+    function clearPromptTimer() {
+        if (promptTimer) {
+            clearTimeout(promptTimer);
+            promptTimer = null;
+        }
+    }
+
+    function startPromptTimer() {
+        clearPromptTimer();
+        promptTimer = setTimeout(() => {
+            promptTimer = null;
+            if (destroyed || installing) return;
+            if (state.phase === 'prompt') {
+                state.snoozed = state.version;
+                send(null);
             }
-        },
-        update(data) {
-            latest = Object.assign({}, latest, data);
-            push();
-        },
-        close() {
-            const target = win;
-            win = null;
-            ready = false;
-            if (target && !target.isDestroyed()) target.destroy();
-        },
-        isOpen() {
-            return !!win;
-        }
-    };
-}
+        }, PROMPT_TIMEOUT);
+        if (typeof promptTimer.unref === 'function') promptTimer.unref();
+    }
 
-function isSplashOpen() {
-    return !!(activeSplash && activeSplash.isOpen());
-}
-
-function shouldRunFirstLaunch() {
-    if (!app.isPackaged && process.env.ANKA_FORCE_FIRST_RUN !== '1') return false;
-    try {
-        return !fs.existsSync(path.join(app.getPath('userData'), FIRST_RUN_FILE));
-    } catch (err) {
-        return false;
-    }
-}
-
-function markFirstLaunchDone() {
-    try {
-        fs.mkdirSync(app.getPath('userData'), { recursive: true });
-        fs.writeFileSync(path.join(app.getPath('userData'), FIRST_RUN_FILE), JSON.stringify({ version: CURRENT_VERSION, at: Date.now() }), 'utf8');
-    } catch (err) {}
-}
-
-async function runFirstLaunch() {
-    const none = { proceed: true, release() {} };
-    if (!shouldRunFirstLaunch()) return none;
-    const splash = createSplash();
-    activeSplash = splash;
-    const showTimer = setTimeout(() => {
-        splash.update({ phase: 'check', percent: -1 });
-        splash.open();
-    }, SPLASH_DELAY_MS);
-    let manifest = null;
-    try {
-        manifest = await fetchManifest(QUICK_TIMEOUT_MS);
-    } catch (err) {
-        manifest = null;
-    }
-    clearTimeout(showTimer);
-    markFirstLaunchDone();
-    const version = manifest ? String(manifest.version || '').trim() : '';
-    const available = VERSION_RE.test(version) && compareVersions(version, CURRENT_VERSION) > 0;
-    if (!available) {
-        return { proceed: true, release: () => { try { splash.close(); } catch (e) {} if (activeSplash === splash) activeSplash = null; } };
-    }
-    splash.update({ phase: 'prepare', percent: -1, version: version });
-    splash.open();
-    try {
-        let lastPush = 0;
-        await installUpdate({
-            currentVersion: CURRENT_VERSION,
-            version: version,
-            manifest: manifest,
-            onProgress: (info) => {
-                const now = Date.now();
-                if (info && info.phase === 'download' && info.percent < 100 && now - lastPush < 80) return;
-                lastPush = now;
-                splash.update(info);
-            }
-        });
-        splash.update({ phase: 'restart', percent: 100, version: version });
-        await sleep(HANDOFF_PAUSE_MS);
-        quitSoon();
-        return { proceed: false, release() {} };
-    } catch (err) {
-        logError('runFirstLaunch', err);
-        try { splash.close(); } catch (e) {}
-        if (activeSplash === splash) activeSplash = null;
-        return { proceed: true, release() {} };
-    }
-}
-
-async function startUpdateFlow(originWindow) {
-    if (isSplashOpen()) return { status: 'already' };
-    let manifest;
-    try {
-        manifest = await fetchManifest(REQUEST_TIMEOUT);
-    } catch (err) {
-        const message = err && err.message ? err.message : 'Güncelleme denetlenemedi';
-        notifyUpdateError(originWindow, message);
-        return { status: 'error', message: message };
-    }
-    const version = String(manifest.version || '').trim();
-    if (!VERSION_RE.test(version)) {
-        const message = 'Manifestteki sürüm geçersiz';
-        notifyUpdateError(originWindow, message);
-        return { status: 'error', message: message };
-    }
-    if (compareVersions(version, CURRENT_VERSION) <= 0) {
-        return { status: 'current', currentVersion: CURRENT_VERSION };
-    }
-    const splash = createSplash();
-    activeSplash = splash;
-    splash.update({ phase: 'prepare', percent: -1, version: version });
-    splash.open();
-    setImmediate(async () => {
+    async function ensureUi() {
+        if (destroyed || win.isDestroyed()) return false;
+        if (uiReady) return true;
         try {
-            let lastPush = 0;
-            await installUpdate({
-                currentVersion: CURRENT_VERSION,
-                version: version,
-                manifest: manifest,
-                onProgress: (info) => {
-                    const now = Date.now();
-                    if (info && info.phase === 'download' && info.percent < 100 && now - lastPush < 80) return;
-                    lastPush = now;
-                    splash.update(info);
+            await contents.executeJavaScript('(' + BOOT_SOURCE + ')(' + UI_VERSION + ')');
+            uiReady = true;
+            if (!pollTimer) {
+                try {
+                    const hasIpc = await contents.executeJavaScript('Boolean(window.__ankaUpdater && window.__ankaUpdater.ipc)');
+                    if (!hasIpc) startPoll();
+                } catch (err) {
+                    startPoll();
                 }
-            });
-            splash.update({ phase: 'restart', percent: 100, version: version });
-            await sleep(HANDOFF_PAUSE_MS);
+            }
+            return true;
+        } catch (err) {
+            logWarn('ensureUi', err);
+            return false;
+        }
+    }
+
+    async function send(view) {
+        if (!(await ensureUi())) return;
+        try {
+            await contents.executeJavaScript('window.__ankaUpdater&&window.__ankaUpdater.render(' + safeJson(view) + ')');
+        } catch (err) {
+            logWarn('send', err);
+        }
+    }
+
+    function paint() {
+        if (state.phase === 'idle' || state.snoozed === state.version) return;
+        if (installing && state.phase === 'prompt') return;
+        send({
+            view: 'update',
+            version: state.version,
+            percent: state.percent,
+            ready: state.phase === 'ready',
+            prompt: state.phase === 'prompt',
+            notes: state.notes || '',
+            detail: state.detail || ''
+        });
+    }
+
+    function flushAnnounce() {
+        if (!announce) return;
+        const message = announce;
+        announce = '';
+        send({ view: 'info', title: 'Anka Web', message: message });
+    }
+
+    function startPoll() {
+        pollTimer = setInterval(async () => {
+            if (destroyed || win.isDestroyed()) return;
+            try {
+                const action = await contents.executeJavaScript('window.__ankaUpdater?window.__ankaUpdater.pop():null');
+                if (typeof action === 'string') handle(action);
+            } catch (err) {}
+        }, POLL_MS);
+        if (typeof pollTimer.unref === 'function') pollTimer.unref();
+    }
+
+    async function check(manual) {
+        if (destroyed || installing) return;
+        if (busy) {
+            if (manual) {
+                state.snoozed = '';
+                paint();
+            }
+            return;
+        }
+
+        busy = true;
+        lastCheck = Date.now();
+        if (manual) state.snoozed = '';
+        const ctl = new AbortController();
+        abortCtl = ctl;
+
+        try {
+            const url = MANIFEST_URL + '?t=' + Date.now();
+            let res;
+            try {
+                res = await get(url, { allow: manifestAllow, timeout: REQUEST_TIMEOUT, redirects: false, signal: ctl.signal }, 0);
+            } catch (err) {
+                if (err && err.status === 404) throw new Error('latest.yml bulunamadı (404). Depo herkese açık olmalı ve dosya main dalının kökünde bulunmalı');
+                throw err;
+            }
+
+            const manifest = parseManifest((await readLimited(res, MAX_MANIFEST_BYTES)).toString('utf8'));
+            const version = String(manifest.version || '').trim();
+            if (!VERSION_RE.test(version)) throw new Error('Manifestteki sürüm geçersiz');
+
+            if (compareVersions(version, installed) <= 0) {
+                if (state.phase !== 'idle') resetState();
+                clearPromptTimer();
+                if (manual) await send({ view: 'info', title: 'Anka Web', message: 'Anka Web Sürümü ' + installed + ' güncel' });
+                return;
+            }
+
+            const kinds = platformKinds();
+            if (!kinds) {
+                if (manual) await send({ view: 'info', title: 'Anka Web', message: 'Bu platformda otomatik güncelleme desteklenmiyor' });
+                return;
+            }
+
+            let transitionedToPrompt = false;
+
+            if (state.version !== version || !state.targets.length) {
+                const release = await fetchRelease(version, ctl.signal);
+                const targets = collectTargets(manifest, release.assets, kinds);
+                if (!targets.length) throw new Error('Bu sistem için uygun güncelleme paketi bulunamadı (aranan: ' + kinds.join(', ') + ')');
+
+                state.version = version;
+                state.targets = targets;
+                state.kind = targets[0].kind;
+                state.phase = 'prompt';
+                state.percent = 0;
+                state.file = '';
+                state.notes = release.notes;
+                state.detail = '';
+                transitionedToPrompt = true;
+            }
+
+            paint();
+            if (transitionedToPrompt) startPromptTimer();
+        } catch (err) {
+            if (ctl.signal.aborted || destroyed) return;
+            logWarn('check', err);
+            if (manual) await send({ view: 'error', message: err && err.message ? err.message : 'İnternet bağlantısı yok' });
+        } finally {
+            busy = false;
+            if (abortCtl === ctl) abortCtl = null;
+        }
+    }
+
+    async function startBackgroundUpdate() {
+        if (installing || destroyed || !state.targets.length) return;
+        installing = true;
+        clearPromptTimer();
+
+        try {
+            const target = state.targets[0];
+            const version = state.version;
+
+            state.phase = 'ready';
+            state.percent = 100;
+            state.kind = target.kind;
+            state.detail = '';
+            paint();
+
+            writeMarker(installed, version);
+            await launchBackgroundUpdate(target, version, '');
+
+            await sleep(HANDOFF_DELAY);
+            if (destroyed) return;
             quitSoon();
         } catch (err) {
-            logError('startUpdateFlow', err);
-            try { splash.close(); } catch (e) {}
-            if (activeSplash === splash) activeSplash = null;
-            notifyUpdateError(originWindow, err && err.message ? err.message : 'Güncelleme başarısız');
+            logError('startBackgroundUpdate', err);
+            installing = false;
+            removeMarker();
+            resetState();
+            if (!destroyed) await send({ view: 'error', message: err && err.message ? err.message : 'Güncelleme başlatılamadı' });
         }
-    });
-    return { status: 'started', version: version };
-}
-
-async function checkForUpdates() {
-    try {
-        const manifest = await fetchManifest(REQUEST_TIMEOUT);
-        const version = String(manifest.version || '').trim();
-        if (!VERSION_RE.test(version)) {
-            return { hasUpdate: false, version: CURRENT_VERSION, currentVersion: CURRENT_VERSION, error: 'Manifestteki sürüm geçersiz' };
-        }
-        const hasUpdate = compareVersions(version, CURRENT_VERSION) > 0;
-        return {
-            hasUpdate: hasUpdate,
-            version: hasUpdate ? version : CURRENT_VERSION,
-            currentVersion: CURRENT_VERSION,
-            latestVersion: version
-        };
-    } catch (err) {
-        return {
-            hasUpdate: false,
-            version: CURRENT_VERSION,
-            currentVersion: CURRENT_VERSION,
-            error: err && err.message ? err.message : 'Güncelleme denetlenemedi'
-        };
     }
-}
 
-ipcMain.removeHandler('anka:get-version');
-ipcMain.handle('anka:get-version', () => CURRENT_VERSION);
+    function handle(action) {
+        if (typeof action !== 'string' || !ACTIONS.has(action) || destroyed) return;
 
-ipcMain.removeHandler('anka:check-for-updates');
-ipcMain.handle('anka:check-for-updates', () => checkForUpdates());
+        if (action === 'later' || action === 'close' || action === 'skip') {
+            clearPromptTimer();
+            state.snoozed = state.version;
+            if (abortCtl) abortCtl.abort();
+            send(null);
+        } else if (action === 'install' || action === 'update') {
+            clearPromptTimer();
+            startBackgroundUpdate();
+        } else if (action === 'retry') {
+            check(true);
+        }
+    }
 
-ipcMain.removeHandler('anka:check-update');
-ipcMain.handle('anka:check-update', () => checkForUpdates());
+    function onAction(event, action) {
+        if (destroyed || win.isDestroyed() || !event || !event.sender) return;
+        if (event.sender.id !== contents.id) return;
+        if (event.senderFrame && contents.mainFrame && event.senderFrame !== contents.mainFrame) return;
+        handle(action);
+    }
 
-ipcMain.removeHandler('anka:start-update');
-ipcMain.handle('anka:start-update', (event) => {
-    const win = event && event.sender ? BrowserWindow.fromWebContents(event.sender) : null;
-    return startUpdateFlow(win);
-});
+    function onFocus() {
+        if (Date.now() - lastCheck >= FOCUS_CHECK_GAP) check(false);
+    }
 
-ipcMain.removeAllListeners('check-manual-update');
-ipcMain.on('check-manual-update', (event) => {
-    const win = event && event.sender ? BrowserWindow.fromWebContents(event.sender) : null;
-    startUpdateFlow(win).catch((err) => logError('check-manual-update', err));
-});
+    function onStartLoading() {
+        uiReady = false;
+    }
 
-function checkUpdates(win) {
-    if (!win || win.isDestroyed()) return;
-    targetWin = win;
-    win.once('closed', () => {
-        if (targetWin === win) targetWin = null;
-    });
-    const updatedTo = safeCall(() => takeMarker(CURRENT_VERSION), '');
-    if (updatedTo) logInfo('update successful on previous run', updatedTo);
-    const doCheck = async () => {
-        if (!targetWin || targetWin.isDestroyed()) return;
+    function onFinishLoad() {
+        uiReady = false;
+        paint();
+        flushAnnounce();
+    }
+
+    function destroy() {
+        if (destroyed) return;
+        destroyed = true;
+        clearTimeout(firstTimer);
+        clearInterval(intervalTimer);
+        clearInterval(pollTimer);
+        clearPromptTimer();
+        if (abortCtl) abortCtl.abort();
+        try { ipcMain.removeListener(ACTION_CHANNEL, onAction); } catch (err) {}
         try {
-            const manifest = await fetchManifest(QUICK_TIMEOUT_MS);
-            const version = String(manifest.version || '').trim();
-            if (VERSION_RE.test(version) && compareVersions(version, CURRENT_VERSION) > 0) {
-                try { targetWin.webContents.send('update-available', { version: version }); } catch (e) {}
-            }
+            contents.removeListener('did-start-loading', onStartLoading);
+            contents.removeListener('did-finish-load', onFinishLoad);
+            win.removeListener('focus', onFocus);
         } catch (err) {}
-    };
-    const first = setTimeout(doCheck, FIRST_CHECK_DELAY);
-    if (typeof first.unref === 'function') first.unref();
-    const timer = setInterval(doCheck, CHECK_INTERVAL);
-    if (typeof timer.unref === 'function') timer.unref();
-    win.once('closed', () => {
-        clearTimeout(first);
-        clearInterval(timer);
+        try { delete win.__ankaUpdater; } catch (err) {}
+    }
+
+    ipcMain.on(ACTION_CHANNEL, onAction);
+    contents.on('did-start-loading', onStartLoading);
+    contents.on('did-finish-load', onFinishLoad);
+    win.on('focus', onFocus);
+    win.once('closed', destroy);
+
+    win.__ankaUpdater = Object.freeze({
+        owner: destroy,
+        check: (manual) => check(!!manual),
+        destroy: destroy
+    });
+
+    firstTimer = setTimeout(() => check(startManual), FIRST_CHECK_DELAY);
+    intervalTimer = setInterval(() => check(false), CHECK_INTERVAL);
+    if (typeof firstTimer.unref === 'function') firstTimer.unref();
+    if (typeof intervalTimer.unref === 'function') intervalTimer.unref();
+
+    paint();
+    if (!contents.isLoading()) flushAnnounce();
+}
+
+function init(targetWin, currentVersion, options) {
+    logInfo('init called', { platform: process.platform, version: currentVersion, mainLog: mainLogPath });
+    safeAsync(async () => {
+        if (process.platform === 'win32') await ensureWindowsScripts();
+        else if (process.platform === 'linux') await ensureLinuxService();
+    });
+
+    if (targetWin) {
+        setupWindow(targetWin, currentVersion, options);
+        return;
+    }
+
+    BrowserWindow.getAllWindows().forEach((win) => setupWindow(win, currentVersion, options));
+
+    app.on('browser-window-created', (event, win) => {
+        try {
+            if (win.getParentWindow()) return;
+            setupWindow(win, currentVersion, options);
+        } catch (err) {
+            logWarn('browser-window-created', err);
+        }
     });
 }
 
-safeAsync(async () => {
-    if (process.platform === 'win32') await ensureWindowsScripts();
-    else if (process.platform === 'linux') await ensureLinuxService();
-});
-
-module.exports = { checkUpdates, runFirstLaunch, isSplashOpen, logPath: () => mainLogPath };
+module.exports = { init, installUpdate, logPath: () => mainLogPath };
