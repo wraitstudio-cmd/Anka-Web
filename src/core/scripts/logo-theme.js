@@ -15,12 +15,12 @@
                 return u.href.replace(/\/$/, '') + '/';
             }
         } catch (e) {}
-        return '../../icons/';
+        return '../../src/icons/';
     }
 
     const ICONS_BASE = resolveIconsBase();
-    const LOGO_NORMAL = ICONS_BASE + 'logo.png';
-    const LOGO_WHITE = ICONS_BASE + 'white-logo.png';
+    const LOGO_NORMAL = ICONS_BASE + 'dark-logo.png';
+    const LOGO_WHITE = ICONS_BASE + 'white-dark-logo.png';
 
     function isLight() {
         const html = document.documentElement;

@@ -2,90 +2,68 @@
   "name": "anka-web",
   "version": "1.5.2",
   "description": "Anka Web Tarayıcısı",
-  "main": "src/core/main.js",
-  "scripts": {
+  "main": "src/core/main/main.js",
+"scripts": {
     "start": "electron .",
-    "build:win": "node build/prebuild.js && npx electron-builder --win",
-    "build:linux-dir": "node build/prebuild.js && npx electron-builder --linux --dir",
-    "build:linux-tar": "npx electron-builder --linux tar.gz",
-    "build:linux": "npm run build:linux-dir && npm run build:linux-tar && node build/pack-linux.js",
-    "build:all": "npm run build:win && npm run build:linux"
+    "build:win": "electron-builder --win --x64",
+    "build:linux": "electron-builder --linux dir --x64 && node build/pack-linux.js",
+    "build:all": "npm run build:win && npm run build:linux",
+    "pack:linux": "node build/pack-linux.js"
   },
   "author": "WraitGame <wraitstudio@gmail.com>",
   "license": "GPL-3.0-or-later",
+  "engines": {
+    "node": ">=18"
+  },
   "devDependencies": {
     "electron": "^30.0.0",
-    "electron-builder": "^24.0.0",
-    "javascript-obfuscator": "^5.4.3"
+    "electron-builder": "^24.0.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   },
   "build": {
     "appId": "com.wraitgame.ankaweb",
     "productName": "Anka Web",
-    "compression": "maximum",
     "asar": true,
+    "compression": "maximum",
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false,
+    "electronLanguages": ["en-US", "tr"],
     "directories": {
       "output": "dist/${version}"
     },
     "files": [
       "src/**/*",
       "icons/**/*",
-      "package.json"
+      "package.json",
+      "!**/*.map",
+      "!**/*.md",
+      "!**/*.ts",
+      "!**/.git/**",
+      "!**/node_modules/**/{test,tests,__tests__,example,examples,doc,docs,benchmark,benchmarks}/**",
+      "!**/node_modules/**/*.{md,map,ts,tsx,yml,yaml,markdown}"
     ],
     "protocols": [
       {
         "name": "Web Baglantisi",
-        "schemes": [
-          "http",
-          "https"
-        ]
+        "schemes": ["http", "https"]
       }
     ],
     "fileAssociations": [
-      {
-        "ext": "html",
-        "name": "HTML Document",
-        "role": "Viewer"
-      },
-      {
-        "ext": "htm",
-        "name": "HTML Document",
-        "role": "Viewer"
-      },
-      {
-        "ext": "shtml",
-        "name": "HTML Document",
-        "role": "Viewer"
-      },
-      {
-        "ext": "xhtml",
-        "name": "HTML Document",
-        "role": "Viewer"
-      },
-      {
-        "ext": "pdf",
-        "name": "Web Belgesi",
-        "role": "Viewer"
-      },
-      {
-        "ext": "svg",
-        "name": "Web Belgesi",
-        "role": "Viewer"
-      },
-      {
-        "ext": "webp",
-        "name": "Web Belgesi",
-        "role": "Viewer"
-      }
+      { "ext": "html", "name": "HTML Document", "role": "Viewer" },
+      { "ext": "htm", "name": "HTML Document", "role": "Viewer" },
+      { "ext": "xhtml", "name": "HTML Document", "role": "Viewer" },
+      { "ext": "pdf", "name": "Web Belgesi", "role": "Viewer" },
+      { "ext": "svg", "name": "Web Belgesi", "role": "Viewer" },
+      { "ext": "webp", "name": "Web Belgesi", "role": "Viewer" }
     ],
     "win": {
-      "icon": "icons/logo.ico",
+      "icon": "src/icons/logo.ico",
       "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "msi", "arch": ["x64"] }
       ]
     },
     "nsis": {
@@ -94,9 +72,10 @@
       "allowToChangeInstallationDirectory": true,
       "allowElevation": false,
       "perMachine": false,
-      "installerIcon": "icons/logo.ico",
-      "uninstallerIcon": "icons/logo.ico",
-      "installerHeaderIcon": "icons/logo.ico",
+      "differentialPackage": false,
+      "installerIcon": "src/icons/logo.ico",
+      "uninstallerIcon": "src/icons/logo.ico",
+      "installerHeaderIcon": "src/icons/logo.ico",
       "uninstallDisplayName": "Anka Web",
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
@@ -106,9 +85,17 @@
       "runAfterFinish": true,
       "artifactName": "Anka_Web_${version}.${ext}"
     },
+    "msi": {
+      "oneClick": false,
+      "perMachine": true,
+      "shortcutName": "Anka Web",
+      "runAfterFinish": true,
+      "artifactName": "Anka_Web_${version}_${arch}.${ext}"
+    },
     "linux": {
-      "icon": "icons/logo.png",
+      "icon": "src/icons/dark-logo.png",
       "executableName": "anka-web",
+      "maintainer": "WraitGame <wraitstudio@gmail.com>",
       "category": "Network;WebBrowser",
       "synopsis": "Anka Web",
       "mimeTypes": [
@@ -120,23 +107,7 @@
         "x-scheme-handler/http",
         "x-scheme-handler/https"
       ],
-      "target": [
-        "tar.gz"
-      ],
-      "artifactName": "Anka_Web_${version}_${arch}.${ext}"
-    },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "wraitstudio-cmd",
-        "repo": "Anka-Web",
-        "private": false,
-        "releaseType": "release"
-      }
-    ]
-  },
-  "dependencies": {
-    "electron-updater": "^6.8.9",
-    "inquirer": "^14.2.5"
+      "target": ["dir"]
+    }
   }
 }

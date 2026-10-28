@@ -4,7 +4,7 @@ let closedTabsStack = [];
 
 const ankaTabs = new Map();
 let ankaTabSeq = 0;
-const ANKA_LOGO = '../../icons/logo.png';
+const ANKA_LOGO = '../../src/icons/dark-logo.png';
 const ANKA_ALLOWED_FILES = new Set();
 const ANKA_GUEST_PREFS = 'contextIsolation=yes, sandbox=yes, nodeIntegration=no, webSecurity=yes, allowRunningInsecureContent=no';
 const ANKA_DARK_CSS = 'html{filter:invert(1) hue-rotate(180deg)!important;background:#fff}img,picture,video,canvas,iframe{filter:invert(1) hue-rotate(180deg)!important}';

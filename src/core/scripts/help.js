@@ -20,11 +20,16 @@ function createHelpPanel() {
         z-index: 100001;
         font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
         opacity: 0;
-        transition: transform .22s cubic-bezier(.16,1,.3,1), opacity .22s ease;
+        transition: transform .2s cubic-bezier(.16,1,.3,1), opacity .18s ease;
         overflow: hidden;
         box-sizing: border-box;
         contain: layout style paint;
         flex-direction: column;
+        will-change: transform, opacity;
+    }
+    #help-panel.open {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
     }
     #help-panel * { box-sizing: border-box; }
 
@@ -160,6 +165,7 @@ function createHelpPanel() {
         padding: 16px 24px 20px;
         scrollbar-width: thin;
         overflow-x: hidden;
+        contain: content;
     }
     .help-body::-webkit-scrollbar { width: 8px; }
     .help-body::-webkit-scrollbar-track { background: transparent; }
@@ -178,10 +184,11 @@ function createHelpPanel() {
         margin-bottom: 12px;
         transition: border-color .15s ease;
         contain: layout style;
+        content-visibility: auto;
+        contain-intrinsic-size: 120px;
     }
-    .help-section:hover {
-        border-color: var(--border-hover, #52525b);
-    }
+    .help-section[hidden] { display: none !important; }
+    .help-section:hover { border-color: var(--border-hover, #52525b); }
     .help-section h3 {
         font-size: 14px;
         font-weight: 600;
@@ -202,42 +209,16 @@ function createHelpPanel() {
         color: var(--text-secondary, #a1a1aa);
         margin: 0 0 10px;
     }
-    .help-img-container {
-        position: relative;
-        overflow: hidden;
-        border-radius: 8px;
-        border: 1px solid var(--border-color, #27272a);
-        background: var(--bg-secondary, #18181b);
-        margin-top: 10px;
+    .help-section p:last-child { margin-bottom: 0; }
+    .help-section ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--text-secondary, #a1a1aa);
+        font-size: 12.5px;
+        line-height: 1.65;
     }
-    .help-img-container img {
-        width: 100%;
-        height: auto;
-        display: block;
-        object-fit: contain;
-        cursor: zoom-in;
-    }
-    .help-zoom-btn {
-        position: absolute;
-        bottom: 8px;
-        right: 8px;
-        background: var(--bg-secondary, #18181b);
-        color: var(--text-color, #f4f4f5);
-        border: 1px solid var(--border-color, #27272a);
-        padding: 6px 10px;
-        border-radius: 6px;
-        font-size: 11px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: background-color .15s ease, color .15s ease, border-color .15s ease;
-        touch-action: manipulation;
-        font-family: inherit;
-    }
-    .help-zoom-btn:hover {
-        background: var(--accent, #ff4757);
-        color: #fff;
-        border-color: var(--accent, #ff4757);
-    }
+    .help-section ul li { margin-bottom: 4px; }
+    .help-section ul li::marker { color: var(--accent, #ff4757); }
     .shortcut-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -278,33 +259,10 @@ function createHelpPanel() {
         display: none;
         position: fixed;
         inset: 0;
-        background: rgba(0,0,0,.65);
+        background: rgba(0,0,0,.6);
         z-index: 100000;
-        backdrop-filter: blur(2px);
-        -webkit-backdrop-filter: blur(2px);
-        transition: opacity .22s ease;
+        transition: opacity .18s ease;
         opacity: 0;
-    }
-    #help-lightbox {
-        display: none;
-        position: fixed;
-        inset: 0;
-        background: rgba(0,0,0,.9);
-        z-index: 100005;
-        justify-content: center;
-        align-items: center;
-        cursor: zoom-out;
-        backdrop-filter: blur(2px);
-    }
-    #help-lightbox img {
-        max-width: 90%;
-        max-height: 90%;
-        width: auto;
-        height: auto;
-        object-fit: contain;
-        border-radius: 12px;
-        border: 2px solid var(--border-color, #27272a);
-        box-shadow: 0 16px 40px rgba(0,0,0,.55);
     }
     html.reduce-effects #help-panel { transition: none !important; }
     @media (max-width: 680px) {
@@ -326,7 +284,7 @@ function createHelpPanel() {
         .shortcut-grid { grid-template-columns: 1fr; }
     }
     @media (pointer: coarse) {
-        .help-tab-btn, .help-zoom-btn, .help-close { min-height: 44px; }
+        .help-tab-btn, .help-close { min-height: 44px; }
     }
     </style>`;
 
@@ -338,61 +296,76 @@ function createHelpPanel() {
             <div class="help-header-top">
                 <div class="help-brand-icon">💡</div>
                 <h2 class="help-title">Gelişmiş Kullanım ve Sistem Kılavuzu<small>Anka Web yardım ve güvenlik sistemi</small></h2>
-                <button class="help-close" onclick="toggleHelp()" aria-label="Yardımı kapat">✕</button>
+                <button class="help-close" data-help-action="close" aria-label="Yardımı kapat">✕</button>
             </div>
             <div class="help-search-wrap">
                 <span class="help-search-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg></span>
-                <input type="text" class="help-search" id="help-search-input" placeholder="Rehberde, kısayollarda veya özelliklerde ara..." oninput="filterHelpSections(this.value)">
+                <input type="text" class="help-search" id="help-search-input" placeholder="Rehberde, kısayollarda veya özelliklerde ara..." autocomplete="off" spellcheck="false">
             </div>
         </div>
 
-        <div class="help-category-tabs">
-            <button class="help-tab-btn active" onclick="filterHelpCategory('all', this)">Tümü</button>
-            <button class="help-tab-btn" onclick="filterHelpCategory('arac', this)">Araçlar</button>
-            <button class="help-tab-btn" onclick="filterHelpCategory('ayar', this)">Ayarlar & Performans</button>
-            <button class="help-tab-btn" onclick="filterHelpCategory('guvenlik', this)">Güvenlik & Gizlilik</button>
-            <button class="help-tab-btn" onclick="filterHelpCategory('kisayol', this)">Kısayollar</button>
+        <div class="help-category-tabs" id="help-tabs">
+            <button class="help-tab-btn active" data-help-category="all">Tümü</button>
+            <button class="help-tab-btn" data-help-category="arac">Araçlar</button>
+            <button class="help-tab-btn" data-help-category="ayar">Ayarlar & Performans</button>
+            <button class="help-tab-btn" data-help-category="guvenlik">Güvenlik & Gizlilik</button>
+            <button class="help-tab-btn" data-help-category="kisayol">Kısayollar</button>
         </div>
 
         <div class="help-body" id="help-sections-container">
-            <div class="help-section" data-category="arac" data-keywords="kalem çizim cetvel sayfa modu">
+            <div class="help-section" data-category="arac" data-keywords="kalem çizim cetvel sayfa modu çizim araçları">
                 <h3><span class="help-emoji">✏️</span> Kalem Menüsü ve Çizim Araçları</h3>
-                <p>Sayfa üzerinde serbest çizim yapmak, cetvel kullanmak veya özel sayfa modlarını değiştirmek için kalem menüsünü açın.</p>
-                <div class="help-img-container">
-                    <img src="../../icons/kalem-açma.png" onclick="openHelpLightbox(this.src)" alt="Kalem Açma">
-                    <button class="help-zoom-btn" onclick="openHelpLightbox(this.previousElementSibling.src)">Büyüt</button>
-                </div>
+                <p>Sayfa üzerinde serbest çizim yapmak, cetvel ve iletki kullanmak veya özel sayfa modlarını değiştirmek için üst araç çubuğundaki kalem düğmesini kullanın.</p>
+                <ul>
+                    <li>Kalem, fosforlu, neon, silgi, kaligrafi ve sprey araçları mevcuttur.</li>
+                    <li>Şekil araçları: çizgi, dikdörtgen, yuvarlak dikdörtgen, daire, üçgen, elmas, yıldız, ok.</li>
+                </ul>
             </div>
 
-            <div class="help-section" data-category="arac" data-keywords="klavye arama yazı yazma sanal">
+            <div class="help-section" data-category="arac" data-keywords="klavye arama yazı yazma sanal ekran klavyesi">
                 <h3><span class="help-emoji">⌨️</span> Sanal Klavye Entegrasyonu</h3>
-                <p>Fiziksel klavyenizin olmadığı durumlarda hızlı arama yapmak veya metin alanlarına yazı yazmak için sanal klavyeyi kullanın.</p>
-                <div class="help-img-container">
-                    <img src="../../icons/klavye-açma.png" onclick="openHelpLightbox(this.src)" alt="Klavye Açma">
-                    <button class="help-zoom-btn" onclick="openHelpLightbox(this.previousElementSibling.src)">Büyüt</button>
-                </div>
+                <p>Fiziksel klavyenizin olmadığı durumlarda hızlı arama yapmak veya metin alanlarına yazı yazmak için sanal klavyeyi kullanın. Türkçe Q klavye düzeni desteklenir ve tüm sistem genelinde çalışır.</p>
+                <ul>
+                    <li>Metin alanlarına otomatik olarak bağlanır.</li>
+                    <li>Arama ve form doldurma işlemlerinde hızlıdır.</li>
+                    <li>Büyük/küçük harf ve sembol katmanlarını destekler.</li>
+                </ul>
             </div>
 
-            <div class="help-section" data-category="arac" data-keywords="sekme yeni sekme limit yönetim">
+            <div class="help-section" data-category="arac" data-keywords="sekme yeni sekme limit yönetim bellek">
                 <h3><span class="help-emoji">➕</span> Gelişmiş Sekme Yönetimi</h3>
                 <p>Çoklu sekme yapısını optimize etmek ve bellek tüketimini yönetmek için sol menüdeki sekme araçlarını kullanabilirsiniz.</p>
-                <div class="help-img-container">
-                    <img src="../../icons/sekme-açma.png" onclick="openHelpLightbox(this.src)" alt="Sekme Açma">
-                    <button class="help-zoom-btn" onclick="openHelpLightbox(this.previousElementSibling.src)">Büyüt</button>
-                </div>
+                <ul>
+                    <li>Sekmeler arasında Ctrl + Tab ile hızlıca geçiş yapın.</li>
+                    <li>Kapatılan sekmeleri Ctrl + Shift + T ile geri açın.</li>
+                    <li>Sekmeleri sürükleyerek yeniden sıralayabilirsiniz.</li>
+                    <li>Gizli sekme modu için Ctrl + Shift + N kullanın.</li>
+                </ul>
             </div>
 
             <div class="help-section" data-category="ayar" data-keywords="donanım hızlandırma performans gpu linux windows ayarlar">
                 <h3><span class="help-emoji">⚡</span> Donanım Hızlandırma & Platform Optimizasyonu</h3>
-                <p>Windows ve Linux işletim sistemlerinde ekran kartı (GPU) desteğini tam verimle kullanmak için ayarlar menüsünden donanım hızlandırmayı aktif tutun. Linux ortamlarında Wayland veya X11 uyumluluğu için bayrak ayarlarını yapılandırabilirsiniz.</p>
+                <p>Windows ve Linux işletim sistemlerinde ekran kartı (GPU) desteğini tam verimle kullanmak için ayarlar menüsünden donanım hızlandırmayı aktif tutun.</p>
+                <ul>
+                    <li>Linux: Wayland veya X11 uyumluluğu için uygun bayraklar otomatik seçilir.</li>
+                    <li>Yüksek DPI ekranlarda DPR otomatik algılanır ve çizim keskinleştirilir.</li>
+                    <li>Bellek dostu geri al/yinele yığını 40 adım ile sınırlıdır.</li>
+                    <li>Arka planda çalışan sekmeler otomatik olarak dondurulur.</li>
+                </ul>
             </div>
 
-            <div class="help-section" data-category="guvenlik" data-keywords="güvenlik gizlilik çerezler anti çerez şifreleme koruma">
+            <div class="help-section" data-category="guvenlik" data-keywords="güvenlik gizlilik çerezler anti çerez şifreleme koruma indirme">
                 <h3><span class="help-emoji">🛡️</span> Güvenlik ve Gizlilik Denetimi</h3>
-                <p>Uygulama yerleşik indirme ve site tarama araçlarıyla potansiyel tehlikeli dosyaları (.exe, .sh, .bat vb.) otomatik olarak işaretler. Gizlilik modunda izleyici engelleyicileri ve güvenli HTTPS yönlendirmelerini etkinleştirebilirsiniz.</p>
+                <p>Uygulama yerleşik indirme ve site tarama araçlarıyla potansiyel tehlikeli dosyaları (.exe, .sh, .bat vb.) otomatik olarak işaretler.</p>
+                <ul>
+                    <li>Gizlilik modunda izleyici engelleyicileri etkinleştirin.</li>
+                    <li>HTTPS yönlendirmesi tüm sitelerde varsayılan olarak açıktır.</li>
+                    <li>Çerezler üçüncü taraf sitelere karşı filtrelenir.</li>
+                    <li>İndirilen dosyalar indirme öncesi güvenlik taramasından geçirilir.</li>
+                </ul>
             </div>
 
-            <div class="help-section" data-category="kisayol" data-keywords="kısayol yenile tam ekran kapat sekme bul git windows linux">
+            <div class="help-section" data-category="kisayol" data-keywords="kısayol yenile tam ekran kapat sekme bul git windows linux klavye">
                 <h3><span class="help-emoji">⌨️</span> Windows & Linux Klavye Kısayolları</h3>
                 <div class="shortcut-grid">
                     <div class="shortcut-item"><span>Yeni Sekme</span><span class="shortcut-key">Ctrl + T</span></div>
@@ -416,16 +389,114 @@ function createHelpPanel() {
             <div class="help-footer">Anka Web Çoklu Platform Yardım ve Güvenlik Sistemi</div>
         </div>
     </div>
-    <div id="help-overlay" onclick="toggleHelp()"></div>
-    <div id="help-lightbox" onclick="closeHelpLightbox()">
-        <img id="help-lightbox-img" src="" alt="Büyütülmüş Görsel">
-    </div>
+    <div id="help-overlay"></div>
     `;
 
     document.body.insertAdjacentHTML('beforeend', helpHTML);
+    bindHelpEvents();
 }
 
-let cachedSections = null;
+let helpState = null;
+
+function bindHelpEvents() {
+    const panel = document.getElementById('help-panel');
+    const overlay = document.getElementById('help-overlay');
+    const searchInput = document.getElementById('help-search-input');
+    const tabs = document.getElementById('help-tabs');
+    if (!panel || !overlay || !tabs) return;
+
+    helpState = {
+        sections: null,
+        filterCategory: 'all',
+        filterQuery: '',
+        searchTimer: 0,
+        refreshTimeout: 0
+    };
+
+    panel.addEventListener('click', (event) => {
+        const action = event.target.closest('[data-help-action]');
+        if (action && action.dataset.helpAction === 'close') toggleHelp();
+    });
+
+    overlay.addEventListener('click', toggleHelp);
+
+    tabs.addEventListener('click', (event) => {
+        const btn = event.target.closest('[data-help-category]');
+        if (!btn) return;
+        const category = btn.dataset.helpCategory;
+        if (helpState.filterCategory === category) return;
+        helpState.filterCategory = category;
+        tabs.querySelectorAll('.help-tab-btn').forEach(b => {
+            b.classList.toggle('active', b === btn);
+        });
+        scheduleHelpRefresh();
+    });
+
+    if (searchInput) {
+        searchInput.addEventListener('input', (event) => {
+            const value = event.target.value;
+            if (helpState.searchTimer) return;
+            helpState.searchTimer = setTimeout(() => {
+                helpState.searchTimer = 0;
+                helpState.filterQuery = value.toLowerCase().trim();
+                scheduleHelpRefresh();
+            }, 120);
+        });
+    }
+
+    document.addEventListener('keydown', helpKeyHandler);
+}
+
+function helpKeyHandler(event) {
+    const panel = document.getElementById('help-panel');
+    if (!panel || panel.style.display !== 'flex') return;
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        toggleHelp();
+        return;
+    }
+    if (event.target && event.target.id === 'help-search-input') return;
+    const active = document.activeElement;
+    const focusables = panel.querySelectorAll('.help-close, .help-tab-btn, .help-search');
+    if (event.key === 'Tab' && focusables.length > 0) {
+        const idx = Array.prototype.indexOf.call(focusables, active);
+        event.preventDefault();
+        const next = event.shiftKey
+            ? (idx <= 0 ? focusables.length - 1 : idx - 1)
+            : (idx === focusables.length - 1 ? 0 : idx + 1);
+        focusables[next].focus();
+    }
+}
+
+function scheduleHelpRefresh() {
+    if (!helpState) return;
+    if (helpState.refreshTimeout) return;
+    helpState.refreshTimeout = requestAnimationFrame(() => {
+        helpState.refreshTimeout = 0;
+        applyHelpFilter();
+    });
+}
+
+function applyHelpFilter() {
+    if (!helpState) return;
+    if (!helpState.sections) {
+        helpState.sections = Array.from(document.querySelectorAll('.help-section')).map(el => ({
+            el,
+            category: el.getAttribute('data-category') || '',
+            keywords: (el.getAttribute('data-keywords') || '').toLowerCase(),
+            text: (el.textContent || '').toLowerCase()
+        }));
+    }
+    const cat = helpState.filterCategory;
+    const q = helpState.filterQuery;
+    for (let i = 0; i < helpState.sections.length; i++) {
+        const sec = helpState.sections[i];
+        const catOk = cat === 'all' || sec.category === cat;
+        const queryOk = !q || sec.text.includes(q) || sec.keywords.includes(q);
+        const visible = catOk && queryOk;
+        if (sec.el.hidden === visible) sec.el.hidden = !visible;
+    }
+}
 
 function toggleHelp() {
     if (document.body.dataset.systemPage === 'help' && typeof window.__ankaCloseSystemTab === 'function') {
@@ -436,72 +507,54 @@ function toggleHelp() {
 
     const panel = document.getElementById('help-panel');
     const overlay = document.getElementById('help-overlay');
+    if (!panel || !overlay) return;
 
-    if (panel.style.display === 'none' || panel.style.display === '') {
+    const isOpen = panel.style.display === 'flex';
+    if (!isOpen) {
         panel.style.display = 'flex';
         overlay.style.display = 'block';
-
-        requestAnimationFrame(() => {
-            overlay.style.opacity = '1';
-            panel.style.transform = 'translate(-50%, -50%) scale(1)';
-            panel.style.opacity = '1';
-        });
-
+        panel.offsetHeight;
+        panel.classList.add('open');
+        overlay.style.opacity = '1';
         const settingsPanel = document.getElementById('settings-panel');
         if (settingsPanel) settingsPanel.style.display = 'none';
+        const searchInput = document.getElementById('help-search-input');
+        if (searchInput) {
+            searchInput.value = '';
+            if (helpState) helpState.filterQuery = '';
+            setTimeout(() => searchInput.focus(), 60);
+        }
+        if (helpState) {
+            helpState.filterCategory = 'all';
+            const tabs = document.getElementById('help-tabs');
+            if (tabs) tabs.querySelectorAll('.help-tab-btn').forEach((b, i) => b.classList.toggle('active', i === 0));
+            helpState.sections = null;
+            scheduleHelpRefresh();
+        }
     } else {
-        panel.style.transform = 'translate(-50%, -50%) scale(.96)';
-        panel.style.opacity = '0';
+        panel.classList.remove('open');
         overlay.style.opacity = '0';
         setTimeout(() => {
             panel.style.display = 'none';
             overlay.style.display = 'none';
-        }, 220);
+        }, 200);
     }
 }
 
 function filterHelpSections(query) {
-    const q = query.toLowerCase().trim();
-    if (!cachedSections) {
-        cachedSections = document.querySelectorAll('.help-section');
+    if (!helpState) return;
+    helpState.filterQuery = String(query || '').toLowerCase().trim();
+    scheduleHelpRefresh();
+}
+
+function filterHelpCategory(category) {
+    if (!helpState) return;
+    helpState.filterCategory = category;
+    const tabs = document.getElementById('help-tabs');
+    if (tabs) {
+        tabs.querySelectorAll('.help-tab-btn').forEach((b) => {
+            b.classList.toggle('active', b.dataset.helpCategory === category);
+        });
     }
-
-    cachedSections.forEach(sec => {
-        const text = sec.innerText.toLowerCase();
-        const keywords = sec.getAttribute('data-keywords') || '';
-        if (text.includes(q) || keywords.includes(q)) {
-            sec.style.display = 'block';
-        } else {
-            sec.style.display = 'none';
-        }
-    });
-}
-
-function filterHelpCategory(category, btn) {
-    document.querySelectorAll('.help-tab-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-
-    if (!cachedSections) {
-        cachedSections = document.querySelectorAll('.help-section');
-    }
-
-    cachedSections.forEach(sec => {
-        const cat = sec.getAttribute('data-category');
-        if (category === 'all' || cat === category) {
-            sec.style.display = 'block';
-        } else {
-            sec.style.display = 'none';
-        }
-    });
-}
-
-function openHelpLightbox(src) {
-    const lb = document.getElementById('help-lightbox');
-    const img = document.getElementById('help-lightbox-img');
-    img.src = src;
-    lb.style.display = 'flex';
-}
-
-function closeHelpLightbox() {
-    document.getElementById('help-lightbox').style.display = 'none';
+    scheduleHelpRefresh();
 }

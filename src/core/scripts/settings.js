@@ -1896,7 +1896,7 @@ id: 'gorunum-dil-paketleri',
         const hero = document.createElement('div');
         hero.className = 'about-hero';
         const logo = document.createElement('img');
-        logo.src = '../../icons/logo.png';
+        logo.src = '../../src/icons/dark-logo.png';
         logo.alt = '';
         logo.className = 'about-logo';
         logo.onerror = () => { logo.style.display = 'none'; };

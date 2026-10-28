@@ -9,7 +9,7 @@ const { pathToFileURL } = require('url');
 
 let CURRENT_VERSION = '0.0.0';
 try {
-    const pkg = require('../../package.json');
+    const pkg = require('../../../package.json');
     if (pkg && pkg.version) CURRENT_VERSION = String(pkg.version);
 } catch (e) {}
 
@@ -1740,7 +1740,7 @@ function createSplash() {
         open() {
             if (win) return;
             try {
-                const logo = path.join(app.getAppPath(), 'icons', 'logo.png');
+                const logo = path.join(app.getAppPath(), 'src', 'icons', 'dark-logo.png');
                 const hasLogo = fs.existsSync(logo);
                 const dir = app.getPath('userData');
                 const file = path.join(dir, SPLASH_FILE);

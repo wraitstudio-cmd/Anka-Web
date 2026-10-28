@@ -333,7 +333,7 @@ function createWindow() {
         transparent: process.platform !== 'linux',
         backgroundColor: '#00000000',
         titleBarStyle: isMac ? 'hiddenInset' : 'default',
-        icon: path.join(app.getAppPath(), 'icons', 'logo.png'),
+        icon: path.join(app.getAppPath(), 'src', 'icons', 'dark-logo.png'),
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,

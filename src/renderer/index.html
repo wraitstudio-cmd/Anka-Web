@@ -104,7 +104,7 @@ window.addEventListener('message',(event)=>{const data=event.data;if(!data||data
 <div id="app-container">
 <div id="sidebar">
 <button type="button" class="logo" id="app-logo" onclick="location.reload()" title="Anka Web" aria-label="Anka Web">
-<img src="../../icons/logo.png" alt="">
+<img src="../../src/icons/dark-logo.png" alt="">
 </button>
 <div class="sidebar-spacer"></div>
 
@@ -229,7 +229,7 @@ window.addEventListener('message',(event)=>{const data=event.data;if(!data||data
 <section id="school-login-screen" class="school-login-screen" hidden aria-label="Okul hesabı girişi">
 <div class="school-login-shell">
 <div class="school-login-brand">
-<img src="../../icons/logo.png" alt="">
+<img src="../../src/icons/dark-logo.png" alt="">
 <span>Anka Web</span>
 </div>
 <div class="school-login-content">
@@ -571,8 +571,7 @@ window.addEventListener('DOMContentLoaded',async()=>{initDOMCache();applyPlatfor
 </script>
 
 <script defer src="../core/scripts/logo-theme.js"></script>
-<script defer src="./translations.js"></script>
-<script defer src="../core/browser.js"></script>
+<script defer src="../core/scripts/translations.js"></script>
 <script defer src="../core/scripts/feedback.js"></script>
 <script defer src="../core/scripts/main-security.js"></script>
 <script defer src="../core/scripts/paint.js"></script>
@@ -584,5 +583,8 @@ window.addEventListener('DOMContentLoaded',async()=>{initDOMCache();applyPlatfor
 <script defer src="../core/scripts/downloads-manager.js"></script>
 <script defer src="../core/scripts/toolbar-extras.js"></script>
 <script defer src="../core/scripts/ankaweb-layout.js"></script>
+
+<script defer src="../core/main/browser.js"></script>
+
 </body>
 </html>
