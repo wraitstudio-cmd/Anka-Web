@@ -1,0 +1,1995 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark light">
+<title>Anka Web</title>
+<script>
+(function () {
+    const root = document.documentElement;
+    const THEMES = ['system', 'dark', 'light', 'catppuccin', 'cyberpunk', 'dracula', 'nord', 'oled', 'emerald'];
+    const CLASSES = ['light-theme', 'theme-catppuccin', 'theme-cyberpunk', 'theme-dracula', 'theme-nord', 'theme-oled', 'theme-emerald'];
+    const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : { matches: false };
+    const rm = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+    const LOW = (navigator.hardwareConcurrency || 4) <= 2 || (navigator.deviceMemory || 4) <= 2 || rm.matches;
+
+    const get = (id, def) => {
+        try {
+            const v = localStorage.getItem('set_' + id);
+            return v === null ? def : v;
+        } catch (e) {
+            return def;
+        }
+    };
+    const oneOf = (v, list, def) => (list.includes(v) ? v : def);
+    const scaleValue = (id, legacy, min, max, fallback) => {
+      const raw = get(id, String(fallback));
+      const value = Number.isFinite(Number(raw)) ? Number(raw) : legacy[raw];
+      return String(Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback);
+    };
+
+    function getMode() {
+        let m = get('theme-preset', null);
+        if (m === null) {
+            const legacy = get('dark-mode', null);
+            m = legacy === 'false' ? 'light' : legacy === 'true' ? 'dark' : 'system';
+        }
+        return oneOf(m, THEMES, 'system');
+    }
+
+    function resolve(mode) {
+        return !mode || mode === 'system' ? (mq.matches ? 'light' : 'dark') : mode;
+    }
+
+    function apply(mode, forced) {
+        mode = oneOf(mode, THEMES, 'system');
+        const t = forced ? oneOf(forced, THEMES.slice(1), resolve(mode)) : resolve(mode);
+        root.classList.remove(...CLASSES);
+        if (t === 'light') root.classList.add('light-theme');
+        else if (t !== 'dark') root.classList.add('theme-' + t);
+        root.dataset.themePreset = t;
+        root.dataset.themeMode = mode;
+        root.style.colorScheme = t === 'light' ? 'light' : 'dark';
+        if (typeof window.onAnkaTheme === 'function') window.onAnkaTheme(t, mode);
+    }
+
+    function applyDisplay() {
+      const uiScale = scaleValue('ui-scale', { compact: 90, normal: 100, large: 110, board: 125 }, 100, 125, 100);
+      const fontScale = scaleValue('font-scale', { small: 90, normal: 100, large: 110 }, 100, 130, 100);
+      root.dataset.uiScale = uiScale;
+      root.dataset.fontScale = fontScale;
+      root.style.setProperty('--z', String(Number(uiScale) / 100));
+      root.style.setProperty('--anka-font-scale', String(Number(fontScale) / 100));
+      root.style.fontSize = 16 * Number(fontScale) / 100 + 'px';
+        root.classList.toggle('touch-mode', get('touch-mode', 'false') === 'true');
+        root.classList.toggle('reduce-effects', get('ui-animations', LOW ? 'false' : 'true') !== 'true');
+        root.classList.toggle('smooth', get('smooth-scrolling', LOW ? 'false' : 'true') === 'true');
+        root.dataset.schoolMode = get('school-mode', 'false') === 'true' ? 'on' : 'off';
+    }
+
+    window.AnkaTheme = { apply, resolve, getMode, THEMES };
+    window.AnkaDisplay = { apply: applyDisplay, get, LOW };
+
+    apply(getMode());
+    applyDisplay();
+
+    if (mq.addEventListener) {
+        mq.addEventListener('change', () => {
+            if (getMode() === 'system') apply('system');
+        });
+    }
+})();
+</script>
+<style>
+    :root {
+        color-scheme: dark;
+        --z: 1;
+        --bg-primary: #09090b;
+        --bg-secondary: #121215;
+        --bg-tertiary: #18181b;
+        --bg-elevated: #27272a;
+        --text-color: #f4f4f5;
+        --text-secondary: #a1a1aa;
+        --accent: #ff4757;
+        --accent-2: #ff7a45;
+        --border-color: #27272a;
+        --border-hover: #3f3f46;
+        --ok: #10b981;
+        --shadow: 0 12px 36px rgba(0,0,0,.35);
+        --font: system-ui, -apple-system, 'Segoe UI', Ubuntu, Cantarell, 'Noto Sans', 'DejaVu Sans', 'Liberation Sans', Roboto, 'Helvetica Neue', Arial, 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+    }
+    :root.light-theme {
+        color-scheme: light;
+        --bg-primary: #f0f2f5;
+        --bg-secondary: #ffffff;
+        --bg-tertiary: #eef0f3;
+        --bg-elevated: #e4e6eb;
+        --text-color: #050505;
+        --text-secondary: #65676b;
+        --border-color: #d8dade;
+        --border-hover: #b9bcc2;
+        --shadow: 0 12px 36px rgba(0,0,0,.12);
+    }
+    :root.theme-catppuccin { --accent: #f38ba8; --bg-primary: #1e1e2e; --bg-secondary: #181825; --bg-tertiary: #313244; --bg-elevated: #45475a; --text-color: #cdd6f4; --text-secondary: #a6adc8; --border-color: #45475a; --border-hover: #585b70; }
+    :root.theme-cyberpunk { --accent: #ff007f; --bg-primary: #05050a; --bg-secondary: #0f0e17; --bg-tertiary: #1f1b2c; --bg-elevated: #342d4a; --text-color: #fffffe; --text-secondary: #a7a9be; --border-color: #ff007f; --border-hover: #ff66b3; }
+    :root.theme-dracula { --accent: #ff79c6; --bg-primary: #21222c; --bg-secondary: #191a21; --bg-tertiary: #282a36; --bg-elevated: #44475a; --text-color: #f8f8f2; --text-secondary: #6272a4; --border-color: #44475a; --border-hover: #6272a4; }
+    :root.theme-nord { --accent: #88c0d0; --bg-primary: #2e3440; --bg-secondary: #242933; --bg-tertiary: #3b4252; --bg-elevated: #4c566a; --text-color: #eceff4; --text-secondary: #d8dee9; --border-color: #4c566a; --border-hover: #81a1c1; }
+    :root.theme-oled { --accent: #3b82f6; --bg-primary: #000; --bg-secondary: #0a0a0a; --bg-tertiary: #141414; --bg-elevated: #222; --text-color: #fff; --text-secondary: #888; --border-color: #222; --border-hover: #3b82f6; }
+    :root.theme-emerald { --accent: #34a853; --bg-primary: #061a14; --bg-secondary: #04120e; --bg-tertiary: #0b2920; --bg-elevated: #134d3b; --text-color: #e6f4ea; --text-secondary: #81c995; --border-color: #134d3b; --border-hover: #34a853; }
+    html { font-size: calc(16px * var(--anka-font-scale, 1)); }
+    html.smooth { scroll-behavior: smooth; }
+    [hidden] { display: none !important; }
+    * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--bg-elevated) transparent; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--bg-elevated); border-radius: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    html, body {
+        margin: 0;
+        min-height: 100%;
+        background-color: var(--bg-primary);
+        font-family: var(--font);
+        color: var(--text-color);
+        -webkit-font-smoothing: antialiased;
+    }
+    html { background-image: radial-gradient(circle at 50% -15%, var(--bg-tertiary) 0%, var(--bg-primary) 75%); background-attachment: fixed; }
+    body { overflow-y: auto; overflow-x: hidden; zoom: var(--z); background: none; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    button { font: inherit; color: inherit; }
+    html.reduce-effects *, html.reduce-effects *::before, html.reduce-effects *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; box-shadow: none !important; scroll-behavior: auto !important; }
+    html.reduce-effects { background-image: none; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 70px 20px 40px; display: flex; flex-direction: column; align-items: center; position: relative; min-height: calc(100vh / var(--z)); }
+    .top-left { position: absolute; top: 22px; left: 30px; display: flex; flex-direction: column; gap: 2px; user-select: none; }
+    .clock-time { font-size: 1.875rem; font-weight: 600; letter-spacing: .5px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+    .clock-date { font-size: .8125rem; color: var(--text-secondary); text-transform: capitalize; }
+    .top-bar { position: absolute; top: 20px; right: 30px; display: flex; align-items: center; gap: 12px; }
+    .icon-btn { background: var(--bg-tertiary); border: 1px solid var(--border-color); width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; color: var(--text-color); transition: background-color .15s, border-color .15s; box-shadow: var(--shadow); }
+    .icon-btn:hover { background: var(--bg-elevated); border-color: var(--border-hover); }
+    .icon-btn svg { width: 20px; height: 20px; display: block; }
+    .school-chip { display: flex; align-items: center; gap: 8px; background: var(--bg-tertiary); border: 1px solid var(--accent); color: var(--text-color); padding: 0 16px; height: 48px; border-radius: 32px; cursor: pointer; font-size: .8125rem; font-weight: 600; white-space: nowrap; box-shadow: var(--shadow); }
+    .school-chip:hover { background: var(--bg-elevated); }
+    .school-chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: block; }
+    .profile-btn { display: flex; align-items: center; gap: 10px; background: var(--bg-tertiary); border: 1px solid var(--border-color); padding: 6px 16px 6px 6px; border-radius: 32px; cursor: pointer; transition: background-color .15s, border-color .15s; box-shadow: var(--shadow); }
+    .profile-btn:hover { background: var(--bg-elevated); border-color: var(--border-hover); }
+    .profile-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: .9375rem; overflow: hidden; flex-shrink: 0; }
+    .profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .profile-info { display: flex; flex-direction: column; text-align: left; }
+    .profile-name { font-size: .875rem; font-weight: 600; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .profile-status { font-size: .6875rem; color: var(--ok); font-weight: 500; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .network-banner { position: fixed; top: 0; left: 0; width: 100%; background: var(--accent); color: #fff; text-align: center; padding: 10px; font-size: .8125rem; font-weight: 600; display: none; z-index: 1000; }
+    .network-banner.offline { display: block; }
+    .logo { font-size: 2.625rem; font-weight: 700; letter-spacing: 1px; margin: 24px 0 35px; display: flex; align-items: center; gap: 10px; user-select: none; }
+    .logo span.mark { color: var(--accent); }
+    .searchbar-container { width: 100%; max-width: 680px; position: relative; }
+    .searchbar { width: 100%; display: flex; align-items: center; gap: 10px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 40px; padding: 10px 12px 10px 24px; box-shadow: var(--shadow); transition: border-color .15s; }
+    .searchbar:focus-within { border-color: var(--accent); }
+    .searchbar input { flex: 1; min-width: 0; background: none; border: none; outline: none; color: var(--text-color); font: inherit; font-size: 1rem; padding: 10px 0; }
+    .suggestions-dropdown { position: absolute; top: calc(100% + 8px); left: 0; right: 0; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 20px; box-shadow: var(--shadow); display: none; flex-direction: column; overflow: hidden; z-index: 50; padding: 6px 0; }
+    .suggestions-dropdown.active { display: flex; }
+    .suggestion-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 24px 4px; font-size: .6875rem; color: var(--text-secondary); }
+    .suggestion-head button { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: .6875rem; padding: 2px 4px; border-radius: 6px; }
+    .suggestion-head button:hover { color: var(--accent); }
+    .suggestion-item { padding: 10px 24px; font-size: .875rem; cursor: pointer; display: flex; align-items: center; gap: 12px; }
+    .suggestion-item .s-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .suggestion-item .s-note { font-size: .6875rem; color: var(--text-secondary); }
+    .suggestion-item.calc .s-text { font-weight: 600; }
+    .suggestion-item .s-del { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: .75rem; padding: 2px 6px; border-radius: 6px; opacity: 0; }
+    .suggestion-item:hover .s-del, .suggestion-item.selected .s-del { opacity: 1; }
+    .suggestion-item .s-del:hover { color: var(--accent); }
+    .suggestion-item:hover, .suggestion-item.selected { background: var(--bg-tertiary); color: var(--accent); }
+    .ai-toggle { display: flex; align-items: center; gap: 6px; background: var(--bg-tertiary); border: 1px solid var(--border-color); padding: 10px 18px; border-radius: 30px; cursor: pointer; font-size: .8125rem; font-weight: 600; color: var(--text-secondary); user-select: none; white-space: nowrap; transition: background-color .15s, color .15s; }
+    .ai-toggle:hover { background: var(--bg-elevated); color: var(--text-color); }
+    .ai-toggle.active { background: linear-gradient(90deg, var(--accent), var(--accent-2)); color: #fff; border-color: transparent; }
+    .ai-toggle.disabled { opacity: .45; cursor: not-allowed; }
+    .engine-pill { font-size: .8125rem; color: var(--text-secondary); margin-top: 16px; }
+    .engine-pill b { color: var(--accent); cursor: pointer; }
+    .hint { font-size: .6875rem; color: var(--text-secondary); margin-top: 4px; opacity: .8; text-align: center; }
+    .grid { margin-top: 45px; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 22px; width: 100%; max-width: 760px; }
+    .tile { display: flex; flex-direction: column; align-items: center; gap: 12px; cursor: pointer; padding: 18px 10px; border-radius: 20px; position: relative; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: inherit; text-decoration: none; font: inherit; contain: layout style; transition: transform .12s, border-color .12s; }
+    .tile:focus-visible { border-color: var(--border-hover); }
+    @media (hover: hover) { .tile:hover { border-color: var(--border-hover); transform: translateY(-3px); } }
+    .tile.drag-over { border-color: var(--accent); background: var(--bg-elevated); }
+    .tile.dragging { opacity: .4; }
+    .tile .icon-box { position: relative; width: 60px; height: 60px; border-radius: 18px; background: var(--bg-secondary); border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    .tile:hover .icon-box { border-color: var(--accent); }
+    .tile .icon-box .ph { font-size: 1.5rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; user-select: none; }
+    .tile .icon-box img { position: absolute; inset: 0; margin: auto; width: 34px; height: 34px; object-fit: contain; background: var(--bg-secondary); }
+    .tile .name { font-size: .8125rem; text-align: center; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+    .tile .tile-actions { position: absolute; top: 8px; right: 8px; display: none; gap: 4px; z-index: 2; }
+    .tile:hover .tile-actions, .tile:focus-within .tile-actions { display: flex; }
+    .tile .tile-actions span { width: 24px; height: 24px; border-radius: 50%; background: var(--bg-elevated); color: var(--text-color); font-size: .75rem; display: flex; align-items: center; justify-content: center; }
+    .tile .tile-actions span:hover { background: var(--accent); color: #fff; }
+    .tile.add .icon-box { border-style: dashed; color: var(--text-secondary); font-size: 1.75rem; background: transparent; }
+    html[data-ui-scale="110"] .tile, html[data-ui-scale="115"] .tile, html[data-ui-scale="120"] .tile, html[data-ui-scale="125"] .tile { padding: 24px 14px; }
+    html.touch-mode .tile { min-height: 150px; }
+    html.touch-mode .tile .icon-box { width: 74px; height: 74px; }
+    html.touch-mode .ghost-btn, html.touch-mode .icon-btn, html.touch-mode .profile-btn, html.touch-mode .school-chip { min-height: 48px; }
+    html.touch-mode .tile .tile-actions { display: flex; }
+    @media (hover: none) { .tile .tile-actions { display: flex; } }
+    .grid-tools { width: 100%; max-width: 760px; display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+    .ghost-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); padding: 6px 12px; border-radius: 10px; font-size: .75rem; cursor: pointer; }
+    .ghost-btn:hover { color: var(--text-color); border-color: var(--border-hover); }
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 100; align-items: center; justify-content: center; }
+    .modal-bg.open { display: flex; }
+    .modal { width: 420px; max-width: 92vw; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 24px; padding: 28px; box-shadow: 0 25px 60px rgba(0,0,0,.6); }
+    .modal h3 { margin: 0 0 20px; font-size: 1.125rem; font-weight: 600; }
+    .modal input, .modal select, .settings-card input:not([type="checkbox"]), .settings-card select { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 14px; padding: 14px; color: var(--text-color); margin-bottom: 14px; font: inherit; font-size: .875rem; outline: none; }
+    .modal input:focus, .modal select:focus, .settings-card input:not([type="checkbox"]):focus, .settings-card select:focus { border-color: var(--accent); }
+    .settings-card select:disabled { opacity: .5; cursor: not-allowed; }
+    select option { background: var(--bg-secondary); color: var(--text-color); }
+    .modal .row { display: flex; gap: 12px; margin-top: 10px; }
+    .modal button { flex: 1; padding: 14px; border: none; border-radius: 14px; font-weight: 600; font-size: .875rem; cursor: pointer; }
+    .modal .save { background: var(--accent); color: #fff; }
+    .modal .cancel { background: var(--bg-elevated); color: var(--text-secondary); }
+    .view-container { display: none; width: 100%; max-width: 860px; margin: 0 auto; padding: 50px 20px; }
+    .view-container.active { display: block; }
+    .view-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 30px; }
+    .view-header h2 { margin: 0; font-size: 1.5rem; }
+    .back-btn { background: var(--bg-elevated); border: none; padding: 10px 20px; border-radius: 12px; cursor: pointer; font-weight: 600; }
+    .settings-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 20px; padding: 26px; margin-bottom: 22px; }
+    .settings-card h4 { margin: 0 0 6px; font-size: .9375rem; color: var(--accent); letter-spacing: .3px; }
+    .settings-card .sub { font-size: .75rem; color: var(--text-secondary); margin: 0 0 16px; }
+    .settings-card .school-note { font-size: .75rem; color: #fbbf24; margin: 0 0 14px; }
+    .settings-card label { display: block; font-size: .75rem; color: var(--text-secondary); margin: 0 0 6px 4px; }
+    .settings-card label output { float: right; color: var(--accent); font-variant-numeric: tabular-nums; }
+    #fontScaleSelect, #uiScaleSelect { width: 100%; height: 28px; margin: 0 0 14px; padding: 0; border: 0; accent-color: var(--accent); }
+    .settings-card label.check { display: flex; align-items: center; gap: 10px; margin: 0 0 12px 4px; cursor: pointer; color: var(--text-color); font-size: .875rem; }
+    .settings-card label.check input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+    .account-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+    .account-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--bg-tertiary); padding: 14px 18px; border-radius: 14px; border: 1px solid var(--border-color); }
+    .account-info { display: flex; align-items: center; gap: 14px; font-size: .875rem; min-width: 0; }
+    .acc-avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: .9375rem; overflow: hidden; flex-shrink: 0; }
+    .acc-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .acc-text { min-width: 0; }
+    .acc-name { font-weight: 600; font-size: .9375rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .acc-user { color: var(--text-secondary); font-size: .75rem; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .acc-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+    .acc-active { color: var(--ok); font-size: .8125rem; font-weight: 600; margin-right: 8px; }
+    .mini-btn { background: var(--accent); border: none; color: #fff; padding: 8px 14px; border-radius: 10px; cursor: pointer; font-size: .75rem; font-weight: 600; }
+    .mini-btn.danger { background: var(--bg-elevated); color: var(--accent); }
+    .avatar-drop { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+    .avatar-preview { width: 64px; height: 64px; border-radius: 50%; background: var(--bg-tertiary); border: 2px dashed var(--border-color); display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0; font-size: 1.375rem; font-weight: 700; color: var(--text-secondary); cursor: pointer; }
+    .avatar-preview.has-img { border-style: solid; }
+    .avatar-preview:hover { border-color: var(--accent); }
+    .avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+    .avatar-actions { display: flex; flex-direction: column; gap: 6px; }
+    .avatar-actions button { font-size: .75rem; padding: 7px 12px; border-radius: 99px; border: 1px solid var(--border-color); background: var(--bg-tertiary); cursor: pointer; }
+    .avatar-actions button:hover { border-color: var(--border-hover); }
+    .avatar-drop.over .avatar-preview { border-color: var(--accent); }
+    .auth-btn { width: 100%; padding: 14px; border-radius: 14px; border: none; background: var(--accent); color: #fff; font-weight: 600; font-size: .9375rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; }
+    .auth-btn:hover { filter: brightness(1.08); }
+    .auth-btn.secondary { background: var(--bg-elevated); color: var(--text-color); }
+    #toast-stack { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000001; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; width: max-content; max-width: 92vw; }
+    .toast { background: var(--bg-secondary); border: 1px solid var(--border-color); padding: 10px 16px; border-radius: 10px; font-size: .8125rem; box-shadow: var(--shadow); opacity: 0; transform: translateY(-8px); transition: opacity .18s, transform .18s; }
+    .toast.show { opacity: 1; transform: none; }
+    .toast.error { border-color: #f38ba8; }
+    .theme-wrap { position: relative; }
+    .theme-menu { position: absolute; top: calc(100% + 8px); right: 0; min-width: 170px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 14px; box-shadow: var(--shadow); padding: 6px; z-index: 60; display: none; flex-direction: column; gap: 2px; }
+    .theme-menu.open { display: flex; }
+    .theme-menu button { display: flex; align-items: center; gap: 10px; background: none; border: none; color: var(--text-color); padding: 10px 12px; border-radius: 10px; cursor: pointer; font-size: .875rem; text-align: left; }
+    .theme-menu button:hover, .theme-menu button:focus-visible { background: var(--bg-tertiary); }
+    .theme-menu button svg { width: 18px; height: 18px; flex-shrink: 0; }
+    .theme-menu button .tick { margin-left: auto; color: var(--accent); visibility: hidden; }
+    .theme-menu button[aria-checked="true"] .tick { visibility: visible; }
+    .crop-modal { width: 340px; }
+    .crop-stage { width: 280px; height: 280px; margin: 0 auto 14px; border-radius: 16px; overflow: hidden; touch-action: none; cursor: grab; background: #fff; user-select: none; }
+    .crop-stage.grabbing { cursor: grabbing; }
+    .crop-stage canvas { width: 100%; height: 100%; display: block; }
+    .crop-zoom { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .modal .crop-zoom button { flex: none; width: 36px; height: 36px; padding: 0; border-radius: 50%; background: var(--bg-elevated); color: var(--text-color); font-size: 1.125rem; line-height: 1; }
+    .modal .crop-zoom input { flex: 1; width: auto; margin: 0; padding: 0; border: none; background: none; accent-color: var(--accent); }
+    .crop-hint { font-size: .75rem; color: var(--text-secondary); text-align: center; margin-bottom: 6px; }
+    @media (max-width: 700px) {
+        .top-left { display: none; }
+        .profile-info { display: none; }
+        .profile-btn { padding: 6px; }
+        .logo { font-size: 2.125rem; }
+        .school-chip span { display: none; }
+        .school-chip { padding: 0 14px; }
+    }
+</style>
+</head>
+<body>
+<div id="netBanner" class="network-banner" role="alert">İnternet bağlantınız yok! Lütfen bağlantınızı kontrol edin.</div>
+<div id="toast-stack" aria-live="polite"></div>
+
+<div class="wrap" id="homeView">
+  <div class="top-left" aria-hidden="true">
+    <div class="clock-time" id="clockTime"></div>
+    <div class="clock-date" id="clockDate"></div>
+  </div>
+
+  <div class="top-bar">
+    <button class="school-chip" id="schoolChip" type="button" hidden><i></i><span>Okul Modu</span></button>
+    <div class="theme-wrap">
+      <button class="icon-btn" id="themeToggleBtn" type="button" aria-label="Temayı değiştir" aria-haspopup="menu" aria-expanded="false"></button>
+      <div class="theme-menu" id="themeMenu" role="menu" aria-label="Tema"></div>
+    </div>
+    <div class="profile-btn" id="profileBtn" role="button" tabindex="0" title="Profil ve ayarlar">
+      <div class="profile-avatar" id="profileAvatar">M</div>
+      <div class="profile-info">
+        <div class="profile-name" id="profileName">Misafir</div>
+        <div class="profile-status" id="profileStatusText">Profil Seçilmedi</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="logo">Anka <span class="mark">Web</span></div>
+
+  <div class="searchbar-container">
+    <div class="searchbar">
+      <input id="q" type="text" placeholder="Arayın, adres yazın ya da işlem yapın... (odaklamak için &quot;/&quot;)" autofocus autocomplete="off" spellcheck="false" autocapitalize="off" role="combobox" aria-expanded="false" aria-controls="suggestions" aria-autocomplete="list">
+      <div class="ai-toggle" id="aiToggle" role="button" tabindex="0" aria-pressed="false">✦ AI Modu</div>
+    </div>
+    <div class="suggestions-dropdown" id="suggestions" role="listbox"></div>
+  </div>
+  <div class="engine-pill">Arama motoru: <b id="engineLabel" role="button" tabindex="0" title="Değiştirmek için tıklayın">Google</b></div>
+  <div class="hint">Kısayollar: !yt !w !gh !so !tr !maps !r !img !npm !mdn · Hesap makinesi: 12*(3+4)</div>
+
+  <div class="grid" id="grid"></div>
+  <div class="grid-tools">
+    <button class="ghost-btn" id="exportBtn" type="button">Dışa Aktar</button>
+    <button class="ghost-btn" id="importBtn" type="button">İçe Aktar</button>
+    <input type="file" id="importFile" accept="application/json" hidden>
+  </div>
+</div>
+
+<div class="view-container" id="authView">
+  <div class="view-header">
+    <h2>Profil ve Ayarlar</h2>
+    <button class="back-btn" id="backBtn" type="button">Geri Dön</button>
+  </div>
+
+  <div class="settings-card">
+    <h4>Arama Motoru</h4>
+    <p class="sub">Adres çubuğuna yazdığınız aramaların gönderileceği motor.</p>
+    <p class="school-note" id="schoolNote" hidden>Okul Modu açık: AI Modu ve arama önerileri Okul Modu tarafından yönetiliyor.</p>
+    <select id="engineSelect" aria-label="Arama motoru">
+      <option value="google">Google</option>
+      <option value="yandex">Yandex</option>
+      <option value="bing">Bing</option>
+      <option value="duckduckgo">DuckDuckGo</option>
+      <option value="ecosia">Ecosia</option>
+      <option value="brave">Brave Search</option>
+      <option value="custom">Özel</option>
+    </select>
+    <div id="customEngineRow" hidden>
+      <label for="customEngineUrl">Özel arama adresi (arama sözcüğü için %s kullanın)</label>
+      <input type="text" id="customEngineUrl" placeholder="https://www.google.com/search?q=%s" spellcheck="false" autocapitalize="off">
+    </div>
+    <label for="aiProviderSelect">AI Modu sağlayıcısı</label>
+    <select id="aiProviderSelect" aria-label="AI sağlayıcısı">
+      <option value="google-ai">Google AI Modu</option>
+      <option value="chatgpt">ChatGPT</option>
+      <option value="gemini">Gemini</option>
+      <option value="perplexity">Perplexity</option>
+      <option value="claude">Claude</option>
+    </select>
+  </div>
+
+  <div class="settings-card">
+    <h4>Görünüm</h4>
+    <p class="sub">Bu ayarlar uygulama ayarlarıyla ortaktır; birinde yapılan değişiklik diğerine anında yansır.</p>
+    <label for="themeSelect">Tema</label>
+    <select id="themeSelect" aria-label="Tema">
+      <option value="system">Sistem (Varsayılan)</option>
+      <option value="dark">Modern Koyu (Zinc)</option>
+      <option value="light">Aydınlık Ferah</option>
+      <option value="catppuccin">Catppuccin Mocha</option>
+      <option value="cyberpunk">Cyberpunk Neon</option>
+      <option value="dracula">Dracula Pro</option>
+      <option value="nord">Nord Frost</option>
+      <option value="oled">OLED Saf Siyah</option>
+      <option value="emerald">Emerald Forest</option>
+    </select>
+    <label for="fontScaleSelect">Yazı boyutu <output id="fontScaleValue">100%</output></label>
+    <input type="range" id="fontScaleSelect" aria-label="Yazı boyutu" min="100" max="130" step="5" value="100">
+    <label for="uiScaleSelect">Arayüz ölçeği <output id="uiScaleValue">100%</output></label>
+    <input type="range" id="uiScaleSelect" aria-label="Arayüz ölçeği" min="100" max="125" step="5" value="100">
+    <label class="check"><input type="checkbox" id="animToggle"><span>Arayüz animasyonları ve gölgeler</span></label>
+    <label class="check"><input type="checkbox" id="touchToggle"><span>Dokunmatik tahta modu</span></label>
+  </div>
+
+  <div class="settings-card">
+    <h4>Kayıtlı Profiller</h4>
+    <p class="sub">Bunlar sadece bu cihazda, tarayıcı içinde tutulan yerel profillerdir — herhangi bir hesaba giriş yapılmaz.</p>
+    <div class="account-list" id="accountList"></div>
+    <button class="auth-btn secondary" id="newProfileBtn" type="button">+ Yeni Yerel Profil Oluştur</button>
+  </div>
+
+  <div class="settings-card">
+    <h4>Aktif Profili Düzenle</h4>
+    <p class="sub">Kullanıcı adınızı, görünen adınızı ve profil fotoğrafınızı değiştirin.</p>
+
+    <div class="avatar-drop" id="avatarDrop">
+      <div class="avatar-preview" id="avatarPreview" role="button" tabindex="0">+</div>
+      <div class="avatar-actions">
+        <button type="button" id="avatarPickBtn">Fotoğraf Yükle</button>
+        <button type="button" id="avatarClearBtn">Kaldır</button>
+      </div>
+      <input type="file" id="localAvatarFile" accept="image/png,image/jpeg,image/webp" hidden>
+    </div>
+    <p class="hint">Sürükleyip bırakabilir ya da tıklayıp seçebilirsiniz. Görsel otomatik olarak küçültülür.</p>
+
+    <input type="text" id="editUsername" placeholder="Kullanıcı Adı (ör. anka_kullanici)" maxlength="24" autocomplete="off" spellcheck="false">
+    <input type="text" id="editName" placeholder="Görünen Ad" maxlength="40" autocomplete="off">
+    <button class="auth-btn" id="saveProfileBtn" type="button">Değişiklikleri Kaydet</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="modal-bg">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h3 id="modalTitle">Kısayol Ekle</h3>
+    <input id="m-name" type="text" placeholder="Ad (ör. YouTube)" maxlength="60" autocomplete="off">
+    <input id="m-url" type="text" placeholder="Adres (ör. https://youtube.com)" autocomplete="off" spellcheck="false" autocapitalize="off">
+    <div class="row">
+      <button class="cancel" id="modalCancel" type="button">Vazgeç</button>
+      <button class="save" id="modalSave" type="button">Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="cropModal">
+  <div class="modal crop-modal" role="dialog" aria-modal="true" aria-labelledby="cropTitle">
+    <h3 id="cropTitle">Profil Fotoğrafını Ayarla</h3>
+    <div class="crop-stage" id="cropStage" tabindex="0" aria-label="Fotoğraf konumu">
+      <canvas id="cropCanvas" width="280" height="280"></canvas>
+    </div>
+    <div class="crop-zoom">
+      <button type="button" id="cropZoomOut" aria-label="Küçült">−</button>
+      <input type="range" id="cropZoom" min="1" max="4" step="0.01" value="1" aria-label="Yakınlaştırma">
+      <button type="button" id="cropZoomIn" aria-label="Büyüt">+</button>
+    </div>
+    <div class="crop-hint">Sürükleyerek konumlandırın; kaydırıcı, fare tekerleği veya +/- tuşlarıyla yakınlaştırın.</div>
+    <div class="row">
+      <button class="cancel" id="cropCancel" type="button">Vazgeç</button>
+      <button class="save" id="cropApply" type="button">Uygula</button>
+    </div>
+  </div>
+</div>
+
+<script src="../core/scripts/feedback.js"></script>
+<script>
+const DEFAULTS = [
+  { name: 'YouTube', url: 'https://youtube.com' },
+  { name: 'Wikipedia', url: 'https://wikipedia.org' },
+  { name: 'Gmail', url: 'https://mail.google.com' },
+  { name: 'Harita', url: 'https://maps.google.com' }
+];
+
+const ENGINES = {
+  google: { name: 'Google', tpl: 'https://www.google.com/search?q=%s&safe=active' },
+  yandex: { name: 'Yandex', tpl: 'https://yandex.com.tr/search/?text=%s&fyandex=1' },
+  bing: { name: 'Bing', tpl: 'https://www.bing.com/search?q=%s&adlt=strict' },
+  duckduckgo: { name: 'DuckDuckGo', tpl: 'https://duckduckgo.com/?q=%s&kp=1' },
+  ecosia: { name: 'Ecosia', tpl: 'https://www.ecosia.org/search?q=%s&safe=active' },
+  brave: { name: 'Brave Search', tpl: 'https://search.brave.com/search?q=%s&safesearch=strict' }
+};
+
+const AI_PROVIDERS = {
+  'google-ai': { tpl: 'https://www.google.com/search?q=%s&udm=50' },
+  chatgpt: { tpl: 'https://chatgpt.com/?q=%s' },
+  gemini: { tpl: 'https://gemini.google.com/app' },
+  perplexity: { tpl: 'https://www.perplexity.ai/search?q=%s' },
+  claude: { tpl: 'https://claude.ai/new?q=%s' }
+};
+
+const BANGS = {
+  yt: 'https://www.youtube.com/results?search_query=%s',
+  w: 'https://tr.wikipedia.org/w/index.php?search=%s',
+  gh: 'https://github.com/search?q=%s',
+  so: 'https://stackoverflow.com/search?q=%s',
+  tr: 'https://translate.google.com/?sl=auto&tl=tr&text=%s&op=translate',
+  maps: 'https://www.google.com/maps/search/%s',
+  r: 'https://www.reddit.com/search/?q=%s',
+  img: 'https://www.google.com/search?tbm=isch&q=%s',
+  npm: 'https://www.npmjs.com/search?q=%s',
+  mdn: 'https://developer.mozilla.org/search?q=%s'
+};
+
+const SCHOOL_LOCKED = new Set(['dev-tools-shortcut', 'ai-mode-active', 'search-suggestions', 'notifications', 'ad-block', 'track-protect', 'https-only', 'max-tabs']);
+const THEME_LABELS = { system: 'Sistem', light: 'Aydınlık', dark: 'Koyu' };
+const ICONS = {
+  system: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  light: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  dark: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  custom: '<circle cx="12" cy="12" r="9"/><circle cx="8.5" cy="10" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="15.5" cy="10" r="1"/>'
+};
+
+const MAX_SHORTCUTS = 60;
+const MAX_RECENTS = 8;
+const DEFAULT_SCHOOL_URL = 'https://www.eba.gov.tr/';
+const $ = (id) => document.getElementById(id);
+const framed = window.parent !== window;
+const themeChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('theme_settings') : { postMessage() {}, onmessage: null };
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function debounce(fn, wait) {
+  let timer = 0;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), wait);
+  };
+}
+
+const store = {
+  json(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw === null ? fallback : JSON.parse(raw);
+    } catch (err) {
+      return fallback;
+    }
+  },
+  setJson(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+};
+
+function getSetting(id, def) {
+  return window.AnkaDisplay.get(id, def);
+}
+
+function isSchool() {
+  return getSetting('school-mode', 'false') === 'true';
+}
+
+function notifyMain(id, val) {
+  const out = val === 'true' ? true : val === 'false' ? false : val;
+  try {
+    const { ipcRenderer } = require('electron');
+    ipcRenderer.send('settings-update', { id, val: out });
+    ipcRenderer.send('save-app-setting', { id, val: out });
+  } catch (err) {}
+  if (framed) {
+    try {
+      window.parent.postMessage({ type: 'anka-setting', id, val: out }, '*');
+    } catch (err) {}
+  }
+}
+
+function setSetting(id, value, force) {
+  if (!force && isSchool() && SCHOOL_LOCKED.has(id)) return false;
+  try {
+    localStorage.setItem('set_' + id, String(value));
+  } catch (err) {
+    return false;
+  }
+  notifyMain(id, String(value));
+  return true;
+}
+
+function notify(message, type) {
+  if (type !== 'error' && getSetting('notifications', 'true') === 'false') return;
+  const stack = $('toast-stack');
+  while (stack.children.length >= 3) stack.firstChild.remove();
+  const toast = el('div', type === 'error' ? 'toast error' : 'toast', message);
+  stack.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 220);
+  }, 2600);
+}
+
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true, () => false);
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch (err) {}
+  area.remove();
+  return Promise.resolve(ok);
+}
+
+function normalizeUrl(input) {
+  let value = String(input || '').trim();
+  if (!value) return '';
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = 'https://' + value;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    if (!parsed.hostname) return '';
+    return parsed.href;
+  } catch (err) {
+    return '';
+  }
+}
+
+function navigate(url) {
+  if (!url) return;
+  if (framed) window.parent.postMessage({ type: 'anka-navigate', url }, '*');
+  else window.location.href = url;
+}
+
+if (framed) {
+  window.addEventListener('pointerdown', () => {
+    window.parent.postMessage({ type: 'anka-dismiss-context-menu' }, '*');
+  }, true);
+}
+
+const timeFmt = new Intl.DateTimeFormat('tr-TR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const dateFmt = new Intl.DateTimeFormat('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' });
+let clockTimer = 0;
+
+function tickClock() {
+  clearTimeout(clockTimer);
+  if (document.hidden) return;
+  const now = new Date();
+  $('clockTime').textContent = timeFmt.format(now);
+  $('clockDate').textContent = dateFmt.format(now);
+  clockTimer = setTimeout(tickClock, 60000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50);
+}
+
+function updateThemeUI(resolved, mode) {
+  const btn = $('themeToggleBtn');
+  if (!btn) return;
+  const key = ICONS[mode] ? mode : 'custom';
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[key] + '</svg>';
+  const label = THEME_LABELS[mode] || 'Özel';
+  btn.title = 'Tema: ' + label + ' (değiştirmek için tıklayın, Ctrl+Shift+D)';
+  btn.setAttribute('aria-label', 'Tema: ' + label);
+  const select = $('themeSelect');
+  if (select && select.value !== mode) select.value = mode;
+  markThemeMenu(mode);
+}
+
+window.onAnkaTheme = updateThemeUI;
+
+let themeLocalAt = 0;
+
+function setThemeMode(mode) {
+  if (!window.AnkaTheme.THEMES.includes(mode)) return;
+  themeLocalAt = Date.now();
+  setSetting('theme-preset', mode, true);
+  window.AnkaTheme.apply(mode);
+  themeChannel.postMessage({ id: 'theme-preset', val: window.AnkaTheme.resolve(mode) });
+  closeThemeMenu();
+}
+
+const THEME_MENU = [['system', 'Sistem'], ['light', 'Aydınlık'], ['dark', 'Koyu']];
+
+function buildThemeMenu() {
+  const fragment = document.createDocumentFragment();
+  for (const [mode, label] of THEME_MENU) {
+    const item = el('button');
+    item.type = 'button';
+    item.dataset.mode = mode;
+    item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', 'false');
+    item.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[mode] + '</svg><span></span><span class="tick">✓</span>';
+    item.children[1].textContent = label;
+    fragment.appendChild(item);
+  }
+  $('themeMenu').replaceChildren(fragment);
+}
+
+function markThemeMenu(mode) {
+  const menu = $('themeMenu');
+  if (!menu) return;
+  for (const item of menu.children) item.setAttribute('aria-checked', String(item.dataset.mode === mode));
+}
+
+function openThemeMenu() {
+  const menu = $('themeMenu');
+  menu.classList.add('open');
+  $('themeToggleBtn').setAttribute('aria-expanded', 'true');
+  const target = menu.querySelector('[aria-checked="true"]') || menu.firstElementChild;
+  if (target) target.focus();
+}
+
+function closeThemeMenu() {
+  const menu = $('themeMenu');
+  if (!menu) return;
+  menu.classList.remove('open');
+  $('themeToggleBtn').setAttribute('aria-expanded', 'false');
+}
+
+function toggleThemeMenu() {
+  if ($('themeMenu').classList.contains('open')) closeThemeMenu();
+  else openThemeMenu();
+}
+
+function toggleTheme() {
+  const order = ['system', 'light', 'dark'];
+  const index = order.indexOf(window.AnkaTheme.getMode());
+  setThemeMode(index === -1 ? 'system' : order[(index + 1) % order.length]);
+}
+
+function applyHostThemeSettings(settings) {
+  if (!settings || typeof settings !== 'object') return;
+  const root = document.documentElement;
+  if (Date.now() - themeLocalAt >= 600) {
+    const local = window.AnkaTheme.getMode();
+    const preset = settings.themePreset || 'system';
+    if (local === 'system' && preset !== 'system' && preset !== window.AnkaTheme.resolve('system')) window.AnkaTheme.apply('system', preset);
+    else window.AnkaTheme.apply(local);
+  }
+  if (settings.uiScale) {
+    const scale = Number(settings.uiScale) / 100;
+    if (Number.isFinite(scale)) {
+      root.dataset.uiScale = String(Math.round(scale * 100));
+      root.style.setProperty('--z', String(scale));
+    }
+  }
+  if (settings.fontScale) {
+    const scale = Number(settings.fontScale) / 100;
+    if (Number.isFinite(scale)) {
+      root.dataset.fontScale = String(Math.round(scale * 100));
+      root.style.setProperty('--anka-font-scale', String(scale));
+      root.style.fontSize = 16 * scale + 'px';
+    }
+  }
+  root.classList.toggle('touch-mode', !!settings.touchMode);
+  if (settings.uiAnimations !== undefined) root.classList.toggle('reduce-effects', settings.uiAnimations === false);
+}
+
+themeChannel.onmessage = (event) => {
+  const data = event.data;
+  if (!data) return;
+  if (data.id === 'theme-preset') {
+    if (Date.now() - themeLocalAt < 600) return;
+    const local = window.AnkaTheme.getMode();
+    window.AnkaTheme.apply(local === 'system' ? 'system' : data.val, data.val);
+  } else if (data.id === 'theme-settings-snapshot') {
+    applyHostThemeSettings(data.settings);
+  }
+};
+
+function checkNetwork() {
+  $('netBanner').classList.toggle('offline', !navigator.onLine);
+}
+
+function slugifyUsername(str) {
+  return (str || '')
+    .toLowerCase()
+    .replace(/ı/g, 'i')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 24) || 'kullanici';
+}
+
+const GUEST = Object.freeze({ username: 'misafir', name: 'Misafir', avatar: '' });
+
+function getAccounts() {
+  const list = store.json('anka_accounts', null);
+  if (!Array.isArray(list) || !list.length) return [{ ...GUEST }];
+  const clean = list
+    .filter((acc) => acc && typeof acc === 'object')
+    .map((acc) => ({
+      username: acc.username ? String(acc.username) : slugifyUsername(acc.name || String(acc.email || '').split('@')[0]),
+      name: String(acc.name || 'Kullanıcı').slice(0, 40),
+      avatar: typeof acc.avatar === 'string' && acc.avatar.startsWith('data:image/') ? acc.avatar : ''
+    }));
+  return clean.length ? clean : [{ ...GUEST }];
+}
+
+function setAccounts(list) {
+  if (!store.setJson('anka_accounts', list)) notify('Kayıt için yeterli alan yok.', 'error');
+}
+
+function getCurrentUser() {
+  const current = store.json('anka_current_user', null);
+  if (current && current.username) return current;
+  return getAccounts()[0];
+}
+
+function setCurrentUser(user) {
+  store.setJson('anka_current_user', user);
+}
+
+function avatarContent(user) {
+  const initial = (user.name || user.username || '?')[0].toUpperCase();
+  if (!user.avatar) return document.createTextNode(initial);
+  const img = document.createElement('img');
+  img.alt = '';
+  img.decoding = 'async';
+  img.src = user.avatar;
+  img.addEventListener('error', () => img.replaceWith(document.createTextNode(initial)), { once: true });
+  return img;
+}
+
+function updateAuthUI() {
+  const user = getCurrentUser();
+  const avatarEl = $('profileAvatar');
+  const nameEl = $('profileName');
+  const statusEl = $('profileStatusText');
+
+  if (user && user.username !== 'misafir') {
+    nameEl.textContent = user.name || user.username;
+    statusEl.textContent = '@' + user.username;
+    statusEl.style.color = 'var(--ok)';
+    avatarEl.style.background = 'var(--accent)';
+    avatarEl.replaceChildren(avatarContent(user));
+  } else {
+    nameEl.textContent = 'Misafir';
+    statusEl.textContent = 'Profil Seçilmedi';
+    statusEl.style.color = 'var(--text-secondary)';
+    avatarEl.style.background = 'var(--bg-elevated)';
+    avatarEl.textContent = 'M';
+  }
+}
+
+let draftMode = false;
+
+function renderAccountList() {
+  const accounts = getAccounts();
+  const current = getCurrentUser();
+  const fragment = document.createDocumentFragment();
+
+  accounts.forEach((acc, idx) => {
+    const item = el('div', 'account-item');
+    const info = el('div', 'account-info');
+    const avatar = el('div', 'acc-avatar');
+    avatar.appendChild(avatarContent(acc));
+    const text = el('div', 'acc-text');
+    text.append(el('div', 'acc-name', acc.name || acc.username), el('div', 'acc-user', '@' + acc.username));
+    info.append(avatar, text);
+
+    const actions = el('div', 'acc-actions');
+    if (current && current.username === acc.username) {
+      actions.appendChild(el('span', 'acc-active', 'Aktif'));
+    } else {
+      const pick = el('button', 'mini-btn', 'Seç');
+      pick.type = 'button';
+      pick.dataset.action = 'switch';
+      pick.dataset.idx = String(idx);
+      actions.appendChild(pick);
+    }
+    const remove = el('button', 'mini-btn danger', 'Kaldır');
+    remove.type = 'button';
+    remove.dataset.action = 'remove';
+    remove.dataset.idx = String(idx);
+    actions.appendChild(remove);
+
+    item.append(info, actions);
+    fragment.appendChild(item);
+  });
+
+  $('accountList').replaceChildren(fragment);
+}
+
+function switchAccount(idx) {
+  const target = getAccounts()[idx];
+  if (!target) return;
+  draftMode = false;
+  setCurrentUser(target);
+  fillProfileForm(target);
+  renderAccountList();
+  updateAuthUI();
+  notify('"' + (target.name || target.username) + '" profiline geçildi.');
+}
+
+function removeAccount(idx) {
+  const accounts = getAccounts();
+  if (!accounts[idx]) return;
+  const wasCurrent = getCurrentUser().username === accounts[idx].username;
+  accounts.splice(idx, 1);
+  if (!accounts.length) accounts.push({ ...GUEST });
+  setAccounts(accounts);
+  if (wasCurrent) setCurrentUser(accounts[0]);
+  draftMode = false;
+  fillProfileForm(getCurrentUser());
+  renderAccountList();
+  updateAuthUI();
+}
+
+function startNewProfile() {
+  draftMode = true;
+  fillProfileForm({ username: '', name: '', avatar: '' });
+  $('editUsername').focus();
+  notify('Yeni profil için kullanıcı adı ve ad girin, ardından kaydedin.');
+}
+
+let pendingAvatarDataUrl = '';
+
+function handleAvatarFile(file) {
+  if (!file) return;
+  if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) { notify('Sadece PNG, JPG veya WebP dosyaları desteklenir.', 'error'); return; }
+  if (file.size > 8 * 1024 * 1024) { notify('Dosya çok büyük (maksimum 8MB).', 'error'); return; }
+  openCropper(file);
+}
+
+const CROP_V = 280;
+const CROP_PAD = 6;
+const CROP_D = CROP_V - CROP_PAD * 2;
+const CROP_OUT = 192;
+const CROP_MAX_SRC = 1024;
+const crop = { src: null, w: 0, h: 0, base: 1, z: 1, ox: 0, oy: 0, raf: 0, drag: null };
+let cropOpen = false;
+
+function cropScale() {
+  return crop.base * crop.z;
+}
+
+function clampCrop() {
+  const s = cropScale();
+  crop.ox = Math.min(CROP_PAD, Math.max(CROP_PAD + CROP_D - crop.w * s, crop.ox));
+  crop.oy = Math.min(CROP_PAD, Math.max(CROP_PAD + CROP_D - crop.h * s, crop.oy));
+}
+
+function drawCrop() {
+  crop.raf = 0;
+  const ctx = $('cropCanvas').getContext('2d');
+  const s = cropScale();
+  const c = CROP_V / 2;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, CROP_V, CROP_V);
+  if (crop.src) ctx.drawImage(crop.src, crop.ox, crop.oy, crop.w * s, crop.h * s);
+  ctx.fillStyle = 'rgba(0,0,0,.55)';
+  ctx.beginPath();
+  ctx.rect(0, 0, CROP_V, CROP_V);
+  ctx.arc(c, c, CROP_D / 2, 0, Math.PI * 2);
+  ctx.fill('evenodd');
+  ctx.strokeStyle = 'rgba(255,255,255,.9)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(c, c, CROP_D / 2, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function scheduleCrop() {
+  if (!crop.raf) crop.raf = requestAnimationFrame(drawCrop);
+}
+
+function setCropZoom(z) {
+  z = Math.min(4, Math.max(1, z));
+  const old = cropScale();
+  const cx = (CROP_V / 2 - crop.ox) / old;
+  const cy = (CROP_V / 2 - crop.oy) / old;
+  crop.z = z;
+  const s = cropScale();
+  crop.ox = CROP_V / 2 - cx * s;
+  crop.oy = CROP_V / 2 - cy * s;
+  clampCrop();
+  $('cropZoom').value = String(z);
+  scheduleCrop();
+}
+
+function openCropper(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    notify('Görsel yüklenemedi. Dosya bozuk olabilir.', 'error');
+  };
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const nw = img.naturalWidth;
+    const nh = img.naturalHeight;
+    if (!nw || !nh) { notify('Görsel yüklenemedi.', 'error'); return; }
+    const down = Math.min(1, CROP_MAX_SRC / Math.max(nw, nh));
+    let src = img;
+    let w = nw;
+    let h = nh;
+    if (down < 1) {
+      w = Math.max(1, Math.round(nw * down));
+      h = Math.max(1, Math.round(nh * down));
+      src = document.createElement('canvas');
+      src.width = w;
+      src.height = h;
+      src.getContext('2d').drawImage(img, 0, 0, w, h);
+    }
+    crop.src = src;
+    crop.w = w;
+    crop.h = h;
+    crop.base = Math.max(CROP_D / w, CROP_D / h);
+    crop.z = 1;
+    crop.ox = CROP_V / 2 - (w * crop.base) / 2;
+    crop.oy = CROP_V / 2 - (h * crop.base) / 2;
+    clampCrop();
+    $('cropZoom').value = '1';
+    cropOpen = true;
+    $('cropModal').classList.add('open');
+    drawCrop();
+    $('cropStage').focus();
+  };
+  img.src = url;
+}
+
+function closeCropper() {
+  cropOpen = false;
+  $('cropModal').classList.remove('open');
+  if (crop.raf) cancelAnimationFrame(crop.raf);
+  crop.raf = 0;
+  crop.src = null;
+  crop.drag = null;
+  $('cropStage').classList.remove('grabbing');
+}
+
+function applyCrop() {
+  if (!crop.src) return;
+  const out = document.createElement('canvas');
+  out.width = CROP_OUT;
+  out.height = CROP_OUT;
+  const ctx = out.getContext('2d');
+  const k = CROP_OUT / CROP_D;
+  const s = cropScale();
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, CROP_OUT, CROP_OUT);
+  ctx.drawImage(crop.src, (crop.ox - CROP_PAD) * k, (crop.oy - CROP_PAD) * k, crop.w * s * k, crop.h * s * k);
+  pendingAvatarDataUrl = out.toDataURL('image/jpeg', 0.85);
+  renderAvatarPreview(pendingAvatarDataUrl);
+  closeCropper();
+  notify('Fotoğraf hazır. Profili kaydetmeyi unutmayın.');
+}
+
+function setupCropper() {
+  const stage = $('cropStage');
+  const canvas = $('cropCanvas');
+
+  stage.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    stage.setPointerCapture(event.pointerId);
+    crop.drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    stage.classList.add('grabbing');
+  });
+
+  stage.addEventListener('pointermove', (event) => {
+    const drag = crop.drag;
+    if (!drag || drag.id !== event.pointerId) return;
+    const rect = canvas.getBoundingClientRect();
+    const f = rect.width ? CROP_V / rect.width : 1;
+    crop.ox += (event.clientX - drag.x) * f;
+    crop.oy += (event.clientY - drag.y) * f;
+    drag.x = event.clientX;
+    drag.y = event.clientY;
+    clampCrop();
+    scheduleCrop();
+  });
+
+  const end = (event) => {
+    if (crop.drag && crop.drag.id === event.pointerId) {
+      crop.drag = null;
+      stage.classList.remove('grabbing');
+    }
+  };
+  stage.addEventListener('pointerup', end);
+  stage.addEventListener('pointercancel', end);
+
+  stage.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    setCropZoom(crop.z * Math.exp(-event.deltaY * 0.0015));
+  }, { passive: false });
+
+  stage.addEventListener('keydown', (event) => {
+    const step = 10;
+    if (event.key === 'ArrowLeft') crop.ox += step;
+    else if (event.key === 'ArrowRight') crop.ox -= step;
+    else if (event.key === 'ArrowUp') crop.oy += step;
+    else if (event.key === 'ArrowDown') crop.oy -= step;
+    else if (event.key === '+' || event.key === '=') { event.preventDefault(); setCropZoom(crop.z + 0.1); return; }
+    else if (event.key === '-') { event.preventDefault(); setCropZoom(crop.z - 0.1); return; }
+    else return;
+    event.preventDefault();
+    clampCrop();
+    scheduleCrop();
+  });
+
+  $('cropZoom').addEventListener('input', (event) => setCropZoom(parseFloat(event.target.value)));
+  $('cropZoomIn').addEventListener('click', () => setCropZoom(crop.z + 0.25));
+  $('cropZoomOut').addEventListener('click', () => setCropZoom(crop.z - 0.25));
+  $('cropCancel').addEventListener('click', closeCropper);
+  $('cropApply').addEventListener('click', applyCrop);
+  $('cropModal').addEventListener('mousedown', (event) => {
+    if (event.target === $('cropModal')) closeCropper();
+  });
+}
+
+function renderAvatarPreview(dataUrl) {
+  const box = $('avatarPreview');
+  if (dataUrl) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.src = dataUrl;
+    box.replaceChildren(img);
+    box.classList.add('has-img');
+  } else {
+    const name = $('editName').value || $('editUsername').value || '';
+    box.textContent = name ? name[0].toUpperCase() : '+';
+    box.classList.remove('has-img');
+  }
+}
+
+function clearAvatarPreview() {
+  pendingAvatarDataUrl = '';
+  renderAvatarPreview('');
+}
+
+function fillProfileForm(user) {
+  const isGuest = user.username === 'misafir';
+  $('editUsername').value = isGuest ? '' : (user.username || '');
+  $('editName').value = isGuest ? '' : (user.name || '');
+  pendingAvatarDataUrl = user.avatar || '';
+  renderAvatarPreview(pendingAvatarDataUrl);
+}
+
+function saveProfile() {
+  const rawUsername = $('editUsername').value.trim();
+  const name = $('editName').value.trim();
+
+  if (!rawUsername) { notify('Lütfen bir kullanıcı adı girin.', 'error'); return; }
+  const username = slugifyUsername(rawUsername);
+  if (username.length < 3) { notify('Kullanıcı adı en az 3 karakter olmalı.', 'error'); return; }
+  if (!name) { notify('Lütfen bir ad girin.', 'error'); return; }
+
+  const accounts = getAccounts();
+  const current = getCurrentUser();
+  const editingIdx = !draftMode && current.username !== 'misafir' ? accounts.findIndex((a) => a.username === current.username) : -1;
+
+  if (accounts.some((a, i) => a.username === username && i !== editingIdx)) {
+    notify('Bu kullanıcı adı zaten kullanılıyor, başka bir tane seçin.', 'error');
+    return;
+  }
+
+  const profile = { username, name, avatar: pendingAvatarDataUrl };
+  if (editingIdx !== -1) accounts[editingIdx] = profile;
+  else accounts.push(profile);
+
+  draftMode = false;
+  setAccounts(accounts);
+  setCurrentUser(profile);
+  renderAccountList();
+  updateAuthUI();
+  notify('Profil kaydedildi.');
+}
+
+function getShortcuts() {
+  const raw = store.json('anka_shortcuts', null);
+  if (!Array.isArray(raw)) {
+    store.setJson('anka_shortcuts', DEFAULTS);
+    return DEFAULTS.map((s) => ({ ...s }));
+  }
+  const out = [];
+  for (const item of raw) {
+    if (!item || typeof item.name !== 'string' || typeof item.url !== 'string') continue;
+    const url = normalizeUrl(item.url);
+    if (url) out.push({ name: item.name.slice(0, 60), url });
+  }
+  return out;
+}
+
+function setShortcuts(list) {
+  if (!store.setJson('anka_shortcuts', list)) notify('Kısayollar kaydedilemedi.', 'error');
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch (err) {
+    return '';
+  }
+}
+
+let editIndex = -1;
+let dragSrcIndex = -1;
+let dragOverEl = null;
+
+function renderGrid() {
+  const list = getShortcuts();
+  const fragment = document.createDocumentFragment();
+  const online = navigator.onLine;
+
+  list.forEach((shortcut, index) => {
+    const tile = el('a', 'tile');
+    tile.href = shortcut.url;
+    tile.draggable = true;
+    tile.dataset.idx = String(index);
+    tile.title = shortcut.name;
+
+    const actions = el('div', 'tile-actions');
+    const edit = el('span', '', '✎');
+    edit.dataset.action = 'edit';
+    edit.setAttribute('role', 'button');
+    edit.setAttribute('aria-label', 'Düzenle');
+    const del = el('span', '', '✕');
+    del.dataset.action = 'del';
+    del.setAttribute('role', 'button');
+    del.setAttribute('aria-label', 'Sil');
+    actions.append(edit, del);
+
+    const iconBox = el('div', 'icon-box');
+    const host = hostOf(shortcut.url);
+    iconBox.appendChild(el('span', 'ph', (shortcut.name || host || '?').trim()[0] || '?'));
+    if (host && online) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.referrerPolicy = 'no-referrer';
+      img.draggable = false;
+      img.src = 'https://www.google.com/s2/favicons?sz=64&domain=' + encodeURIComponent(host);
+      iconBox.appendChild(img);
+    }
+
+    tile.append(actions, iconBox, el('div', 'name', shortcut.name));
+    fragment.appendChild(tile);
+  });
+
+  if (list.length < MAX_SHORTCUTS) {
+    const add = el('button', 'tile add');
+    add.type = 'button';
+    add.append(el('div', 'icon-box', '＋'), el('div', 'name', 'Ekle'));
+    fragment.appendChild(add);
+  }
+
+  $('grid').replaceChildren(fragment);
+}
+
+function setupGrid() {
+  const grid = $('grid');
+
+  grid.addEventListener('error', (event) => {
+    if (event.target.tagName === 'IMG') event.target.remove();
+  }, true);
+
+  grid.addEventListener('click', (event) => {
+    const tile = event.target.closest('.tile');
+    if (!tile) return;
+    if (tile.classList.contains('add')) { openModal(-1); return; }
+    const index = Number(tile.dataset.idx);
+    const action = event.target.closest('[data-action]');
+    if (action) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (action.dataset.action === 'del') removeShortcut(index);
+      else openModal(index);
+      return;
+    }
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    navigate(tile.href);
+  });
+
+  grid.addEventListener('keydown', (event) => {
+    const tile = event.target.closest('.tile');
+    if (!tile || tile.classList.contains('add')) return;
+    const index = Number(tile.dataset.idx);
+    if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault();
+      const list = getShortcuts();
+      const to = index + (event.key === 'ArrowLeft' ? -1 : 1);
+      if (to < 0 || to >= list.length) return;
+      const [moved] = list.splice(index, 1);
+      list.splice(to, 0, moved);
+      setShortcuts(list);
+      renderGrid();
+      const next = grid.querySelector('.tile[data-idx="' + to + '"]');
+      if (next) next.focus();
+    } else if (event.key === 'Delete') {
+      event.preventDefault();
+      removeShortcut(index);
+    } else if (event.key === 'F2') {
+      event.preventDefault();
+      openModal(index);
+    }
+  });
+
+  grid.addEventListener('dblclick', (event) => {
+    const tile = event.target.closest('.tile');
+    if (!tile || tile.classList.contains('add')) return;
+    event.preventDefault();
+    openModal(Number(tile.dataset.idx));
+  });
+
+  grid.addEventListener('dragstart', (event) => {
+    const tile = event.target.closest && event.target.closest('.tile');
+    if (!tile || tile.classList.contains('add')) return;
+    dragSrcIndex = Number(tile.dataset.idx);
+    tile.classList.add('dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', tile.href);
+  });
+
+  grid.addEventListener('dragend', () => {
+    dragSrcIndex = -1;
+    grid.querySelectorAll('.dragging, .drag-over').forEach((node) => node.classList.remove('dragging', 'drag-over'));
+    dragOverEl = null;
+  });
+
+  grid.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    const tile = event.target.closest('.tile');
+    if (tile === dragOverEl) return;
+    if (dragOverEl) dragOverEl.classList.remove('drag-over');
+    dragOverEl = tile && !tile.classList.contains('add') ? tile : null;
+    if (dragOverEl) dragOverEl.classList.add('drag-over');
+  });
+
+  grid.addEventListener('drop', (event) => {
+    event.preventDefault();
+    const tile = event.target.closest('.tile');
+    const list = getShortcuts();
+
+    if (dragSrcIndex !== -1) {
+      if (!tile || tile.classList.contains('add')) return;
+      const to = Number(tile.dataset.idx);
+      if (to === dragSrcIndex) return;
+      const [moved] = list.splice(dragSrcIndex, 1);
+      list.splice(to, 0, moved);
+      setShortcuts(list);
+      renderGrid();
+      return;
+    }
+
+    const dropped = event.dataTransfer.getData('text/uri-list') || event.dataTransfer.getData('text/plain');
+    const url = normalizeUrl(String(dropped).split('\n')[0]);
+    if (!url) return;
+    if (list.length >= MAX_SHORTCUTS) { notify('Kısayol sınırına ulaşıldı.', 'error'); return; }
+    list.push({ name: hostOf(url).replace(/^www\./, ''), url });
+    setShortcuts(list);
+    renderGrid();
+    notify('Kısayol eklendi.');
+  });
+}
+
+function openModal(idx) {
+  editIndex = idx;
+  const list = getShortcuts();
+  $('modalTitle').textContent = idx === -1 ? 'Kısayol Ekle' : 'Kısayolu Düzenle';
+  $('m-name').value = idx === -1 ? '' : list[idx].name;
+  $('m-url').value = idx === -1 ? '' : list[idx].url;
+  $('modal-bg').classList.add('open');
+  $('m-name').focus();
+}
+
+function closeModal() {
+  $('modal-bg').classList.remove('open');
+  $('m-name').value = '';
+  $('m-url').value = '';
+  editIndex = -1;
+}
+
+function saveShortcut() {
+  const name = $('m-name').value.trim();
+  const rawUrl = $('m-url').value.trim();
+  if (!name || !rawUrl) { notify('Ad ve adres alanları zorunludur.', 'error'); return; }
+  const url = normalizeUrl(rawUrl);
+  if (!url) { notify('Geçerli bir http veya https adresi girin.', 'error'); return; }
+  const list = getShortcuts();
+  if (editIndex === -1) list.push({ name, url });
+  else list[editIndex] = { name, url };
+  setShortcuts(list);
+  closeModal();
+  renderGrid();
+}
+
+function removeShortcut(index) {
+  const list = getShortcuts();
+  list.splice(index, 1);
+  setShortcuts(list);
+  renderGrid();
+}
+
+function exportShortcuts() {
+  const blob = new Blob([JSON.stringify(getShortcuts(), null, 2)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'anka-kisayollar.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function importShortcuts(event) {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      let parsed = JSON.parse(reader.result);
+      if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.shortcuts)) parsed = parsed.shortcuts;
+      if (!Array.isArray(parsed)) throw new Error('Geçersiz format');
+      const clean = [];
+      for (const item of parsed) {
+        if (!item || !item.name || !item.url) continue;
+        const url = normalizeUrl(item.url);
+        if (url) clean.push({ name: String(item.name).slice(0, 60), url });
+        if (clean.length >= MAX_SHORTCUTS) break;
+      }
+      setShortcuts(clean);
+      renderGrid();
+      notify(clean.length + ' kısayol içe aktarıldı.');
+    } catch (err) {
+      notify('Dosya okunamadı, geçerli bir JSON dosyası seçin.', 'error');
+    }
+  };
+  reader.onerror = () => notify('Dosya okunamadı.', 'error');
+  reader.readAsText(file);
+}
+
+function schoolUrl() {
+  return normalizeUrl(getSetting('school-url', DEFAULT_SCHOOL_URL)) || DEFAULT_SCHOOL_URL;
+}
+
+function syncSettingsForm() {
+  const engineId = getSetting('search-engine', 'google');
+  $('engineSelect').value = ENGINES[engineId] || engineId === 'custom' ? engineId : 'google';
+  $('customEngineRow').hidden = engineId !== 'custom';
+  if (document.activeElement !== $('customEngineUrl')) $('customEngineUrl').value = getSetting('custom-search-url', '');
+  $('aiProviderSelect').value = AI_PROVIDERS[getSetting('ai-provider', 'google-ai')] ? getSetting('ai-provider', 'google-ai') : 'google-ai';
+  $('themeSelect').value = window.AnkaTheme.getMode();
+  $('fontScaleSelect').value = document.documentElement.dataset.fontScale || '100';
+  $('uiScaleSelect').value = document.documentElement.dataset.uiScale || '100';
+  $('fontScaleValue').value = $('fontScaleSelect').value + '%';
+  $('uiScaleValue').value = $('uiScaleSelect').value + '%';
+  $('animToggle').checked = getSetting('ui-animations', window.AnkaDisplay.LOW ? 'false' : 'true') === 'true';
+  $('touchToggle').checked = getSetting('touch-mode', 'false') === 'true';
+  $('schoolNote').hidden = !isSchool();
+}
+
+function openAuthView() {
+  $('homeView').hidden = true;
+  $('authView').classList.add('active');
+  draftMode = false;
+  renderAccountList();
+  fillProfileForm(getCurrentUser());
+  syncSettingsForm();
+  window.scrollTo(0, 0);
+}
+
+function closeAuthView() {
+  $('authView').classList.remove('active');
+  $('homeView').hidden = false;
+  initUI();
+}
+
+function changeSearchEngine(value) {
+  setSetting('search-engine', value);
+  $('customEngineRow').hidden = value !== 'custom';
+  initUI();
+}
+
+function toggleAI() {
+  if (isSchool()) {
+    notify('AI Modu Okul Modu tarafından kapatıldı.', 'error');
+    return;
+  }
+  const next = !$('aiToggle').classList.contains('active');
+  setSetting('ai-mode-active', next ? 'true' : 'false');
+  initUI();
+}
+
+function initUI() {
+  const school = isSchool();
+  const engineId = getSetting('search-engine', 'google');
+  const engine = ENGINES[engineId] || ENGINES.google;
+  $('engineLabel').textContent = engineId === 'custom' ? 'Özel' : engine.name;
+  const aiActive = !school && getSetting('ai-mode-active', 'false') === 'true';
+  const toggle = $('aiToggle');
+  toggle.classList.toggle('active', aiActive);
+  toggle.classList.toggle('disabled', school);
+  toggle.setAttribute('aria-pressed', String(aiActive));
+  toggle.setAttribute('aria-disabled', String(school));
+  toggle.title = school ? 'Okul Modu tarafından kapatıldı' : '';
+  const chip = $('schoolChip');
+  chip.hidden = !school;
+  chip.title = school ? schoolUrl() : '';
+  updateThemeUI(document.documentElement.dataset.themePreset, window.AnkaTheme.getMode());
+  updateAuthUI();
+  if ($('authView').classList.contains('active')) syncSettingsForm();
+}
+
+function buildSearchUrl(query) {
+  const encoded = encodeURIComponent(query);
+  if (!isSchool() && getSetting('ai-mode-active', 'false') === 'true') {
+    const provider = AI_PROVIDERS[getSetting('ai-provider', 'google-ai')] || AI_PROVIDERS['google-ai'];
+    return provider.tpl.replace('%s', encoded);
+  }
+  const engineId = getSetting('search-engine', 'google');
+  if (engineId === 'custom') {
+    const template = getSetting('custom-search-url', '');
+    if (/^https?:\/\/\S+$/i.test(template) && template.includes('%s')) return template.replace('%s', encoded);
+    return ENGINES.google.tpl.replace('%s', encoded);
+  }
+  return (ENGINES[engineId] || ENGINES.google).tpl.replace('%s', encoded);
+}
+
+function resolveInput(raw) {
+  const value = raw.trim();
+  if (!value) return { url: '', search: false };
+
+  const bang = /^!(\w+)\s+(.+)$/.exec(value);
+  if (bang && BANGS[bang[1].toLowerCase()]) {
+    return { url: BANGS[bang[1].toLowerCase()].replace('%s', encodeURIComponent(bang[2])), search: true, term: bang[2] };
+  }
+  if (/^https?:\/\/\S+$/i.test(value)) return { url: value, search: false };
+  if (/^(localhost|(\d{1,3}\.){3}\d{1,3})(:\d+)?(\/\S*)?$/i.test(value)) return { url: 'http://' + value, search: false };
+  if (/^([\w-]+\.)+[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(value)) return { url: 'https://' + value, search: false };
+  return { url: buildSearchUrl(value), search: true, term: value };
+}
+
+function evalCalc(input) {
+  let s = String(input).replace(/×|x/gi, '*').replace(/÷/g, '/').replace(/\s+/g, '');
+  if (s.includes('.')) {
+    if (s.includes(',')) return null;
+  } else {
+    s = s.replace(/,/g, '.');
+  }
+  if (!/^[\d+\-*/^%().]+$/.test(s) || !/\d/.test(s) || !/[+\-*/^%]/.test(s.replace(/^-/, ''))) return null;
+  if (/^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$/.test(s)) return null;
+  let i = 0;
+  const peek = () => s[i];
+  function expr() {
+    let t = term();
+    while (peek() === '+' || peek() === '-') {
+      const op = s[i++];
+      const r = term();
+      t = op === '+' ? t + r : t - r;
+    }
+    return t;
+  }
+  function term() {
+    let f = power();
+    while (peek() === '*' || peek() === '/' || peek() === '%') {
+      const op = s[i++];
+      const r = power();
+      f = op === '*' ? f * r : op === '/' ? f / r : f % r;
+    }
+    return f;
+  }
+  function power() {
+    const b = unary();
+    if (peek() === '^') {
+      i++;
+      return Math.pow(b, power());
+    }
+    return b;
+  }
+  function unary() {
+    if (peek() === '-') { i++; return -unary(); }
+    if (peek() === '+') { i++; return unary(); }
+    return primary();
+  }
+  function primary() {
+    if (peek() === '(') {
+      i++;
+      const v = expr();
+      if (peek() !== ')') throw new Error('x');
+      i++;
+      return v;
+    }
+    const m = /^(\d+(\.\d+)?|\.\d+)/.exec(s.slice(i));
+    if (!m) throw new Error('x');
+    i += m[0].length;
+    return parseFloat(m[0]);
+  }
+  try {
+    const v = expr();
+    if (i !== s.length || !isFinite(v)) return null;
+    const rounded = Number(v.toPrecision(12));
+    return { raw: String(rounded), shown: '= ' + rounded.toLocaleString('tr-TR', { maximumFractionDigits: 10 }) };
+  } catch (err) {
+    return null;
+  }
+}
+
+function getRecents() {
+  const list = store.json('anka_recent_searches', []);
+  return Array.isArray(list) ? list.filter((s) => typeof s === 'string').slice(0, MAX_RECENTS) : [];
+}
+
+function pushRecent(term) {
+  const list = getRecents().filter((s) => s.toLowerCase() !== term.toLowerCase());
+  list.unshift(term.slice(0, 120));
+  store.setJson('anka_recent_searches', list.slice(0, MAX_RECENTS));
+}
+
+function removeRecent(term) {
+  store.setJson('anka_recent_searches', getRecents().filter((s) => s !== term));
+}
+
+const searchInput = $('q');
+const suggestionsEl = $('suggestions');
+const suggestCache = new Map();
+let suggestSeq = 0;
+let suggestController = null;
+let selectedIndex = -1;
+let typedValue = '';
+
+function suggestionsDisabled() {
+  return isSchool() || getSetting('search-suggestions', 'true') === 'false';
+}
+
+function hideSuggestions() {
+  suggestionsEl.classList.remove('active');
+  searchInput.setAttribute('aria-expanded', 'false');
+  selectedIndex = -1;
+}
+
+function renderSuggestions(items, kind, calc) {
+  selectedIndex = -1;
+  const fragment = document.createDocumentFragment();
+
+  if (calc) {
+    const row = el('div', 'suggestion-item calc');
+    row.dataset.kind = 'calc';
+    row.dataset.text = calc.raw;
+    row.setAttribute('role', 'option');
+    row.append(el('span', '', '🧮'), el('span', 's-text', calc.shown), el('span', 's-note', 'Kopyala'));
+    fragment.appendChild(row);
+  }
+
+  if (kind === 'recent' && items.length) {
+    const head = el('div', 'suggestion-head');
+    const clear = el('button', '', 'Geçmişi temizle');
+    clear.type = 'button';
+    clear.dataset.action = 'clear-recents';
+    head.append(el('span', '', 'Son aramalar'), clear);
+    fragment.appendChild(head);
+  }
+
+  for (const text of items) {
+    const item = el('div', 'suggestion-item');
+    item.dataset.kind = kind;
+    item.dataset.text = text;
+    item.setAttribute('role', 'option');
+    item.append(el('span', '', kind === 'recent' ? '🕘' : '🔍'), el('span', 's-text', text));
+    if (kind === 'recent') {
+      const del = el('button', 's-del', '✕');
+      del.type = 'button';
+      del.dataset.action = 'del-recent';
+      del.setAttribute('aria-label', 'Sil');
+      item.appendChild(del);
+    }
+    fragment.appendChild(item);
+  }
+
+  if (!fragment.childNodes.length) { hideSuggestions(); return; }
+  suggestionsEl.replaceChildren(fragment);
+  suggestionsEl.classList.add('active');
+  searchInput.setAttribute('aria-expanded', 'true');
+}
+
+function normalizeSuggestions(data) {
+  const list = Array.isArray(data) && Array.isArray(data[1]) ? data[1] : [];
+  return list.map((entry) => (Array.isArray(entry) ? entry[0] : entry)).filter((s) => typeof s === 'string').slice(0, 6);
+}
+
+function jsonpSuggest(query, seq) {
+  return new Promise((resolve, reject) => {
+    const name = '__ankaSuggest' + seq;
+    const script = document.createElement('script');
+    const cleanup = () => { delete window[name]; script.remove(); };
+    const timer = setTimeout(() => { cleanup(); reject(new Error('timeout')); }, 2500);
+    window[name] = (data) => { clearTimeout(timer); cleanup(); resolve(data); };
+    script.onerror = () => { clearTimeout(timer); cleanup(); reject(new Error('network')); };
+    script.src = 'https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&hl=tr&q=' + encodeURIComponent(query) + '&jsonp=' + name + '&callback=' + name;
+    document.head.appendChild(script);
+  });
+}
+
+async function loadSuggestions(query, seq) {
+  if (suggestCache.has(query)) return suggestCache.get(query);
+  let result = [];
+  if (suggestController) suggestController.abort();
+  suggestController = typeof AbortController === 'function' ? new AbortController() : null;
+  try {
+    const response = await fetch('https://suggestqueries.google.com/complete/search?client=firefox&hl=tr&q=' + encodeURIComponent(query), suggestController ? { signal: suggestController.signal } : undefined);
+    result = normalizeSuggestions(await response.json());
+  } catch (err) {
+    if (err && err.name === 'AbortError') return null;
+    try {
+      result = normalizeSuggestions(await jsonpSuggest(query, seq));
+    } catch (fallbackErr) {
+      result = [];
+    }
+  }
+  if (suggestCache.size > 50) suggestCache.delete(suggestCache.keys().next().value);
+  suggestCache.set(query, result);
+  return result;
+}
+
+const fetchSuggestions = debounce(async (query) => {
+  const seq = ++suggestSeq;
+  const result = await loadSuggestions(query, seq);
+  if (result === null || seq !== suggestSeq || searchInput.value.trim() !== query) return;
+  renderSuggestions(result, 'remote', evalCalc(query));
+}, 140);
+
+function showRecents() {
+  if (suggestionsDisabled()) { hideSuggestions(); return; }
+  renderSuggestions(getRecents(), 'recent', null);
+}
+
+function onSearchInput() {
+  typedValue = searchInput.value;
+  const query = typedValue.trim();
+  const calc = query ? evalCalc(query) : null;
+  suggestSeq += 1;
+  if (suggestController) suggestController.abort();
+
+  if (!query) { showRecents(); return; }
+  if (suggestionsDisabled() || query.length < 2 || !navigator.onLine) {
+    if (calc) renderSuggestions([], 'remote', calc);
+    else hideSuggestions();
+    return;
+  }
+  if (calc) renderSuggestions([], 'remote', calc);
+  fetchSuggestions(query);
+}
+
+function executeSearch(raw) {
+  const result = resolveInput(raw);
+  if (!result.url) return;
+  if (result.search && result.term && !isSchool()) pushRecent(result.term);
+  hideSuggestions();
+  navigate(result.url);
+}
+
+function activateCalc(row) {
+  copyText(row.dataset.text).then((ok) => notify(ok ? 'Sonuç kopyalandı.' : 'Kopyalanamadı.', ok ? undefined : 'error'));
+}
+
+function moveSelection(step) {
+  const items = suggestionsEl.querySelectorAll('.suggestion-item');
+  if (!items.length) return;
+  selectedIndex += step;
+  if (selectedIndex < -1) selectedIndex = items.length - 1;
+  if (selectedIndex >= items.length) selectedIndex = -1;
+  items.forEach((item, index) => item.classList.toggle('selected', index === selectedIndex));
+  const current = selectedIndex === -1 ? null : items[selectedIndex];
+  if (!current) searchInput.value = typedValue;
+  else if (current.dataset.kind !== 'calc') searchInput.value = current.dataset.text;
+}
+
+function setupSearch() {
+  searchInput.addEventListener('input', onSearchInput);
+  searchInput.addEventListener('focus', () => {
+    if (!searchInput.value.trim()) showRecents();
+  });
+
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.isComposing) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      if (!suggestionsEl.classList.contains('active') && !searchInput.value.trim()) showRecents();
+      moveSelection(1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveSelection(-1);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const items = suggestionsEl.querySelectorAll('.suggestion-item');
+      const current = selectedIndex >= 0 ? items[selectedIndex] : null;
+      if (current && current.dataset.kind === 'calc') activateCalc(current);
+      else executeSearch(searchInput.value);
+    } else if (event.key === 'Escape') {
+      if (suggestionsEl.classList.contains('active')) hideSuggestions();
+      else searchInput.blur();
+    }
+  });
+
+  suggestionsEl.addEventListener('mousedown', (event) => event.preventDefault());
+
+  suggestionsEl.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]');
+    if (action) {
+      if (action.dataset.action === 'clear-recents') {
+        store.setJson('anka_recent_searches', []);
+        hideSuggestions();
+      } else {
+        const item = action.closest('.suggestion-item');
+        removeRecent(item.dataset.text);
+        showRecents();
+      }
+      return;
+    }
+    const item = event.target.closest('.suggestion-item');
+    if (!item) return;
+    if (item.dataset.kind === 'calc') { activateCalc(item); return; }
+    searchInput.value = item.dataset.text;
+    executeSearch(item.dataset.text);
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.searchbar-container')) hideSuggestions();
+  });
+}
+
+function setupAvatarDrop() {
+  const drop = $('avatarDrop');
+  const fileInput = $('localAvatarFile');
+  const pick = () => fileInput.click();
+
+  $('avatarPreview').addEventListener('click', pick);
+  $('avatarPreview').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); pick(); }
+  });
+  $('avatarPickBtn').addEventListener('click', pick);
+  $('avatarClearBtn').addEventListener('click', clearAvatarPreview);
+
+  fileInput.addEventListener('change', (event) => {
+    handleAvatarFile(event.target.files[0]);
+    event.target.value = '';
+  });
+
+  ['dragenter', 'dragover'].forEach((name) => drop.addEventListener(name, (event) => {
+    event.preventDefault();
+    drop.classList.add('over');
+  }));
+  ['dragleave', 'drop'].forEach((name) => drop.addEventListener(name, (event) => {
+    event.preventDefault();
+    drop.classList.remove('over');
+  }));
+  drop.addEventListener('drop', (event) => {
+    const file = event.dataTransfer.files && event.dataTransfer.files[0];
+    if (file) handleAvatarFile(file);
+  });
+
+  ['editName', 'editUsername'].forEach((id) => $(id).addEventListener('input', () => {
+    if (!pendingAvatarDataUrl) renderAvatarPreview('');
+  }));
+}
+
+function setupModal() {
+  $('modalCancel').addEventListener('click', closeModal);
+  $('modalSave').addEventListener('click', saveShortcut);
+  $('modal-bg').addEventListener('mousedown', (event) => {
+    if (event.target === $('modal-bg')) closeModal();
+  });
+  $('modal-bg').addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { event.stopPropagation(); closeModal(); }
+    else if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); saveShortcut(); }
+  });
+}
+
+function bindActivate(node, handler) {
+  node.addEventListener('click', handler);
+  node.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); handler(); }
+  });
+}
+
+function setScale(id, value) {
+  setSetting(id, value);
+  notifyMain(id, value);
+  window.AnkaDisplay.apply();
+}
+
+function previewScale(id, value, outputId) {
+  setSetting(id, value);
+  window.AnkaDisplay.apply();
+  $(outputId).value = value + '%';
+}
+
+function setupControls() {
+  buildThemeMenu();
+  $('themeToggleBtn').addEventListener('click', toggleThemeMenu);
+  $('themeMenu').addEventListener('click', (event) => {
+    const item = event.target.closest('[data-mode]');
+    if (item) setThemeMode(item.dataset.mode);
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.theme-wrap')) closeThemeMenu();
+  });
+  $('schoolChip').addEventListener('click', () => navigate(schoolUrl()));
+  bindActivate($('profileBtn'), openAuthView);
+  bindActivate($('engineLabel'), openAuthView);
+  bindActivate($('aiToggle'), toggleAI);
+  $('backBtn').addEventListener('click', closeAuthView);
+  $('exportBtn').addEventListener('click', exportShortcuts);
+  $('importBtn').addEventListener('click', () => $('importFile').click());
+  $('importFile').addEventListener('change', importShortcuts);
+  $('newProfileBtn').addEventListener('click', startNewProfile);
+  $('saveProfileBtn').addEventListener('click', saveProfile);
+  $('engineSelect').addEventListener('change', (event) => changeSearchEngine(event.target.value));
+  $('customEngineUrl').addEventListener('input', debounce((event) => setSetting('custom-search-url', event.target.value.trim()), 250));
+  $('aiProviderSelect').addEventListener('change', (event) => setSetting('ai-provider', event.target.value));
+  $('themeSelect').addEventListener('change', (event) => setThemeMode(event.target.value));
+  $('fontScaleSelect').addEventListener('input', (event) => previewScale('font-scale', event.target.value, 'fontScaleValue'));
+  $('uiScaleSelect').addEventListener('input', (event) => previewScale('ui-scale', event.target.value, 'uiScaleValue'));
+  $('fontScaleSelect').addEventListener('change', (event) => setScale('font-scale', event.target.value));
+  $('uiScaleSelect').addEventListener('change', (event) => setScale('ui-scale', event.target.value));
+  $('animToggle').addEventListener('change', (event) => setScale('ui-animations', event.target.checked ? 'true' : 'false'));
+  $('touchToggle').addEventListener('change', (event) => setScale('touch-mode', event.target.checked ? 'true' : 'false'));
+
+  $('accountList').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-action]');
+    if (!button) return;
+    const idx = Number(button.dataset.idx);
+    if (button.dataset.action === 'switch') switchAccount(idx);
+    else if (button.dataset.action === 'remove') removeAccount(idx);
+  });
+}
+
+window.addEventListener('keydown', (event) => {
+  const mod = event.ctrlKey || event.metaKey;
+  const key = event.key.toLowerCase();
+  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement && document.activeElement.tagName);
+  const home = !$('homeView').hidden;
+
+  if (cropOpen) {
+    if (event.key === 'Escape') { event.preventDefault(); closeCropper(); }
+    else if (event.key === 'Enter' && document.activeElement.tagName !== 'BUTTON') { event.preventDefault(); applyCrop(); }
+    return;
+  }
+  if (event.key === 'Escape' && $('themeMenu').classList.contains('open')) {
+    closeThemeMenu();
+    $('themeToggleBtn').focus();
+    return;
+  }
+
+  if (event.key === '/' && !typing && !mod) {
+    event.preventDefault();
+    if (home) searchInput.focus();
+  } else if (mod && event.shiftKey && key === 'd') {
+    event.preventDefault();
+    toggleTheme();
+  } else if (mod && (key === 'l' || key === 'k') && !event.shiftKey) {
+    event.preventDefault();
+    if (home) {
+      searchInput.focus();
+      searchInput.select();
+    }
+  } else if (event.key === 'Escape' && !home && !$('modal-bg').classList.contains('open')) {
+    closeAuthView();
+  }
+});
+
+const syncAll = debounce(() => {
+  window.AnkaDisplay.apply();
+  window.AnkaTheme.apply(window.AnkaTheme.getMode());
+  initUI();
+  if ($('authView').classList.contains('active')) {
+    renderAccountList();
+    if (!draftMode) fillProfileForm(getCurrentUser());
+  }
+}, 30);
+
+const refreshGrid = debounce(renderGrid, 30);
+
+window.addEventListener('storage', (event) => {
+  const key = event.key;
+  if (key === null) {
+    syncAll();
+    refreshGrid();
+    return;
+  }
+  if (key === 'anka_shortcuts') refreshGrid();
+  if (key.startsWith('set_') || key === 'anka_accounts' || key === 'anka_current_user') syncAll();
+});
+
+window.addEventListener('focus', () => {
+  if (window.AnkaTheme.getMode() === 'system') window.AnkaTheme.apply('system');
+});
+window.addEventListener('online', () => { checkNetwork(); refreshGrid(); });
+window.addEventListener('offline', checkNetwork);
+document.addEventListener('visibilitychange', tickClock);
+
+setupControls();
+setupGrid();
+setupSearch();
+setupAvatarDrop();
+setupModal();
+setupCropper();
+checkNetwork();
+renderGrid();
+initUI();
+tickClock();
+themeChannel.postMessage({ id: 'theme-settings-request' });
+</script>
+</body>
+</html>

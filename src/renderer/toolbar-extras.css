@@ -1,0 +1,743 @@
+:root {
+    --bm-h: 34px;
+}
+
+.xi {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
+    flex-shrink: 0;
+}
+
+.xi.fill {
+    fill: currentColor;
+    stroke: none;
+}
+
+#toolbar .nav-tool-btn.active:not(#profile-btn):not(#star-btn) {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+#star-btn.star-on {
+    color: #f59e0b;
+    border-color: rgba(245, 158, 11, 0.55);
+    background: rgba(245, 158, 11, 0.08);
+}
+
+#star-btn.star-on .xi {
+    fill: #f59e0b;
+}
+
+#star-btn.star-pop .xi {
+    animation: xtStar 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes xtStar {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.5) rotate(-14deg); }
+    100% { transform: scale(1); }
+}
+
+#profile-btn {
+    border-radius: 50%;
+    padding: 0;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    background: var(--accent);
+    border: 1px solid transparent;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: filter 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+
+#profile-btn img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    pointer-events: none;
+}
+
+#profile-btn:hover,
+#profile-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    filter: brightness(1.12);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+#profile-btn:active {
+    transform: scale(0.94);
+}
+
+#bookmarks-bar {
+    display: none !important;
+    align-items: center;
+    gap: 6px;
+    height: var(--bm-h);
+    min-height: var(--bm-h);
+    padding: 0 10px;
+    background: var(--sidebar);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1100;
+    contain: layout paint;
+}
+
+body.bm-visible #bookmarks-bar {
+    display: flex !important;
+}
+
+body.bm-visible #draw-layer {
+    top: calc(50px + var(--bm-h));
+}
+
+#bm-list {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    position: relative;
+    overflow: hidden;
+}
+
+#bm-overflow {
+    width: 26px;
+    height: 26px;
+    min-width: 26px;
+    min-height: 26px;
+    border-radius: 7px;
+    font-size: 15px;
+    font-weight: 700;
+    border-color: transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#bm-overflow[hidden] {
+    display: none !important;
+}
+
+.bm-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex: 0 0 auto;
+    max-width: 170px;
+    height: 26px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.bm-item[hidden] {
+    display: none;
+}
+
+.bm-item:hover,
+.bm-item:focus-visible {
+    background: var(--hover);
+    color: var(--text);
+}
+
+.bm-item:active {
+    transform: scale(0.95);
+}
+
+.bm-new {
+    animation: xtBmIn 0.34s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes xtBmIn {
+    from { opacity: 0; transform: translateY(-8px) scale(0.85); }
+    to { opacity: 1; transform: none; }
+}
+
+.bm-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bm-fav {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: 4px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 700;
+    overflow: hidden;
+}
+
+.bm-fav img {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
+    display: block;
+}
+
+.xt-pop {
+    position: fixed;
+    z-index: 9999990;
+    width: min(340px, calc(100vw - 16px));
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 8px;
+    color: var(--text);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+    animation: xtPop 0.17s cubic-bezier(0.16, 1, 0.3, 1);
+    scrollbar-width: thin;
+}
+
+.xt-pop.xt-overflow {
+    width: min(260px, calc(100vw - 16px));
+}
+
+@keyframes xtPop {
+    from { opacity: 0; transform: translateY(-6px) scale(0.96); }
+    to { opacity: 1; transform: none; }
+}
+
+.xt-title {
+    font-size: 13px;
+    font-weight: 700;
+    padding: 4px 8px 8px;
+}
+
+.xt-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: background-color 0.12s ease;
+}
+
+.xt-row:hover,
+.xt-row:focus-visible {
+    background: var(--hover);
+}
+
+.xt-row.current {
+    background: var(--accent-soft);
+}
+
+.xt-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1;
+    min-width: 0;
+}
+
+.xt-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.xt-desc {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+.xt-btn {
+    min-height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--hover);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, filter 0.14s ease;
+}
+
+.xt-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.xt-btn:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.xt-btn:active {
+    transform: scale(0.96);
+}
+
+.xt-btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.xt-btn.primary:hover,
+.xt-btn.primary:focus-visible {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+    color: #fff;
+    filter: brightness(1.08);
+}
+
+.xt-btn.danger:hover {
+    border-color: #ef4444;
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.xt-btn.small {
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 11px;
+}
+
+.xt-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 8px 2px 2px;
+}
+
+.xt-input {
+    width: 100%;
+    height: 36px;
+    margin: 0 0 8px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--input-bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.xt-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.xt-input.invalid {
+    border-color: #ef4444;
+}
+
+.xt-input.flat {
+    height: 30px;
+    margin: 0;
+    padding: 0 8px;
+    border-color: transparent;
+    background: transparent;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.xt-input.flat:hover {
+    border-color: var(--border);
+}
+
+.xt-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    overflow: hidden;
+}
+
+.xt-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.xt-avatar.big {
+    width: 48px;
+    height: 48px;
+    font-size: 20px;
+}
+
+.xt-profile-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 8px 12px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 6px;
+}
+
+.xt-add-row {
+    display: flex;
+    gap: 8px;
+    padding: 8px 2px 2px;
+    border-top: 1px solid var(--border);
+    margin-top: 6px;
+}
+
+.xt-add-row .xt-input {
+    margin: 0;
+    height: 32px;
+}
+
+.xt-del {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+}
+
+.xt-del .xi {
+    width: 14px;
+    height: 14px;
+}
+
+.xt-row:hover .xt-del,
+.xt-row:focus-within .xt-del {
+    opacity: 1;
+}
+
+.xt-del:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.xt-del.armed {
+    opacity: 1;
+    background: #ef4444;
+    color: #fff;
+}
+
+#xt-side {
+    display: flex;
+    flex: 0 1 clamp(260px, 30vw, 380px);
+    min-width: 0;
+    flex-direction: column;
+    background: var(--sidebar);
+    border-left: 1px solid var(--border);
+    overflow: hidden;
+    animation: xtSide 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#xt-side[hidden] {
+    display: none;
+}
+
+@keyframes xtSide {
+    from { opacity: 0; transform: translateX(22px); }
+    to { opacity: 1; transform: none; }
+}
+
+.xt-side-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 46px;
+    padding: 0 10px 0 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+}
+
+#xt-side-close {
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--hover);
+    color: var(--text);
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: background-color 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+#xt-side-close:hover,
+#xt-side-close:focus-visible {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.xt-tabs {
+    display: flex;
+    align-items: stretch;
+    min-height: 40px;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+}
+
+.xt-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.xt-tabs button {
+    min-height: 40px;
+    padding: 0 8px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+    white-space: nowrap;
+    transition: color 0.14s ease, border-color 0.14s ease, background-color 0.14s ease;
+}
+
+.xt-tabs button[data-tab] {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.xt-tabs button:hover,
+.xt-tabs button:focus-visible {
+    color: var(--text);
+    background: var(--hover);
+}
+
+.xt-tabs button.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.xt-tabs .xt-sort-btn {
+    flex: 0 0 auto;
+    align-self: center;
+    margin: 0 6px 0 auto;
+    min-height: 28px;
+    height: 28px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+.xt-tabs .xt-sort-btn:hover,
+.xt-tabs .xt-sort-btn:focus-visible {
+    background: var(--hover);
+    color: var(--text);
+    border-color: var(--accent);
+}
+
+.xt-side-tools {
+    display: flex;
+    gap: 8px;
+    padding: 10px;
+}
+
+#xt-side-search {
+    flex: 1;
+    min-width: 0;
+    height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--input-bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+#xt-side-search:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+#xt-side-action {
+    flex-shrink: 0;
+    height: 34px;
+    min-height: 34px;
+    padding: 0 12px;
+    font-size: 11px;
+}
+
+#xt-side-action:empty {
+    display: none;
+}
+
+.xt-side-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 6px 10px;
+    scrollbar-width: thin;
+}
+
+.xt-group {
+    padding: 10px 10px 4px;
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.xt-time {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    font-size: 10px;
+}
+
+.xt-empty {
+    padding: 28px 16px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+html.perf-lite .xt-pop,
+html.perf-lite #xt-side,
+html.perf-lite .bm-new,
+html.perf-lite #star-btn.star-pop .xi {
+    animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .xt-pop,
+    #xt-side,
+    .bm-new,
+    #star-btn.star-pop .xi,
+    .xt-btn,
+    .xt-row,
+    .bm-item,
+    #profile-btn,
+    #xt-side-close,
+    .xt-del,
+    .xt-input,
+    .xt-tabs button {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+
+@media (max-width: 860px) {
+    #toolbar {
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    #toolbar::-webkit-scrollbar {
+        display: none;
+    }
+}
+
+@media (max-width: 760px) {
+    #xt-side:not([hidden]) {
+        position: absolute;
+        z-index: 1500;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: min(86vw, 380px);
+        flex: none;
+        box-shadow: -16px 0 36px rgba(0, 0, 0, 0.3);
+    }
+}
+
+@media (max-width: 560px) {
+    #home-btn {
+        display: none;
+    }
+}
+
+@media (pointer: coarse) {
+    .bm-item {
+        height: 30px;
+    }
+
+    .xt-del {
+        opacity: 1;
+    }
+
+    .xt-btn,
+    .xt-tabs button,
+    #xt-side-close {
+        min-height: 40px;
+    }
+}

@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Anka Web</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="toolbar-extras.css">
+<style>
+html{overscroll-behavior:none;-webkit-tap-highlight-color:transparent}
+button,.t-btn,.side-btn,.nav-tool-btn{touch-action:manipulation}
+#tab-bar{overscroll-behavior-x:contain}
+.side-btn i{font-family:"Segoe UI Symbol","Noto Sans Symbols 2","Noto Sans Symbols","DejaVu Sans","Apple Symbols",system-ui,sans-serif;font-style:normal}
+.page-hidden *,.page-hidden *::before,.page-hidden *::after{animation-play-state:paused!important}
+.perf-lite *,.perf-lite *::before,.perf-lite *::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;transition-delay:0s!important;scroll-behavior:auto!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+.perf-lite .school-login-shell,.perf-lite #paint-menu,.perf-lite #keyboard,.perf-lite #lesson-tools,.perf-lite #tab-dropdown-menu,.perf-lite #ctx-menu,.perf-lite #pinned-side-panel,.perf-lite .math-tool{box-shadow:none!important}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
+.school-login-screen{position:fixed;inset:0;z-index:10000000;display:grid;place-items:center;overflow:auto;padding:32px;color:var(--text-color,#f4f4f5);background:var(--bg,#121214)}
+.school-login-screen[hidden]{display:none}
+.school-login-shell{width:min(100%,1040px);min-height:min(720px,calc(100vh - 64px));display:grid;grid-template-columns:1fr minmax(340px,430px);grid-template-rows:auto 1fr auto;gap:24px 56px;align-items:center;padding:44px clamp(28px,7vw,88px);background:var(--panel,#18181b);background:color-mix(in srgb,var(--panel,#18181b) 92%,var(--accent,#ff3b30) 8%);border:1px solid var(--border,#27272a);border-radius:24px;box-shadow:var(--shadow-pop,0 24px 60px rgba(0,0,0,.4))}
+.school-login-brand{grid-column:1 / -1;display:flex;align-items:center;gap:12px;font-size:14px;font-weight:700}
+.school-login-mark{display:grid;place-items:center;width:36px;height:36px;border-radius:11px;background:var(--accent,#ff3b30);color:#fff;font-size:18px}
+.school-login-content{grid-column:2;grid-row:2}
+.school-login-eyebrow{color:var(--accent,#ff3b30);font-size:11px;font-weight:700;letter-spacing:1px}
+.school-login-content h1{max-width:400px;margin:12px 0;font-size:clamp(30px,4vw,42px);line-height:1.08}
+.school-login-lead{margin:0 0 24px;color:var(--text-secondary,#a1a1aa);font-size:14px;line-height:1.6}
+.school-login-users{display:grid;gap:8px;max-height:240px;overflow:auto;margin-bottom:18px;contain:content}
+.school-login-user{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:11px;text-align:left;color:var(--text-color,#f4f4f5);background:var(--bg-secondary,#18181b);border:1px solid var(--border,#27272a);border-radius:10px;cursor:pointer;touch-action:manipulation}
+.school-login-user.selected{border-color:var(--accent,#ff3b30);background:var(--bg-secondary,#18181b);background:color-mix(in srgb,var(--accent,#ff3b30) 12%,var(--bg-secondary,#18181b))}
+.school-login-avatar{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;color:#fff;background:var(--accent,#ff3b30);border-radius:50%;font-weight:700}
+.school-login-user-details{display:flex;flex-direction:column;min-width:0;gap:3px}
+.school-login-user-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.school-login-user-details small{color:var(--text-secondary,#a1a1aa)}
+.school-login-form{display:grid;gap:9px}
+.school-login-form label{color:var(--text-secondary,#a1a1aa);font-size:12px}
+.school-login-form input{width:100%;height:46px;padding:0 13px;color:var(--text-color,#f4f4f5);background:var(--input-bg,#121214);border:1px solid var(--border,#27272a);border-radius:9px;outline:none}
+.school-login-form input:focus{border-color:var(--accent,#ff3b30);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent,#ff3b30) 15%,transparent)}
+.school-login-submit{display:flex;justify-content:space-between;align-items:center;min-height:48px;margin-top:4px;padding:0 15px;color:#fff;background:var(--accent,#ff3b30);border:0;border-radius:9px;font-weight:700;cursor:pointer;touch-action:manipulation}
+.school-login-error{min-height:18px;color:#f28b82;font-size:12px}
+.school-login-footer{grid-column:1 / -1;color:var(--text-secondary,#a1a1aa);font-size:11px}
+@media (max-width:760px){.school-login-screen{padding:12px}.school-login-shell{min-height:0;grid-template-columns:1fr;grid-template-rows:auto auto auto;gap:24px;padding:24px;border-radius:16px}.school-login-brand,.school-login-content,.school-login-footer{grid-column:1;grid-row:auto}}
+</style>
+<script>
+(function(){
+const ua=navigator.userAgent;const root=document.documentElement;
+const isElectron=/Electron/i.test(ua)||!!(window.process&&window.process.versions&&window.process.versions.electron);
+const hint=(navigator.userAgentData&&navigator.userAgentData.platform)||navigator.platform||ua;
+const os=/mac|darwin|iphone|ipad/i.test(hint)?'mac':/win/i.test(hint)?'win':/linux|x11|cros|android|bsd/i.test(hint)?'linux':'other';
+let lowEnd=false,storedMode=null,storedAnimations=null;
+try{storedMode=localStorage.getItem('set_low-end-mode');storedAnimations=localStorage.getItem('set_ui-animations')}catch(err){}
+if(storedMode==='true'){lowEnd=true}else if(storedMode!=='false'){const memory=navigator.deviceMemory||8;const cores=navigator.hardwareConcurrency||4;lowEnd=memory<=4||cores<=2||(os==='linux'&&(memory<=8||cores<=4))}
+root.classList.add('os-'+os);
+if(isElectron)root.classList.add('is-electron');
+if(lowEnd||storedAnimations==='false')root.classList.add('perf-lite');
+window.ANKA_ENV=Object.freeze({isElectron:isElectron,os:os,isMac:os==='mac',lowEnd:lowEnd});
+document.addEventListener('visibilitychange',()=>{root.classList.toggle('page-hidden',document.hidden)});
+try{const preset=localStorage.getItem('set_theme-preset')||(localStorage.getItem('set_dark-mode')==='false'?'light':'dark');if(preset==='light')root.classList.add('light-theme');else if(preset!=='dark')root.classList.add('theme-'+preset)}catch(err){}
+if(isElectron)return;
+const nativeCreate=Document.prototype.createElement;
+const srcDescriptor=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'src');
+const frames=new Set();
+const isAllowed=(url)=>{try{const parsed=new URL(url,location.href);return parsed.protocol==='http:'||parsed.protocol==='https:'||parsed.protocol==='file:'||parsed.protocol==='about:'}catch(err){return false}};
+const buildFrame=(doc)=>{
+const frame=nativeCreate.call(doc,'iframe');
+frame.className='anka-frame';
+frame.setAttribute('allow','fullscreen; autoplay; clipboard-read; clipboard-write; encrypted-media; picture-in-picture; geolocation');
+const nav={stack:[],index:-1,loading:false,title:'',muted:false,zoom:1,internal:false};
+const emit=(name,props)=>frame.dispatchEvent(Object.assign(new Event(name),props||{}));
+const setNative=(url)=>srcDescriptor.set.call(frame,url);
+const go=(url,push)=>{if(!url||!isAllowed(url))return;if(push){nav.stack.length=nav.index+1;nav.stack.push(url);nav.index=nav.stack.length-1}nav.internal=true;nav.loading=true;nav.title='';emit('did-start-loading');setNative(url)};
+Object.defineProperty(frame,'src',{configurable:true,get:()=>srcDescriptor.get.call(frame),set:(value)=>go(String(value),true)});
+frame.addEventListener('load',()=>{nav.loading=false;let url=nav.stack[nav.index];if(!url){const current=srcDescriptor.get.call(frame);if(current){nav.stack.push(current);nav.index=0;url=current}}let title='';try{title=(frame.contentDocument&&frame.contentDocument.title)||''}catch(err){}if(!title&&url){if(/newtab\.html/i.test(url)){title='Yeni Sekme'}else{try{title=new URL(url,location.href).hostname||url}catch(err){title=url}}}nav.title=title;nav.internal=false;emit('did-stop-loading');emit('did-navigate',{url:url||''});emit('dom-ready');emit('page-title-updated',{title:title});try{const host=new URL(url,location.href).hostname;if(host)emit('page-favicon-updated',{favicons:['https://www.google.com/s2/favicons?sz=64&domain='+host]})}catch(err){}});
+Object.assign(frame,{getURL:()=>nav.stack[nav.index]||srcDescriptor.get.call(frame)||'about:blank',getTitle:()=>nav.title,loadURL:(url)=>{go(String(url),true);return Promise.resolve()},isLoading:()=>nav.loading,canGoBack:()=>nav.index>0,canGoForward:()=>nav.index<nav.stack.length-1,goBack:()=>{if(nav.index>0){nav.index-=1;go(nav.stack[nav.index],false)}},goForward:()=>{if(nav.index<nav.stack.length-1){nav.index+=1;go(nav.stack[nav.index],false)}},reload:()=>{const url=nav.stack[nav.index];if(!url)return;try{frame.contentWindow.location.reload()}catch(err){go(url,false)}},reloadIgnoringCache:()=>frame.reload(),stop:()=>{try{frame.contentWindow.stop()}catch(err){}nav.loading=false;emit('did-stop-loading')},clearHistory:()=>{const url=nav.stack[nav.index];nav.stack=url?[url]:[];nav.index=url?0:-1},setAudioMuted:(value)=>{nav.muted=!!value},isAudioMuted:()=>nav.muted,isCurrentlyAudible:()=>false,setZoomFactor:(value)=>{nav.zoom=Number(value)||1;frame.style.zoom=String(nav.zoom)},getZoomFactor:()=>nav.zoom,setUserAgent:()=>{},getWebContentsId:()=>0,openDevTools:()=>{},closeDevTools:()=>{},findInPage:()=>0,stopFindInPage:()=>{},print:()=>{try{frame.contentWindow.print()}catch(err){}},insertCSS:(css)=>{try{const style=frame.contentDocument.createElement('style');style.textContent=css;frame.contentDocument.head.appendChild(style)}catch(err){}return Promise.resolve('')},executeJavaScript:(code)=>new Promise((resolve,reject)=>{try{resolve(frame.contentWindow.eval(code))}catch(err){reject(err)}})});
+frames.add(frame);return frame};
+Document.prototype.createElement=function(tag,options){if(typeof tag==='string'&&tag.toLowerCase()==='webview')return buildFrame(this);return nativeCreate.call(this,tag,options)};
+window.addEventListener('message',(event)=>{const data=event.data;if(!data||data.type!=='anka-navigate'||typeof data.url!=='string')return;frames.forEach((frame)=>{if(!frame.isConnected){frames.delete(frame);return}if(frame.contentWindow===event.source)frame.loadURL(data.url)})});
+})();
+</script>
+</head>
+<body>
+<div class="main-container">
+
+<div id="titlebar">
+<div id="top-tabs-container">
+<div class="td-wrap">
+<button id="tab-dropdown-btn" type="button" aria-expanded="false" onclick="toggleTabDropdown(event)" title="Sekmeler">▼</button>
+<div id="tab-dropdown-menu">
+<input type="text" id="tab-search-input" placeholder="Sekmelerde ara..." autocomplete="off" spellcheck="false" oninput="filterTabs(this.value)">
+<div id="tab-list-dropdown" role="listbox"></div>
+</div>
+</div>
+<div id="tab-bar" role="tablist"></div>
+<button id="new-tab-btn" type="button" onclick="createNewTab(getHomeUrl())" title="Yeni Sekme (Ctrl+T)">＋</button>
+</div>
+<div id="drag-region"></div>
+<div id="window-controls">
+<button class="w-control-btn" id="min-btn" type="button" title="Küçült">─</button>
+<button class="w-control-btn" id="max-btn" type="button" title="Büyüt">▢</button>
+<button class="w-control-btn" id="close-btn" type="button" title="Kapat">✕</button>
+</div>
+</div>
+
+<div id="app-container">
+<div id="sidebar">
+<button type="button" class="logo" id="app-logo" onclick="location.reload()" title="Anka Web" aria-label="Anka Web">
+<img src="../../icons/logo.png" alt="">
+</button>
+<div class="sidebar-spacer"></div>
+
+<button class="side-btn" type="button" id="btn-paint" onclick="togglePaintMenu()"><i>✎</i><span>KALEM</span></button>
+<button class="side-btn" type="button" id="btn-keyboard" onclick="toggleKeyboard()"><i>⌨</i><span>KLAVYE</span></button>
+<button class="side-btn" type="button" onclick="createNewTab(getHomeUrl())"><i>＋</i><span>SEKME</span></button>
+<button class="side-btn" type="button" id="btn-split" onclick="toggleSplitScreen()"><i>⊞</i><span>BÖL</span></button>
+<button class="side-btn" type="button" onclick="openAISession()"><i>✦</i><span>AI</span></button>
+<button class="side-btn" type="button" id="btn-limit" onclick="toggleLimit()"><i>🔒</i><span>LİMİT</span></button>
+<button class="side-btn" type="button" id="btn-sessions" onclick="openSessionManager()" title="Oturum Yöneticisi"><i>▤</i><span>OTURUM</span></button>
+
+<div class="sidebar-spacer"></div>
+
+<button class="side-btn" type="button" onclick="openAnkaPage('help')"><i>?</i><span>YARDIM</span></button>
+<button class="side-btn" type="button" onclick="openAnkaPage('settings')"><i>⚙</i><span>AYARLAR</span></button>
+</div>
+
+<div id="main-view">
+<div id="toolbar">
+<button class="nav-tool-btn" type="button" onclick="goBack()" title="Geri (Alt+←)" aria-label="Geri">
+<svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+</button>
+<button class="nav-tool-btn" type="button" onclick="goForward()" title="İleri (Alt+→)" aria-label="İleri">
+<svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+</button>
+<button class="nav-tool-btn" type="button" onclick="reloadTab()" title="Yenile (Ctrl+R)" aria-label="Yenile">
+<svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.2-5.5"/><path d="M20 4v6h-6"/></svg>
+</button>
+<button class="nav-tool-btn" id="home-btn" type="button" onclick="window.ankaHome(event)" title="Ana Sayfa (Alt+Home)" aria-label="Ana Sayfa">
+<svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg>
+</button>
+
+<div class="url-wrap">
+<input type="text" id="url-input" placeholder="Güvenli Arama..." autocomplete="off" spellcheck="false" autocapitalize="off">
+<button class="nav-tool-btn" id="star-btn" type="button" title="Yer İmi Ekle (Ctrl+D)" aria-label="Yer İmi Ekle">
+<svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>
+</button>
+</div>
+
+<button id="open-external-btn" class="nav-tool-btn" type="button" onclick="openInBrowserTab()" title="Tarayıcı sekmesinde aç">↗</button>
+<button id="downloads-btn" class="nav-tool-btn" type="button" onclick="openDownloadsPage()" title="İndirilenler">⭳<span class="dl-badge" id="dl-badge"></span></button>
+<button class="nav-tool-btn" id="side-btn" type="button" title="Yan Panel (Ctrl+H)" aria-label="Yan Panel" aria-pressed="false">
+<svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
+</button>
+<button id="ai-mode-btn" type="button" aria-pressed="false" onclick="toggleAiMode()" title="AI Modu (Ctrl+Shift+A)"><span class="ai-icon">✦</span><span class="ai-label">AI</span></button>
+<button class="nav-tool-btn" id="profile-btn" type="button" title="Profil" aria-label="Profil" aria-haspopup="dialog">A</button>
+</div>
+
+<div id="bookmarks-bar" role="toolbar" aria-label="Yer imleri çubuğu">
+<div id="bm-list"></div>
+<button class="nav-tool-btn" id="bm-overflow" type="button" title="Diğer yer imleri" aria-label="Diğer yer imleri" hidden>»</button>
+</div>
+
+<div id="wv-container">
+<div id="internal-page"></div>
+</div>
+
+<div id="draw-layer">
+<canvas id="main-canvas"></canvas>
+<canvas id="preview-canvas"></canvas>
+<div id="selection-box"></div>
+</div>
+<div id="paint-cursor" aria-hidden="true"></div>
+<button id="page-zoom-reset" type="button" onclick="restorePageView()" title="Büyütme öncesi görünüme dön" hidden>↶</button>
+
+<section id="capture-workspace" hidden aria-label="Yakalanan sayfa alanı">
+<div class="capture-toolbar">
+<strong>Seçilen Alan</strong>
+<div class="capture-actions">
+<button type="button" onclick="clearCaptureDrawing()" title="Çizimleri Temizle">Temizle</button>
+<button type="button" onclick="zoomCapturedArea()" title="Seçilen alanı sayfada büyüt">Büyüt</button>
+<button type="button" onclick="exportCapture()" title="Görseli Kaydet">Kaydet</button>
+<button type="button" class="capture-return" onclick="closeCaptureWorkspace()" title="Sayfaya Dön">Sayfaya Dön</button>
+</div>
+</div>
+<div id="capture-stage">
+<img id="capture-image" alt="Yakalanan sayfa bölümü" draggable="false" decoding="async">
+<canvas id="capture-canvas"></canvas>
+</div>
+</section>
+
+<div id="spotlight-layer" hidden aria-hidden="true"></div>
+<div id="screen-grid-layer" aria-hidden="true"></div>
+<div id="laser-pointer" aria-hidden="true"></div>
+<aside id="lesson-tools" hidden aria-label="Ders araçları">
+<div class="lesson-tools-head">
+<strong>Ders Araçları</strong>
+<button type="button" onclick="toggleLessonTools()" title="Kapat">✕</button>
+</div>
+<button type="button" onclick="toggleSpotlight()">Odak Işığı</button>
+<button type="button" onclick="toggleSidebar(); toggleLessonTools()">Sol Menüyü Daralt</button>
+<textarea id="lesson-note" placeholder="Hızlı not..."></textarea>
+</aside>
+</div>
+
+<aside id="pinned-side-panel" aria-label="Yan panel" hidden>
+<div class="pinned-side-header">
+<span id="pinned-side-title">Yan Panel</span>
+<button type="button" id="pinned-side-close" title="Yan paneli kapat" aria-label="Yan paneli kapat">✕</button>
+</div>
+<div id="pinned-side-content"></div>
+</aside>
+
+<aside id="xt-side" aria-label="Yan panel" hidden>
+<div class="xt-side-head">
+<strong>Yan Panel</strong>
+<button id="xt-side-close" type="button" title="Yan paneli kapat" aria-label="Yan paneli kapat">✕</button>
+</div>
+<div class="xt-tabs" role="tablist">
+<button type="button" role="tab" data-tab="bookmarks" class="active" aria-selected="true">Yer İmleri</button>
+<button type="button" role="tab" data-tab="history" aria-selected="false">Geçmiş</button>
+<button type="button" role="tab" data-tab="reading" aria-selected="false">Okuma Listesi</button>
+</div>
+<div class="xt-side-tools">
+<input id="xt-side-search" type="text" placeholder="Ara..." autocomplete="off" spellcheck="false">
+<button id="xt-side-action" type="button" class="xt-btn primary small"></button>
+</div>
+<div id="xt-side-list" class="xt-side-list"></div>
+</aside>
+</div>
+
+<section id="school-login-screen" class="school-login-screen" hidden aria-label="Okul hesabı girişi">
+<div class="school-login-shell">
+<div class="school-login-brand">
+<img src="../../icons/logo.png" alt="">
+<span>Anka Web</span>
+</div>
+<div class="school-login-content">
+<div class="school-login-eyebrow">OKUL PROFİLİ</div>
+<h1>Devam etmek için hesabını seç</h1>
+<p class="school-login-lead">Bu cihazda tanımlı kullanıcılarından biriyle giriş yap.</p>
+<div id="school-login-users" class="school-login-users"></div>
+<form id="school-login-form" class="school-login-form">
+<label for="school-login-password">Parola</label>
+<input id="school-login-password" type="password" autocomplete="current-password" placeholder="Parolanı gir">
+<div id="school-login-error" class="school-login-error" role="alert"></div>
+<button type="submit" class="school-login-submit">Giriş Yap <span aria-hidden="true">→</span></button>
+</form>
+</div>
+<div class="school-login-footer">Yerel okul profili · Anka Web</div>
+</div>
+</section>
+
+<div id="toast-stack" aria-live="polite"></div>
+<div id="notification-container"></div>
+<div id="ctx-menu" class="ctx-menu" role="menu" hidden></div>
+
+<div id="ruler" class="math-tool ruler-tool" aria-label="Cetvel 0-10 santimetre">
+<div class="tool-ctrl">
+<button class="c-btn" type="button" onclick="toolScale(event,'ruler',-0.2)" title="Küçült">−</button>
+<button class="c-btn" type="button" onclick="toolScale(event,'ruler',0.2)" title="Büyüt">＋</button>
+<button class="c-btn" type="button" onclick="toolRotate(event,'ruler')">↻</button>
+<button class="c-btn" type="button" onclick="resetMathTool(event,'ruler')" title="Varsayılana dön">⌂</button>
+</div>
+<div class="ruler-body"><div class="ruler-ticks" aria-hidden="true"></div><div class="ruler-labels"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span></div><b>cm</b></div>
+</div>
+
+<div id="protractor" class="math-tool protractor-tool" aria-label="Açıölçer">
+<div class="tool-ctrl">
+<button class="c-btn" type="button" onclick="toolScale(event,'protractor',-0.2)" title="Küçült">−</button>
+<button class="c-btn" type="button" onclick="toolScale(event,'protractor',0.2)" title="Büyüt">＋</button>
+<button class="c-btn" type="button" onclick="toolRotate(event,'protractor')">↻</button>
+<button class="c-btn" type="button" onclick="resetMathTool(event,'protractor')" title="Varsayılana dön">⌂</button>
+</div>
+<div class="protractor-body"><span>0</span><span>10</span><span>20</span><span>30</span><span>40</span><span>50</span><span>60</span><span>70</span><span>80</span><span>90</span><span>100</span><span>110</span><span>120</span><span>130</span><span>140</span><span>150</span><span>160</span><span>170</span><span>180</span></div>
+</div>
+
+<div id="paint-menu" class="paint-menu-container">
+<div id="paint-handle" class="paint-handle">
+<div class="grip"><span></span><span></span><span></span></div>
+<span class="paint-title">Çizim ve Araçlar</span>
+<div class="paint-head-actions">
+<button class="paint-minimize" type="button" onclick="togglePaintMinimized(event)" aria-expanded="true" title="Menüyü Küçült">⌃</button>
+<button class="paint-close" type="button" onclick="togglePaintMenu()" title="Menüyü Kapat">✕</button>
+</div>
+</div>
+
+<nav class="paint-category-tabs" role="tablist" aria-label="Kalem araç kategorileri">
+<button class="paint-category-tab active" type="button" role="tab" data-paint-tab="draw" aria-selected="true" aria-controls="paint-drawing-tools" onclick="selectPaintCategory('draw')"><span aria-hidden="true">✎</span>Çizim</button>
+<button class="paint-category-tab" type="button" role="tab" data-paint-tab="board" aria-selected="false" aria-controls="paint-background-tools" onclick="selectPaintCategory('board')"><span aria-hidden="true">▦</span>Tahta</button>
+<button class="paint-category-tab" type="button" role="tab" data-paint-tab="edit" aria-selected="false" aria-controls="paint-edit-tools" onclick="selectPaintCategory('edit')"><span aria-hidden="true">↶</span>Düzenle</button>
+<button class="paint-category-tab" type="button" role="tab" data-paint-tab="lesson" aria-selected="false" aria-controls="paint-lesson-tools" onclick="selectPaintCategory('lesson')"><span aria-hidden="true">◉</span>Ders</button>
+</nav>
+
+<div class="paint-content">
+<section class="paint-section paint-background-section" id="paint-background-tools" data-paint-category="board" hidden>
+<div class="paint-section-label">Zemin</div>
+<div class="tool-row grid-4">
+<div class="t-btn bg-btn active" data-bg="transparent" onclick="setActiveClass(this,'.bg-btn'); setBoardMode('transparent')" title="Şeffaf">🌐</div>
+<div class="t-btn bg-btn" data-bg="white" onclick="setActiveClass(this,'.bg-btn'); setBoardMode('white')" title="Beyaz">⬜</div>
+<div class="t-btn bg-btn" data-bg="black" onclick="setActiveClass(this,'.bg-btn'); setBoardMode('black')" title="Siyah">⬛</div>
+<div class="t-btn bg-btn" data-bg="dot" onclick="setActiveClass(this,'.bg-btn'); setBoardMode('dot')" title="Noktalı">⁘</div>
+</div>
+<div class="tool-row grid-4">
+<div class="t-btn bg-btn" data-bg="lined" onclick="setActiveClass(this,'.bg-btn'); setBoardMode('lined')" title="Çizgili">📝</div>
+<div class="t-btn bg-btn" data-bg="grid" onclick="setActiveClass(this,'.bg-btn'); setBoardMode('grid')" title="Kareli">🏁</div>
+<label class="t-btn bg-color-btn" title="Özel Arka Plan Rengi">🎨<input type="color" id="bg-color" value="#ffffff" oninput="setBoardMode('custom',this.value)"></label>
+<div class="t-btn" onclick="exportBoard()" title="Görsel Olarak Kaydet (PNG)">⭳</div>
+</div>
+<div class="tool-row grid-4">
+<div class="t-btn bg-btn" data-bg="isometric" onclick="setActiveClass(this,'.bg-btn'); setBoardMode('isometric')" title="İzometrik">◇</div>
+<div class="t-btn bg-btn" data-bg="music" onclick="setActiveClass(this,'.bg-btn'); setBoardMode('music')" title="Müzik Defteri">♫</div>
+<div class="t-btn bg-btn" data-bg="map" onclick="setActiveClass(this,'.bg-btn'); setBoardMode('map')" title="Harita">⌘</div>
+<div class="t-btn" onclick="toggleBoardMode()" title="Beyaz Tahta / Masaüstü">▣</div>
+</div>
+</section>
+
+<section class="paint-section paint-drawing-tools" id="paint-drawing-tools" data-paint-category="draw">
+<div class="paint-section-label">Çizim</div>
+<div class="tool-row grid-4">
+<div class="t-btn active" id="t-pen" onclick="setToolActive(this); setTool('pen')" title="Kalem">🖊️</div>
+<div class="t-btn" id="t-highlighter" onclick="setToolActive(this); setTool('highlighter')" title="Fosforlu">🖍️</div>
+<div class="t-btn" id="t-neon" onclick="setToolActive(this); setTool('neon')" title="Neon">✨</div>
+<div class="t-btn" id="t-eraser" onclick="setToolActive(this); setTool('eraser')" title="Silgi">🧽</div>
+</div>
+<div class="tool-row grid-4">
+<div class="t-btn" id="t-line" onclick="setToolActive(this); setTool('line')" title="Düz Çizgi">➖</div>
+<div class="t-btn" id="t-rect" onclick="setToolActive(this); setTool('rect')" title="Dikdörtgen">▭</div>
+<div class="t-btn" id="t-circle" onclick="setToolActive(this); setTool('circle')" title="Daire / Oval">⬤</div>
+<div class="t-btn" id="t-arrow" onclick="setToolActive(this); setTool('arrow')" title="Ok">➜</div>
+</div>
+<div class="tool-row grid-4">
+<div class="t-btn" id="t-text" onclick="setToolActive(this); setTool('text')" title="Metin Ekle">🔤</div>
+<div class="t-btn" id="t-select" onclick="setToolActive(this); setTool('select')" title="Seç ve Taşı">✂️</div>
+<div class="t-btn" onclick="toggleMathTool('ruler')" title="Cetvel">📏</div>
+<div class="t-btn" onclick="toggleMathTool('protractor')" title="Açıölçer">📐</div>
+</div>
+</section>
+
+<section class="paint-section paint-edit-section" id="paint-edit-tools" data-paint-category="edit" hidden>
+<div class="paint-section-label">Düzenleme</div>
+<div class="tool-row grid-3">
+<div class="t-btn" onclick="undo()" title="Geri Al (Ctrl+Z)">↩️</div>
+<div class="t-btn" onclick="redo()" title="İleri Al (Ctrl+Y)">↪️</div>
+<div class="t-btn" id="t-fill" onclick="this.classList.toggle('active'); toggleFill()" title="Şekli Doldur / Dış Hat">🪣</div>
+</div>
+<div class="tool-row grid-3">
+<div class="t-btn" onclick="zoomPageOut()" title="Sayfayı Küçült">−</div>
+<div class="t-btn" onclick="resetPageZoom()" title="Sayfa Boyutunu Sıfırla">1:1</div>
+<div class="t-btn" onclick="zoomPageIn()" title="Sayfayı Büyüt">＋</div>
+</div>
+<div class="tool-row grid-3">
+<div class="t-btn" id="touch-page-mode-btn" onclick="toggleTouchPageMode()" title="Dokunmatik Sayfa Modu">🖐️</div>
+<div class="t-btn" onclick="saveDrawingNow()" title="Çizimi Şimdi Kaydet">💾</div>
+<div class="t-btn" onclick="clearCanvas()" title="Kayıtlı Çizimi Sil">🗑️</div>
+</div>
+</section>
+
+<section class="paint-section paint-lesson-section" id="paint-lesson-tools" data-paint-category="lesson" hidden>
+<div class="paint-section-label">Ders</div>
+<div class="tool-row grid-3">
+<div class="t-btn" onclick="toggleLessonTools()" title="Ders Araçları">🎓</div>
+<div class="t-btn" onclick="toggleSpotlight()" title="Odak Işığı">◉</div>
+<div class="t-btn" onclick="toggleScreenGrid()" title="Ekran Izgarası">▦</div>
+</div>
+<div class="tool-row grid-3">
+<div class="t-btn" onclick="toggleTimerTool()" title="Ders Zamanlayıcısı">⏱</div>
+<div class="t-btn" onclick="toggleLaserPointer()" title="Lazer İşaretçisi">⌖</div>
+<div class="t-btn" onclick="toggleSidebar()" title="Sol Menüyü Daralt">◀</div>
+</div>
+</section>
+
+<section class="paint-section paint-color-section" data-paint-category="draw">
+<div class="paint-section-label">Renk ve Dosya</div>
+<div class="paint-controls">
+<div class="paint-color-row">
+<input type="color" id="p-color" value="#ff3b30" title="Renk Seç">
+<input type="range" id="p-width" min="1" max="50" value="4" title="Çizgi Kalınlığı">
+</div>
+<div class="paint-favorites" aria-label="Favori renkler">
+<button type="button" class="favorite-color active" data-color="#ff3b30" style="--swatch:#ff3b30" title="Kırmızı"></button>
+<button type="button" class="favorite-color" data-color="#2563eb" style="--swatch:#2563eb" title="Mavi"></button>
+<button type="button" class="favorite-color" data-color="#16a34a" style="--swatch:#16a34a" title="Yeşil"></button>
+<button type="button" class="favorite-color" data-color="#f59e0b" style="--swatch:#f59e0b" title="Sarı"></button>
+<button type="button" class="favorite-color" data-color="#9333ea" style="--swatch:#9333ea" title="Mor"></button>
+<button type="button" class="favorite-color" data-color="#111827" style="--swatch:#111827" title="Siyah"></button>
+</div>
+<div class="paint-color-row">
+<span class="paint-mini-label">Opaklık</span>
+<input type="range" id="p-opacity" min="10" max="100" value="100" title="Opaklık Oranı">
+</div>
+<div class="paint-file-actions">
+<button type="button" onclick="savePenFile()" title="Düzenlenebilir .pen kaydet">.PEN</button>
+<button type="button" onclick="document.getElementById('pen-file-input').click()" title=".pen dosyası aç">AÇ</button>
+<button type="button" onclick="exportBoardPdf()" title="PDF olarak yazdır">PDF</button>
+<button type="button" onclick="takeBoardScreenshot()" title="Ekran görüntüsü al">Ekran</button>
+<input id="pen-file-input" type="file" accept=".pen,application/json" hidden onchange="loadPenFile(event)">
+</div>
+<button class="paint-clear" type="button" onclick="clearCanvas()">TÜMÜNÜ TEMİZLE</button>
+</div>
+</section>
+</div>
+</div>
+
+<div id="keyboard" lang="tr">
+<div id="kb-handle" title="Sürükle"></div>
+<div id="kb-keys"></div>
+</div>
+
+<script>
+const ENV=window.ANKA_ENV||{isElectron:false,os:'other',isMac:false,lowEnd:false};
+const themeChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('theme_settings'):{postMessage(){},onmessage:null};
+const PANELS=[];
+let aiToggleLock=false;
+let searchDebounceTimer=0;
+let dropdownIndex=-1;
+let aiModeActive=false;
+let ctxActions=[];
+let fullscreenShortcutActive=false;
+let spotlightEl=null;
+let spotlightRaf=0;
+let spotlightX=0;
+let spotlightY=0;
+let spotlightRect=null;
+
+let ipcRenderer=null;
+if(ENV.isElectron){try{ipcRenderer=require('electron').ipcRenderer}catch(e){ipcRenderer=window.electronAPI||window.ipcRenderer||null}}
+
+function safeIpcSend(channel,...args){if(ipcRenderer&&typeof ipcRenderer.send==='function'){ipcRenderer.send(channel,...args)}}
+if(ipcRenderer&&typeof ipcRenderer.on==='function'){ipcRenderer.on('open-new-tab',(event,url)=>{if(typeof createNewTab==='function'&&typeof url==='string')createNewTab(url)})}
+if(ipcRenderer&&typeof ipcRenderer.invoke==='function'){ipcRenderer.invoke('is-window-fullscreen').then((active)=>{fullscreenShortcutActive=active}).catch(()=>{});ipcRenderer.on('window-fullscreen-change',(event,active)=>{fullscreenShortcutActive=!!active})}
+
+const DOM={body:document.body,themeIcon:null,btnTheme:null,aiModeBtn:null,toastStack:null,tabDropdownMenu:null,tabDropdownBtn:null,tabSearchInput:null,tabListDropdown:null,tabBar:null,ctxMenu:null,urlInput:null};
+
+function initDOMCache(){const byId=(id)=>document.getElementById(id);DOM.themeIcon=byId('theme-icon');DOM.btnTheme=byId('btn-theme');DOM.aiModeBtn=byId('ai-mode-btn');DOM.toastStack=byId('toast-stack');DOM.tabDropdownMenu=byId('tab-dropdown-menu');DOM.tabDropdownBtn=byId('tab-dropdown-btn');DOM.tabSearchInput=byId('tab-search-input');DOM.tabListDropdown=byId('tab-list-dropdown');DOM.tabBar=byId('tab-bar');DOM.ctxMenu=byId('ctx-menu');DOM.urlInput=byId('url-input')}
+
+function getSetting(id,def){try{const value=localStorage.getItem('set_'+id);return value===null?def:value}catch(err){return def}}
+function setSetting(id,value){try{localStorage.setItem('set_'+id,value);return true}catch(err){return false}}
+
+const api={createNewTab:(url)=>(typeof createNewTab==='function'?(createNewTab(url),true):false),reopenClosedTab:()=>(typeof reopenClosedTab==='function'?(reopenClosedTab(),true):false),createIncognitoTab:()=>(typeof createIncognitoTab==='function'?(createIncognitoTab(),true):false),closeTab:(id)=>(typeof closeTab==='function'?(closeTab(id,{stopPropagation(){},preventDefault(){}}),true):false),reloadTab:()=>(typeof reloadTab==='function'?(reloadTab(),true):false),switchTab:(id)=>(typeof switchTab==='function'?(switchTab(id),true):false),cycleTab:(dir)=>(typeof cycleTab==='function'?(cycleTab(dir),true):false),switchTabByIndex:(index)=>(typeof switchTabByIndex==='function'?(switchTabByIndex(index),true):false),toggleMute:(id)=>(typeof toggleMute==='function'?(toggleMute(id),true):false),openFindBar:(view)=>(typeof openFindBar==='function'?(openFindBar(view),true):false),toggleSideViewSource:(view)=>(typeof toggleSideViewSource==='function'?(toggleSideViewSource(view),true):false),goBack:()=>(typeof goBack==='function'?(goBack(),true):false),goForward:()=>(typeof goForward==='function'?(goForward(),true):false)};
+
+const getActiveId=()=>(typeof activeTabId!=='undefined'?activeTabId:null);
+const tabIdOf=(tab)=>tab.id.replace(/^btn-/,'');
+const allTabs=()=>Array.from(document.querySelectorAll('#tab-bar .tab'));
+const activeView=()=>{const id=getActiveId();return id?document.getElementById(id):null};
+
+function getTabUrl(id){const view=document.getElementById(id);if(!view)return '';try{if(typeof view.getURL==='function')return view.getURL()||''}catch(err){}return view.src||''}
+function applyThemeState(isDark){const light=!isDark;document.documentElement.classList.toggle('light-theme',light);DOM.body.classList.toggle('light-theme',light);if(DOM.btnTheme)DOM.btnTheme.classList.toggle('active',light)}
+function getNewTabThemeSettings(){return{themePreset:getSetting('theme-preset','dark'),uiScale:getSetting('ui-scale','normal'),fontScale:getSetting('font-scale','normal'),touchMode:getSetting('touch-mode','true')==='true',uiAnimations:getSetting('ui-animations','true')==='true'}}
+function syncNewTabTheme(view){if(!view||typeof view.executeJavaScript!=='function')return;let url='';try{url=typeof view.getURL==='function'?view.getURL():view.src||''}catch(err){return}if(!url.includes('newtab.html'))return;const settings=JSON.stringify(getNewTabThemeSettings());view.executeJavaScript(`window.applyHostThemeSettings && window.applyHostThemeSettings(${settings})`).catch(()=>{})}
+function syncOpenNewTabThemes(){document.querySelectorAll('webview').forEach(syncNewTabTheme)}
+function applySavedTheme(){const preset=getSetting('theme-preset',null)||(getSetting('dark-mode','true')==='false'?'light':'dark');if(typeof window.applySetting==='function')window.applySetting('theme-preset',preset);else applyThemeState(preset!=='light')}
+function toggleTheme(){const nextPreset=DOM.body.classList.contains('light-theme')?'dark':'light';if(typeof window.saveSetting==='function'){window.saveSetting('theme-preset',nextPreset)}else{setSetting('theme-preset',nextPreset);applyThemeState(nextPreset!=='light');themeChannel.postMessage({id:'theme-preset',val:nextPreset})}showToast(nextPreset==='dark'?'Koyu tema açıldı':'Açık tema açıldı')}
+
+themeChannel.onmessage=(event)=>{if(event.data&&event.data.id==='theme-preset'){if(typeof window.saveSetting==='function')window.saveSetting('theme-preset',event.data.val);else syncOpenNewTabThemes()}if(event.data&&event.data.id==='theme-settings-request'){themeChannel.postMessage({id:'theme-settings-snapshot',settings:getNewTabThemeSettings()})}};
+
+window.addEventListener('storage',(event)=>{if(event.key==='set_theme-preset'||event.key==='set_dark-mode'){applySavedTheme()}else if(event.key==='set_ai-mode-active'){aiModeActive=event.newValue==='true';if(DOM.aiModeBtn){DOM.aiModeBtn.classList.toggle('active',aiModeActive);DOM.aiModeBtn.setAttribute('aria-pressed',String(aiModeActive))}}});
+
+function openDownloadsFolder(){showToast('İndirmeler klasörü açılıyor...')}
+
+window.addEventListener('unhandledrejection',(event)=>{const reason=event.reason&&event.reason.message?event.reason.message:'';if(!reason||reason.trim()===''||reason==='bilinmeyen hata')return;if(reason.toLowerCase().includes('webview')){console.error(event.reason);return}showToast('İşlem tamamlanamadı: '+reason,'error')});
+
+aiModeActive=getSetting('ai-mode-active','false')==='true';
+
+function isAiModeActive(){return aiModeActive}
+function setAiMode(state){aiModeActive=!!state;if(DOM.aiModeBtn){DOM.aiModeBtn.classList.toggle('active',aiModeActive);DOM.aiModeBtn.setAttribute('aria-pressed',String(aiModeActive))}setSetting('ai-mode-active',aiModeActive?'true':'false')}
+function toggleAiMode(){if(aiToggleLock)return;aiToggleLock=true;setAiMode(!aiModeActive);showToast(aiModeActive?'AI Modu Açık':'AI Modu Kapalı');setTimeout(()=>{aiToggleLock=false},180)}
+function getHomeUrl(){return getSetting('startup-page','home')==='blank'?'about:blank':'newtab.html'}
+function getStartupUrl(){return getSetting('school-mode','false')==='true'?getSetting('school-url','https://www.eba.gov.tr/'):getHomeUrl()}
+
+window.ankaHome=function(event){
+if(event&&typeof event.stopImmediatePropagation==='function')event.stopImmediatePropagation();
+let home=typeof getHomeUrl==='function'?getHomeUrl():'newtab.html';
+if(home!=='about:blank'){try{home=new URL(home,location.href).href}catch(err){}}
+const view=typeof activeView==='function'?activeView():null;
+if(view&&typeof view.loadURL==='function'){try{const result=view.loadURL(home);if(result&&typeof result.catch==='function')result.catch(()=>{});return}catch(err){}}
+if(typeof createNewTab==='function'){createNewTab(home);return}
+try{location.href=home}catch(err){}
+};
+
+let selectedSchoolUserId=null;
+window.__ankaRequireLogin=false;
+window.__ankaAuthenticated=false;
+
+function renderSchoolLoginUsers(users){const list=document.getElementById('school-login-users');const password=document.getElementById('school-login-password');const fragment=document.createDocumentFragment();selectedSchoolUserId=null;users.forEach((user,index)=>{const button=document.createElement('button');button.type='button';button.className='school-login-user'+(index===0?' selected':'');button.dataset.userId=user.id;button.dataset.hasPassword=String(user.hasPassword);const avatar=document.createElement('span');avatar.className='school-login-avatar';avatar.textContent=(user.displayName||user.username).slice(0,1).toUpperCase();const name=document.createElement('span');name.className='school-login-user-name';name.textContent=user.displayName;const username=document.createElement('small');username.textContent='@'+user.username;const details=document.createElement('span');details.className='school-login-user-details';details.append(name,username);button.append(avatar,details);button.addEventListener('click',()=>{selectedSchoolUserId=user.id;list.querySelectorAll('.school-login-user').forEach((item)=>item.classList.toggle('selected',item===button));password.required=user.hasPassword;password.disabled=!user.hasPassword;password.placeholder=user.hasPassword?'Parolanı gir':'Bu kullanıcı parola kullanmıyor';password.value='';password.focus()});fragment.appendChild(button);if(index===0){selectedSchoolUserId=user.id;password.required=user.hasPassword;password.disabled=!user.hasPassword;password.placeholder=user.hasPassword?'Parolanı gir':'Bu kullanıcı parola kullanmıyor'}});list.replaceChildren(fragment)}
+
+window.__ankaAccessReady=(async()=>{if(!ipcRenderer||typeof ipcRenderer.invoke!=='function'){window.__ankaAuthenticated=true;return null}try{const config=await ipcRenderer.invoke('school-mode:get-config');setSetting('school-mode',config.enabled?'true':'false');setSetting('school-url',config.startUrl);window.__ankaRequireLogin=config.userLoginEnabled;if(config.userLoginEnabled&&config.users.length){renderSchoolLoginUsers(config.users);document.getElementById('school-login-screen').hidden=false;document.getElementById('school-login-form').addEventListener('submit',async(event)=>{event.preventDefault();const error=document.getElementById('school-login-error');const password=document.getElementById('school-login-password');try{const result=await ipcRenderer.invoke('school-mode:authenticate-user',{id:selectedSchoolUserId,password:password.value});if(!result.ok){error.textContent='Kullanıcı adı veya parola doğru değil.';password.select();return}window.__ankaAuthenticated=true;document.getElementById('school-login-screen').hidden=true;if(typeof createNewTab==='function'&&document.querySelectorAll('.tab').length===0)createNewTab(getStartupUrl())}catch(err){error.textContent='Giriş doğrulanamadı. Yeniden deneyin.'}});return config}window.__ankaAuthenticated=true;return config}catch(err){window.__ankaAuthenticated=true;return null}})();
+
+function openInBrowserTab(){const id=getActiveId();const url=id?getTabUrl(id):'';if(/^https?:\/\//i.test(url)){window.open(url,'_blank','noopener')}else{showToast('Bu sayfa harici olarak açılamaz.','error')}}
+
+function closeTabDropdown(){const menu=DOM.tabDropdownMenu;if(!menu||!menu.classList.contains('open'))return;menu.classList.remove('open');menu.style.removeProperty('display');DOM.tabDropdownBtn.setAttribute('aria-expanded','false');dropdownIndex=-1}
+
+function toggleTabDropdown(event){if(event)event.stopPropagation();const menu=DOM.tabDropdownMenu;if(!menu)return;if(menu.classList.contains('open')){closeTabDropdown();return}hideContextMenu();const rect=DOM.tabDropdownBtn.getBoundingClientRect();const width=Math.max(0,Math.min(320,window.innerWidth-16));menu.style.removeProperty('display');menu.style.maxWidth=width+'px';menu.style.maxHeight=Math.max(0,window.innerHeight-16)+'px';menu.style.left=Math.max(8,Math.min(rect.left,window.innerWidth-width-8))+'px';menu.classList.add('open');DOM.tabDropdownBtn.setAttribute('aria-expanded','true');DOM.tabSearchInput.value='';renderTabListDropdown();const menuHeight=Math.min(menu.scrollHeight,Math.max(0,window.innerHeight-16));const below=rect.bottom+6;const roomBelow=window.innerHeight-below-8;const roomAbove=rect.top-menuHeight-6;const top=roomBelow>=menuHeight||roomBelow>=roomAbove?below:Math.max(8,roomAbove);menu.style.maxHeight=Math.max(0,Math.min(menuHeight,top===below?roomBelow:rect.top-top-6))+'px';menu.style.top=Math.max(8,Math.min(top,window.innerHeight-menuHeight-8))+'px';DOM.tabSearchInput.focus()}
+
+function renderTabListDropdown(filter=''){const list=DOM.tabListDropdown;if(!list)return;const needle=filter.trim().toLowerCase();const currentId=getActiveId();const fragment=document.createDocumentFragment();let matched=0;for(const tab of allTabs()){const id=tabIdOf(tab);const titleEl=tab.querySelector('.tab-title');const title=titleEl?titleEl.textContent:'Yeni Sekme';if(needle){const url=getTabUrl(id).toLowerCase();if(!title.toLowerCase().includes(needle)&&!url.includes(needle))continue}matched+=1;const item=document.createElement('div');item.className=id===currentId?'td-item active':'td-item';item.dataset.id=id;item.setAttribute('role','option');const iconEl=tab.querySelector('.tab-icon');const iconSrc=iconEl&&iconEl.getAttribute('src');if(iconSrc){const img=document.createElement('img');img.className='td-icon';img.alt='';img.decoding='async';img.src=iconSrc;item.appendChild(img)}const label=document.createElement('span');label.className='td-label';label.textContent=title;item.appendChild(label);const close=document.createElement('button');close.type='button';close.className='td-close';close.title='Sekmeyi kapat';close.setAttribute('aria-label','Sekmeyi kapat');close.textContent='✕';item.appendChild(close);fragment.appendChild(item)}if(!matched){const empty=document.createElement('div');empty.className='td-empty';empty.textContent='Sekme bulunamadı';fragment.appendChild(empty)}list.replaceChildren(fragment);dropdownIndex=-1}
+
+function filterTabs(query){clearTimeout(searchDebounceTimer);searchDebounceTimer=setTimeout(()=>renderTabListDropdown(query),ENV.lowEnd?160:90)}
+
+function moveDropdownFocus(step){const items=DOM.tabListDropdown.querySelectorAll('.td-item');if(!items.length)return;dropdownIndex=(dropdownIndex+step+items.length)%items.length;items.forEach((item,index)=>item.classList.toggle('focus',index===dropdownIndex));items[dropdownIndex].scrollIntoView({block:'nearest'})}
+
+function activateDropdownItem(item){if(!item)return;api.switchTab(item.dataset.id);closeTabDropdown()}
+
+function bindDropdown(){DOM.tabListDropdown.addEventListener('click',(event)=>{const item=event.target.closest('.td-item');if(!item)return;if(event.target.closest('.td-close')){api.closeTab(item.dataset.id);requestAnimationFrame(()=>renderTabListDropdown(DOM.tabSearchInput.value));return}activateDropdownItem(item)});DOM.tabSearchInput.addEventListener('keydown',(event)=>{if(event.key==='ArrowDown'){event.preventDefault();moveDropdownFocus(1)}else if(event.key==='ArrowUp'){event.preventDefault();moveDropdownFocus(-1)}else if(event.key==='Enter'){event.preventDefault();const items=DOM.tabListDropdown.querySelectorAll('.td-item');activateDropdownItem(items[dropdownIndex]||items[0])}else if(event.key==='Escape'){closeTabDropdown()}})}
+
+function hideContextMenu(){if(DOM.ctxMenu&&!DOM.ctxMenu.hidden){DOM.ctxMenu.hidden=true;DOM.ctxMenu.replaceChildren();ctxActions=[]}}
+
+function showContextMenu(x,y,entries){const menu=DOM.ctxMenu;const fragment=document.createDocumentFragment();ctxActions=[];for(const entry of entries){if(entry==='-'){const sep=document.createElement('div');sep.className='ctx-sep';sep.setAttribute('role','separator');fragment.appendChild(sep);continue}const button=document.createElement('button');button.type='button';button.className='ctx-item';button.setAttribute('role','menuitem');button.disabled=!!entry.disabled;button.dataset.idx=String(ctxActions.length);const label=document.createElement('span');label.textContent=entry.label;button.appendChild(label);if(entry.hint){const hint=document.createElement('span');hint.className='ctx-hint';hint.textContent=entry.hint;button.appendChild(hint)}ctxActions.push(entry.run);fragment.appendChild(button)}menu.replaceChildren(fragment);menu.hidden=false;const rect=menu.getBoundingClientRect();menu.style.left=Math.max(4,Math.min(x,window.innerWidth-rect.width-4))+'px';menu.style.top=Math.max(4,Math.min(y,window.innerHeight-rect.height-4))+'px';const first=menu.querySelector('.ctx-item:not(:disabled)');if(first)first.focus({preventScroll:true})}
+
+function bindContextMenu(){DOM.ctxMenu.addEventListener('click',(event)=>{const button=event.target.closest('.ctx-item');if(!button||button.disabled)return;const run=ctxActions[Number(button.dataset.idx)];hideContextMenu();if(run)run()});DOM.ctxMenu.addEventListener('keydown',(event)=>{const items=Array.from(DOM.ctxMenu.querySelectorAll('.ctx-item:not(:disabled)'));if(!items.length)return;const index=items.indexOf(document.activeElement);if(event.key==='ArrowDown'){event.preventDefault();items[(index+1)%items.length].focus()}else if(event.key==='ArrowUp'){event.preventDefault();items[(index-1+items.length)%items.length].focus()}else if(event.key==='Escape'){event.preventDefault();hideContextMenu()}})}
+
+function copyText(text){const done=()=>showToast('Adres kopyalandı');if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,()=>showToast('Kopyalanamadı','error'));return}const area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();try{document.execCommand('copy');done()}catch(err){showToast('Kopyalanamadı','error')}area.remove()}
+
+function closeMany(tabs){tabs.map(tabIdOf).forEach((id)=>api.closeTab(id))}
+
+function openTabMenu(x,y,tab){const id=tabIdOf(tab);const tabs=allTabs();const index=tabs.indexOf(tab);const url=getTabUrl(id);const mod=ENV.isMac?'⌘':'Ctrl+';showContextMenu(x,y,[{label:'Yeni Sekme',hint:mod+'T',run:()=>api.createNewTab(getHomeUrl())},{label:'Yenile',hint:mod+'R',run:()=>{api.switchTab(id);api.reloadTab()}},{label:'Sekmeyi Çoğalt',disabled:!url,run:()=>api.createNewTab(url)},{label:'Adresi Kopyala',disabled:!url,run:()=>copyText(url)},'-',{label:'Sekmeyi Kapat',hint:mod+'W',run:()=>api.closeTab(id)},{label:'Diğer Sekmeleri Kapat',disabled:tabs.length<2,run:()=>closeMany(tabs.filter((t)=>t!==tab))},{label:'Sağdaki Sekmeleri Kapat',disabled:index===tabs.length-1,run:()=>closeMany(tabs.slice(index+1))}])}
+
+function revealTab(tab){const bar=DOM.tabBar;const tabRect=tab.getBoundingClientRect();const barRect=bar.getBoundingClientRect();if(tabRect.left<barRect.left)bar.scrollLeft-=barRect.left-tabRect.left+8;else if(tabRect.right>barRect.right)bar.scrollLeft+=tabRect.right-barRect.right+8}
+
+function bindTabBar(){const bar=DOM.tabBar;let dragTab=null;let target=null;let after=false;let pointerX=0;let markRaf=0;let syncRaf=0;const clearMark=()=>{if(target)target.classList.remove('drop-before','drop-after')};const resetDrag=()=>{if(markRaf)cancelAnimationFrame(markRaf);markRaf=0;clearMark();if(dragTab)dragTab.classList.remove('dragging');DOM.body.classList.remove('dragging-ui');dragTab=null;target=null};const mark=()=>{markRaf=0;if(!dragTab)return;const tabs=allTabs().filter((tab)=>tab!==dragTab);if(!tabs.length)return;let hit=null;let isAfter=false;for(const tab of tabs){const rect=tab.getBoundingClientRect();if(pointerX>=rect.left&&pointerX<=rect.right){hit=tab;isAfter=pointerX>rect.left+rect.width/2;break}}if(!hit){if(pointerX<tabs[0].getBoundingClientRect().left){hit=tabs[0]}else{hit=tabs[tabs.length-1];isAfter=true}}if(hit.classList.contains('pinned')!==dragTab.classList.contains('pinned')){clearMark();target=null;return}if(hit!==target||isAfter!==after){clearMark();target=hit;after=isAfter;hit.classList.add(isAfter?'drop-after':'drop-before')}};const commit=()=>{if(!dragTab||!target||target===dragTab)return;const ref=after?target.nextElementSibling:target;if(ref===dragTab)return;bar.insertBefore(dragTab,ref);window.dispatchEvent(new CustomEvent('anka:tabs-reordered',{detail:{order:allTabs().map(tabIdOf)}}))};bar.addEventListener('dragstart',(event)=>{const tab=event.target.closest&&event.target.closest('.tab');if(!tab)return;dragTab=tab;tab.classList.add('dragging');DOM.body.classList.add('dragging-ui');event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',tab.id)});bar.addEventListener('dragover',(event)=>{if(!dragTab)return;event.preventDefault();event.dataTransfer.dropEffect='move';pointerX=event.clientX;if(!markRaf)markRaf=requestAnimationFrame(mark)});bar.addEventListener('drop',(event)=>{if(!dragTab)return;event.preventDefault();commit();resetDrag()});bar.addEventListener('dragend',resetDrag);bar.addEventListener('wheel',(event)=>{if(Math.abs(event.deltaY)>Math.abs(event.deltaX)){bar.scrollLeft+=event.deltaY;event.preventDefault()}},{passive:false});bar.addEventListener('mousedown',(event)=>{if(event.button===1)event.preventDefault()});bar.addEventListener('auxclick',(event)=>{if(event.button!==1)return;const tab=event.target.closest('.tab');if(!tab)return;event.preventDefault();api.closeTab(tabIdOf(tab))});const sync=()=>{syncRaf=0;for(const tab of allTabs()){if(!tab.draggable)tab.draggable=true}if(dragTab)return;const active=bar.querySelector('.tab.active');if(active)revealTab(active)};new MutationObserver((records)=>{if(syncRaf)return;for(const record of records){const relevant=record.type==='childList'?record.target===bar:record.target.parentNode===bar;if(relevant){syncRaf=requestAnimationFrame(sync);return}}}).observe(bar,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});sync()}
+
+function clampPanel(panel,x,y){const width=panel.offsetWidth||200;const height=panel.offsetHeight||100;return{x:Math.min(Math.max(x,8),Math.max(8,window.innerWidth-width-8)),y:Math.min(Math.max(y,44),Math.max(44,window.innerHeight-height-8))}}
+
+function registerPanel(panelId,handleId,key){const panel=document.getElementById(panelId);const handle=document.getElementById(handleId);if(!panel||!handle)return;const entry={panel,key};PANELS.push(entry);handle.classList.add('drag-handle');handle.style.touchAction='none';let startX=0;let startY=0;let baseX=0;let baseY=0;let nextX=0;let nextY=0;let raf=0;let active=false;const flush=()=>{raf=0;panel.style.left=nextX+'px';panel.style.top=nextY+'px'};const stopDrag=()=>{active=false;if(raf){cancelAnimationFrame(raf);flush()}panel.classList.remove('is-dragging');DOM.body.classList.remove('dragging-ui')};handle.addEventListener('pointerdown',(event)=>{if(event.button!==0||event.target.closest('button, input, select, textarea, a'))return;const rect=panel.getBoundingClientRect();const parent=panel.offsetParent;const origin=parent?parent.getBoundingClientRect():{left:0,top:0};baseX=rect.left-origin.left;baseY=rect.top-origin.top;startX=event.clientX;startY=event.clientY;nextX=baseX;nextY=baseY;active=true;panel.classList.add('moved','is-dragging');panel.style.left=baseX+'px';panel.style.top=baseY+'px';panel.style.right='auto';panel.style.bottom='auto';DOM.body.classList.add('dragging-ui');try{handle.setPointerCapture(event.pointerId)}catch(err){}event.preventDefault()});handle.addEventListener('pointermove',(event)=>{if(!active)return;const pos=clampPanel(panel,baseX+event.clientX-startX,baseY+event.clientY-startY);nextX=pos.x;nextY=pos.y;if(!raf)raf=requestAnimationFrame(flush)});const finish=(event)=>{if(!active)return;stopDrag();try{handle.releasePointerCapture(event.pointerId)}catch(err){}};handle.addEventListener('pointerup',finish);handle.addEventListener('pointercancel',finish);handle.addEventListener('lostpointercapture',finish);window.addEventListener('blur',()=>{if(active)stopDrag()});handle.addEventListener('dblclick',(event)=>{if(event.target.closest('button, input, select, textarea, a'))return;panel.classList.remove('moved');panel.style.left='';panel.style.top='';panel.style.right='';panel.style.bottom=''})}
+
+function initPanels(){registerPanel('paint-menu','paint-handle','paint');registerPanel('keyboard','kb-handle','keyboard')}
+
+function togglePaintMinimized(event){if(event)event.stopPropagation();const menu=document.getElementById('paint-menu');const button=document.querySelector('.paint-minimize');if(!menu)return;const minimized=menu.classList.toggle('is-minimized');if(button){button.setAttribute('aria-expanded',String(!minimized));button.title=minimized?'Menüyü Aç':'Menüyü Küçült'}}
+
+function toggleSidebar(){const collapsed=document.body.classList.toggle('sidebar-collapsed');closeTabDropdown();const button=document.getElementById('tab-dropdown-btn');if(button){button.setAttribute('aria-expanded',String(!collapsed));button.title=collapsed?'Sol Menüyü Aç':'Sol Menüyü Daralt'}const tools=document.getElementById('lesson-tools');if(tools&&collapsed&&!tools.hidden){tools.hidden=true}requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')))}
+
+function toggleLessonTools(){const tools=document.getElementById('lesson-tools');if(!tools)return;tools.hidden=!tools.hidden}
+
+function paintSpotlight(){spotlightRaf=0;if(!spotlightEl||spotlightEl.hidden)return;if(!spotlightRect)spotlightRect=spotlightEl.getBoundingClientRect();spotlightEl.style.setProperty('--sx',(spotlightX-spotlightRect.left)+'px');spotlightEl.style.setProperty('--sy',(spotlightY-spotlightRect.top)+'px')}
+function trackSpotlight(event){spotlightX=event.clientX;spotlightY=event.clientY;if(!spotlightRaf)spotlightRaf=requestAnimationFrame(paintSpotlight)}
+function toggleSpotlight(){const spotlight=document.getElementById('spotlight-layer');if(!spotlight)return;spotlight.hidden=!spotlight.hidden;spotlight.classList.toggle('active',!spotlight.hidden);spotlightEl=spotlight;spotlightRect=null;if(spotlight.hidden){document.removeEventListener('pointermove',trackSpotlight);if(spotlightRaf){cancelAnimationFrame(spotlightRaf);spotlightRaf=0}}else{spotlight.style.background='radial-gradient(circle 150px at var(--sx, 50%) var(--sy, 50%), transparent 0 145px, rgba(0, 0, 0, 0.72) 155px 100%)';document.addEventListener('pointermove',trackSpotlight,{passive:true})}}
+
+function toggleSplitScreen(){if(typeof window.__toggleSplitScreen==='function')window.__toggleSplitScreen()}
+function toggleLimit(){if(typeof window.__toggleLimit==='function')window.__toggleLimit()}
+function toggleHelp(){if(typeof window.__toggleHelp==='function')window.__toggleHelp()}
+function toggleSettings(){if(typeof window.__toggleSettings==='function')window.__toggleSettings()}
+
+function focusUrlBar(){if(!DOM.urlInput)return;DOM.urlInput.focus();DOM.urlInput.select()}
+function isTypingTarget(node){return!!node&&(node.tagName==='INPUT'||node.tagName==='TEXTAREA'||node.isContentEditable)}
+
+function handleModShortcut(key,event){const shift=event.shiftKey;if(event.repeat&&(key==='t'||key==='w'||key==='n'))return true;switch(key){case't':return shift?api.reopenClosedTab():api.createNewTab(getHomeUrl());case'n':return shift?api.createIncognitoTab():false;case'w':{const id=getActiveId();return id?api.closeTab(id):false}case'l':focusUrlBar();return true;case'r':return api.reloadTab();case'f':{const view=activeView();return view?api.openFindBar(view):false}case'u':{const view=activeView();return view?api.toggleSideViewSource(view):false}case'm':{const id=getActiveId();return shift&&id?api.toggleMute(id):false}case'a':if(!shift)return false;toggleAiMode();return true;case'd':if(!shift)return false;toggleTheme();return true;case'tab':return api.cycleTab(shift?-1:1);case'[':return api.goBack();case']':return api.goForward();default:if(/^[1-8]$/.test(key))return api.switchTabByIndex(parseInt(key,10)-1);if(key==='9')return api.switchTabByIndex(-1);return false}}
+
+function handleAltShortcut(event){if(event.code==='ArrowLeft'&&!isTypingTarget(event.target))return api.goBack();if(event.code==='ArrowRight'&&!isTypingTarget(event.target))return api.goForward();if(event.code==='Home'){window.ankaHome(event);return true}if(ENV.isElectron)return false;if(event.code==='KeyT')return event.shiftKey?api.reopenClosedTab():api.createNewTab(getHomeUrl());if(event.code==='KeyW'){const id=getActiveId();return id?api.closeTab(id):false}return false}
+
+window.addEventListener('keydown',(event)=>{if(window.__ankaRequireLogin&&!window.__ankaAuthenticated)return;if(event.isComposing||!event.key)return;const mod=event.ctrlKey||event.metaKey;if(mod&&!event.altKey){if(handleModShortcut(event.key.toLowerCase(),event))event.preventDefault();return}if(event.altKey&&!mod){if(handleAltShortcut(event))event.preventDefault();return}if(event.key==='F5'){if(api.reloadTab())event.preventDefault()}else if(event.key==='F6'){event.preventDefault();focusUrlBar()}else if(event.key==='F11'){event.preventDefault();fullscreenShortcutActive=!fullscreenShortcutActive;safeIpcSend('set-fullscreen',fullscreenShortcutActive)}else if(event.key==='Escape'){closeTabDropdown();hideContextMenu()}});
+
+window.addEventListener('pointerdown',(event)=>{if(DOM.ctxMenu&&!DOM.ctxMenu.hidden&&!DOM.ctxMenu.contains(event.target))hideContextMenu();const menu=DOM.tabDropdownMenu;if(menu&&menu.classList.contains('open')&&!menu.contains(event.target)&&!DOM.tabDropdownBtn.contains(event.target))closeTabDropdown()},true);
+
+window.addEventListener('blur',()=>{closeTabDropdown();hideContextMenu()});
+
+function nativeWindowCall(action){const candidates=[window.electronAPI,window.ankaAPI,window.api,window.electron,window.windowControls];for(const target of candidates){if(target&&typeof target[action]==='function'){target[action]();return true}}return false}
+
+function bindWindowControls(){const byId=(id)=>document.getElementById(id);byId('min-btn').addEventListener('click',()=>{if(!nativeWindowCall('minimize')&&ipcRenderer)ipcRenderer.invoke('window-minimize')});byId('max-btn').addEventListener('click',()=>{if(!nativeWindowCall('toggleMaximize')&&!nativeWindowCall('maximize')&&ipcRenderer)ipcRenderer.invoke('window-maximize')});byId('close-btn').addEventListener('click',()=>{if(!nativeWindowCall('close')&&ipcRenderer)ipcRenderer.invoke('window-close');else window.close()})}
+
+function applyPlatformLabels(){if(!ENV.isMac)return;document.querySelectorAll('[title]').forEach((el)=>{el.title=el.title.replace(/Ctrl\+/g,'⌘').replace(/Alt\+/g,'⌥').replace(/Shift\+/g,'⇧')})}
+
+let layoutRaf=0;
+function updateLayoutState(){layoutRaf=0;const root=document.documentElement;root.classList.toggle('maximized',window.innerWidth>=screen.availWidth-2&&window.innerHeight>=screen.availHeight-2);root.classList.toggle('is-fullscreen',!!document.fullscreenElement);for(const entry of PANELS){if(!entry.panel.classList.contains('moved'))continue;const pos=clampPanel(entry.panel,parseFloat(entry.panel.style.left)||0,parseFloat(entry.panel.style.top)||0);entry.panel.style.left=pos.x+'px';entry.panel.style.top=pos.y+'px'}}
+function scheduleLayout(){if(!layoutRaf)layoutRaf=requestAnimationFrame(updateLayoutState)}
+
+const releaseUiPointerLock=()=>{const list=document.body.classList;if(list.contains('dragging-ui'))list.remove('dragging-ui');if(list.contains('capture-active'))list.remove('capture-active')};
+window.addEventListener('pointerup',releaseUiPointerLock,true);
+window.addEventListener('pointercancel',releaseUiPointerLock,true);
+window.addEventListener('blur',releaseUiPointerLock);
+
+window.addEventListener('resize',()=>{spotlightRect=null;hideContextMenu();closeTabDropdown();scheduleLayout()},{passive:true});
+document.addEventListener('fullscreenchange',scheduleLayout);
+
+window.addEventListener('DOMContentLoaded',async()=>{initDOMCache();applyPlatformLabels();bindWindowControls();bindDropdown();bindTabBar();bindContextMenu();initPanels();const pinnedClose=document.getElementById('pinned-side-close');if(pinnedClose){pinnedClose.addEventListener('click',()=>{if(typeof closePinnedSidePanel==='function')closePinnedSidePanel()})}updateLayoutState();await window.__ankaAccessReady;applySavedTheme();new MutationObserver(()=>{const light=DOM.body.classList.contains('light-theme');const root=document.documentElement;if(root.classList.contains('light-theme')!==light)root.classList.toggle('light-theme',light)}).observe(DOM.body,{attributes:true,attributeFilter:['class']});setAiMode(isAiModeActive());if(!ENV.isElectron){let seen=false;try{seen=sessionStorage.getItem('anka_frame_hint')==='1';sessionStorage.setItem('anka_frame_hint','1')}catch(err){}if(!seen){setTimeout(()=>showToast('Tarayıcı modunda bazı siteler çerçevede açılmaz. ↗ ile yeni sekmede açabilirsiniz.'),900)}}});
+</script>
+
+<script defer src="../core/scripts/logo-theme.js"></script>
+<script defer src="./translations.js"></script>
+<script defer src="../core/browser.js"></script>
+<script defer src="../core/scripts/feedback.js"></script>
+<script defer src="../core/scripts/main-security.js"></script>
+<script defer src="../core/scripts/paint.js"></script>
+<script defer src="../core/scripts/keyboard.js"></script>
+<script defer src="../core/scripts/settings.js"></script>
+<script defer src="../core/scripts/help.js"></script>
+<script defer src="../core/scripts/split-screen.js"></script>
+<script defer src="../core/scripts/limiter.js"></script>
+<script defer src="../core/scripts/downloads-manager.js"></script>
+<script defer src="../core/scripts/toolbar-extras.js"></script>
+<script defer src="../core/scripts/ankaweb-layout.js"></script>
+</body>
+</html>

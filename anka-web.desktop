@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Anka Web
+Comment=Anka Web Kurulum Yardımcısı
+Exec=/usr/bin/anka-web
+Icon=anka-web
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+StartupNotify=true
