@@ -5,7 +5,7 @@
   "main": "src/core/main.js",
   "scripts": {
     "start": "electron .",
-    "build:win": "node build/prebuild.js && npx electron-builder --win --publish always",
+    "build:win": "node build/prebuild.js && npx electron-builder --win",
     "build:linux-dir": "node build/prebuild.js && npx electron-builder --linux --dir",
     "build:linux-tar": "npx electron-builder --linux tar.gz",
     "build:linux": "npm run build:linux-dir && npm run build:linux-tar && node build/pack-linux.js",
