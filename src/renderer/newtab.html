@@ -61,6 +61,8 @@
       root.dataset.fontScale = fontScale;
       root.style.setProperty('--z', String(Number(uiScale) / 100));
       root.style.setProperty('--anka-font-scale', String(Number(fontScale) / 100));
+      const logoSize = scaleValue('logo-size', {}, 36, 56, 44);
+      root.style.setProperty('--anka-logo-size', logoSize + 'px');
       root.style.fontSize = 16 * Number(fontScale) / 100 + 'px';
         root.classList.toggle('touch-mode', get('touch-mode', 'false') === 'true');
         root.classList.toggle('reduce-effects', get('ui-animations', LOW ? 'false' : 'true') !== 'true');
@@ -159,6 +161,7 @@
     .network-banner { position: fixed; top: 0; left: 0; width: 100%; background: var(--accent); color: #fff; text-align: center; padding: 10px; font-size: .8125rem; font-weight: 600; display: none; z-index: 1000; }
     .network-banner.offline { display: block; }
     .logo { font-size: 2.625rem; font-weight: 700; letter-spacing: 1px; margin: 24px 0 35px; display: flex; align-items: center; gap: 10px; user-select: none; }
+    .logo img { width: clamp(40px, calc(var(--anka-logo-size, 44px) + 8px), 64px); height: clamp(40px, calc(var(--anka-logo-size, 44px) + 8px), 64px); object-fit: contain; flex: 0 0 auto; }
     .logo span.mark { color: var(--accent); }
     .searchbar-container { width: 100%; max-width: 680px; position: relative; }
     .searchbar { width: 100%; display: flex; align-items: center; gap: 10px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 40px; padding: 10px 12px 10px 24px; box-shadow: var(--shadow); transition: border-color .15s; }
@@ -314,7 +317,7 @@
     </div>
   </div>
 
-  <div class="logo">Anka <span class="mark">Web</span></div>
+  <div class="logo"><img id="home-logo" src="../icons/dark-logo.png" alt=""><span>Anka</span> <span class="mark">Web</span></div>
 
   <div class="searchbar-container">
     <div class="searchbar">
@@ -641,6 +644,11 @@ function tickClock() {
 }
 
 function updateThemeUI(resolved, mode) {
+  const logo = $('home-logo');
+  if (logo) {
+    const file = resolved === 'light' ? 'white-logo.png' : 'dark-logo.png';
+    logo.src = new URL('../icons/' + file, location.href).href;
+  }
   const btn = $('themeToggleBtn');
   if (!btn) return;
   const key = ICONS[mode] ? mode : 'custom';
@@ -739,6 +747,7 @@ function applyHostThemeSettings(settings) {
       root.style.fontSize = 16 * scale + 'px';
     }
   }
+  if (settings.logoSize) root.style.setProperty('--anka-logo-size', Math.max(36, Math.min(56, Number(settings.logoSize))) + 'px');
   root.classList.toggle('touch-mode', !!settings.touchMode);
   if (settings.uiAnimations !== undefined) root.classList.toggle('reduce-effects', settings.uiAnimations === false);
 }

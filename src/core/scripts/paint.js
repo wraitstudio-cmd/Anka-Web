@@ -23,7 +23,8 @@ let activePointerId = null;
 
 const undoStack = [];
 const redoStack = [];
-const MAX_UNDO = 25;
+const MAX_UNDO = 20;
+let lowEndPaintMode = null;
 
 let persistentCanvasState = null;
 let persistentStateImage = null;
@@ -75,6 +76,18 @@ function writeStorage(key, value) {
 function removeStorage(key) {
   try { localStorage.removeItem(key); } catch (error) {}
 }
+
+function isLowEndPaintMode() {
+  if (lowEndPaintMode === null) {
+    lowEndPaintMode = readStorage('set_low-end-mode', 'false') === 'true' ||
+      !!(window.ANKA_ENV && window.ANKA_ENV.lowEnd) || (navigator.hardwareConcurrency || 4) <= 2;
+  }
+  return lowEndPaintMode;
+}
+
+window.setPaintPerformanceMode = (enabled) => {
+  lowEndPaintMode = !!enabled || !!(window.ANKA_ENV && window.ANKA_ENV.lowEnd) || (navigator.hardwareConcurrency || 4) <= 2;
+};
 
 function getPaintIpc() {
   try {
@@ -325,7 +338,8 @@ function initCanvas(force = false) {
 
 function saveState() {
   if (!canvas) return;
-  if (undoStack.length >= MAX_UNDO) disposeSnapshot(undoStack.shift());
+  const undoLimit = isLowEndPaintMode() ? 8 : MAX_UNDO;
+  if (undoStack.length >= undoLimit) disposeSnapshot(undoStack.shift());
   const snapshot = createSnapshot();
   if (snapshot) undoStack.push(snapshot);
   for (const item of redoStack) disposeSnapshot(item);
@@ -381,16 +395,25 @@ function applyStyles() {
   const opacity = opacityEl ? (parseInt(opacityEl.value, 10) || 100) / 100 : 1;
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
-  ctx.lineWidth = width;
+  ctx.lineWidth = tool === 'pencil' ? Math.min(width, 2) : tool === 'marker' ? Math.max(width, 14) : tool === 'brush' ? Math.max(width, 10) : tool === 'chalk' ? Math.max(width, 7) : width;
   ctx.globalAlpha = opacity;
   ctx.shadowBlur = 0;
   ctx.shadowColor = 'transparent';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.setLineDash(tool === 'chalk' ? [Math.max(1, width * 0.4), Math.max(1, width * 0.22)] : []);
   if (tool === 'neon') {
     ctx.shadowBlur = 15;
     ctx.shadowColor = color;
-  } else if (tool === 'highlighter') {
+  } else if (tool === 'highlighter' || tool === 'marker') {
     ctx.globalAlpha = opacity * 0.35;
     ctx.lineWidth = Math.max(width, 18);
+  } else if (tool === 'brush') {
+    ctx.globalAlpha = opacity * 0.75;
+    ctx.shadowBlur = 2;
+    ctx.shadowColor = color;
+  } else if (tool === 'chalk') {
+    ctx.globalAlpha = opacity * 0.78;
   }
 }
 
@@ -403,11 +426,12 @@ function applyCaptureStyles() {
   const opacity = opacityEl ? (parseInt(opacityEl.value, 10) || 100) / 100 : 1;
   captureCtx.strokeStyle = color;
   captureCtx.fillStyle = color;
-  captureCtx.lineWidth = tool === 'highlighter' ? Math.max(width, 18) : width;
-  captureCtx.globalAlpha = tool === 'highlighter' ? opacity * 0.35 : opacity;
+  captureCtx.lineWidth = tool === 'pencil' ? Math.min(width, 2) : (tool === 'highlighter' || tool === 'marker') ? Math.max(width, 18) : tool === 'brush' ? Math.max(width, 10) : tool === 'chalk' ? Math.max(width, 7) : width;
+  captureCtx.globalAlpha = (tool === 'highlighter' || tool === 'marker') ? opacity * 0.35 : tool === 'brush' || tool === 'chalk' ? opacity * 0.78 : opacity;
   captureCtx.lineCap = 'round';
   captureCtx.lineJoin = 'round';
-  captureCtx.shadowBlur = tool === 'neon' ? 15 : 0;
+  captureCtx.setLineDash(tool === 'chalk' ? [Math.max(1, width * 0.4), Math.max(1, width * 0.22)] : []);
+  captureCtx.shadowBlur = tool === 'neon' ? 15 : tool === 'brush' ? 2 : 0;
   captureCtx.shadowColor = color;
 }
 
@@ -625,11 +649,14 @@ function renderShapePreview(point) {
 function openTextInput(x, y) {
   if (!canvas || !ctx) return;
   const existing = document.getElementById('canvas-text-input');
-  if (existing) existing.remove();
+  if (existing) {
+    const saveExisting = existing.querySelector('[data-text-commit]');
+    if (saveExisting) saveExisting.click();
+  }
 
   const widthEl = document.getElementById('p-width');
   const colorEl = document.getElementById('p-color');
-  const fontPx = ((widthEl ? parseInt(widthEl.value, 10) : 4) || 4) * 4 + 10;
+  const defaultFontPx = Math.max(10, Math.min(128, ((widthEl ? parseInt(widthEl.value, 10) : 4) || 4) * 4 + 10));
   const fontColor = colorEl ? colorEl.value : '#ff4757';
 
   const rect = getCanvasRect();
@@ -637,19 +664,49 @@ function openTextInput(x, y) {
   const scaleY = rect.height / Math.max(1, canvas.height);
   const cssX = rect.left + x * scaleX;
   const cssY = rect.top + y * scaleY;
-  const cssFontPx = Math.max(10, fontPx * scaleY);
-
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.id = 'canvas-text-input';
-  input.style.cssText = `position:fixed;left:${cssX}px;top:${cssY}px;font:${cssFontPx}px Arial;color:${fontColor};background:transparent;border:1px dashed #ff4757;outline:none;z-index:10000;padding:2px 4px;min-width:80px;`;
-  document.body.appendChild(input);
+  const editor = document.createElement('div');
+  editor.id = 'canvas-text-input';
+  editor.style.cssText = `position:fixed;left:${Math.max(8, Math.min(cssX, innerWidth - 250))}px;top:${Math.max(8, Math.min(cssY, innerHeight - 180))}px;z-index:2147482000;width:min(240px,calc(100vw - 16px));padding:10px;border:1px solid #ff4757;border-radius:10px;background:var(--bg-secondary,#18181b);box-shadow:0 12px 30px #0008;color:var(--text-color,#f4f4f5);font:13px system-ui,sans-serif;`;
+  editor.addEventListener('pointerdown', (event) => event.stopPropagation());
+  const input = document.createElement('textarea');
+  input.setAttribute('aria-label', 'Çizime eklenecek metin');
+  input.placeholder = 'Metnini yaz…';
+  input.rows = 2;
+  input.style.cssText = 'display:block;width:100%;min-height:54px;padding:8px;resize:vertical;border:1px solid var(--border-color,#343946);border-radius:7px;background:var(--input-bg,#111318);color:inherit;font:14px system-ui,sans-serif;box-sizing:border-box;touch-action:manipulation;';
+  const sizeRow = document.createElement('label');
+  sizeRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin:9px 0;font-size:12px;';
+  sizeRow.append(document.createTextNode('Yazı boyutu'));
+  const size = document.createElement('input');
+  size.type = 'range';
+  size.min = '10';
+  size.max = '128';
+  size.value = String(defaultFontPx);
+  size.style.cssText = 'flex:1;min-width:60px;min-height:30px;accent-color:#ff4757;touch-action:manipulation;';
+  const sizeValue = document.createElement('output');
+  sizeValue.textContent = defaultFontPx + ' px';
+  sizeRow.append(size, sizeValue);
+  size.addEventListener('input', () => { sizeValue.textContent = size.value + ' px'; });
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.textContent = 'İptal';
+  cancel.style.cssText = 'min-width:64px;min-height:38px;border:1px solid var(--border-color,#343946);border-radius:7px;background:transparent;color:inherit;touch-action:manipulation;';
+  const insert = document.createElement('button');
+  insert.type = 'button';
+  insert.dataset.textCommit = 'true';
+  insert.textContent = 'Ekle';
+  insert.style.cssText = 'min-width:64px;min-height:38px;border:0;border-radius:7px;background:#ff4757;color:#fff;font-weight:650;touch-action:manipulation;';
+  actions.append(cancel, insert);
+  editor.append(input, sizeRow, actions);
+  document.body.append(editor);
   input.focus();
 
   const commit = () => {
-    if (!input.isConnected) return;
-    const value = input.value;
-    input.remove();
+    if (!editor.isConnected) return;
+    const value = input.value.trim();
+    const fontPx = Number(size.value) || defaultFontPx;
+    editor.remove();
     if (!value) return;
     saveState();
     ctx.save();
@@ -657,26 +714,47 @@ function openTextInput(x, y) {
     ctx.fillStyle = fontColor;
     ctx.globalAlpha = 1;
     ctx.shadowBlur = 0;
-    ctx.fillText(value, x, y + fontPx);
+    const maxWidth = Math.max(fontPx, canvas.width - x - fontPx / 2);
+    let lineIndex = 0;
+    for (const paragraph of value.split(/\r?\n/)) {
+      let line = '';
+      for (const word of paragraph.split(/\s+/)) {
+        const candidate = line ? line + ' ' + word : word;
+        if (line && ctx.measureText(candidate).width > maxWidth) {
+          ctx.fillText(line, x, y + fontPx * (lineIndex + 1), maxWidth);
+          lineIndex++;
+          line = word;
+        } else {
+          line = candidate;
+        }
+      }
+      if (line) {
+        ctx.fillText(line, x, y + fontPx * (lineIndex + 1), maxWidth);
+        lineIndex++;
+      } else {
+        lineIndex++;
+      }
+    }
     ctx.restore();
     try { setPersistentState(canvas.toDataURL('image/png')); } catch (error) {}
     persistDrawing();
   };
 
   input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       commit();
     } else if (event.key === 'Escape') {
-      input.remove();
+      editor.remove();
     }
   });
-  input.addEventListener('blur', commit);
+  cancel.addEventListener('click', () => editor.remove());
+  insert.addEventListener('click', commit);
 }
 
 function updatePaintCursor(event) {
   if (!paintCursor || !paintOpen || pageInteraction) return;
-  if (tool !== 'pen' && tool !== 'highlighter' && tool !== 'neon' && tool !== 'eraser') {
+  if (!['pen', 'pencil', 'marker', 'brush', 'chalk', 'highlighter', 'neon', 'eraser'].includes(tool)) {
     paintCursor.classList.remove('visible');
     return;
   }
@@ -689,7 +767,9 @@ function updatePaintCursor(event) {
     if (!source) return;
     const widthEl = document.getElementById('p-width');
     const width = Math.max(2, (parseInt(widthEl ? widthEl.value : '4', 10) || 4));
-    const size = tool === 'highlighter' ? Math.max(width, 18) : width;
+    const size = tool === 'highlighter' || tool === 'marker' ? Math.max(width, 18) :
+      tool === 'brush' ? Math.max(width, 10) : tool === 'chalk' ? Math.max(width, 7) :
+        tool === 'pencil' ? Math.min(width, 2) : width;
     const colorEl = document.getElementById('p-color');
     paintCursor.style.left = `${source.clientX}px`;
     paintCursor.style.top = `${source.clientY}px`;
@@ -755,7 +835,7 @@ function setTool(t) {
   });
   const target = document.getElementById('t-' + t);
   if (target) target.classList.add('active');
-  if (paintCursor) paintCursor.style.display = (t === 'pen' || t === 'highlighter' || t === 'neon' || t === 'eraser') ? '' : 'none';
+  if (paintCursor) paintCursor.style.display = ['pen', 'pencil', 'marker', 'brush', 'chalk', 'highlighter', 'neon', 'eraser'].includes(t) ? '' : 'none';
   hidePaintCursor();
 }
 
@@ -806,9 +886,23 @@ function togglePaintMenu() {
     layer.classList.remove('page-interaction');
     pageInteraction = false;
     if (button) button.classList.add('active');
+    if (window.AnkaWindowUtils) {
+      window.AnkaWindowUtils.register('paint', {
+        panel: menu,
+        trigger: button,
+        role: 'menu',
+        group: 'tools',
+        isOpen: () => paintOpen,
+        close: () => { if (paintOpen) togglePaintMenu(); },
+        dismissOnOutside: false,
+        dismissOnEscape: false
+      });
+      window.AnkaWindowUtils.activate('paint');
+    }
     if (canvas && (canvas.width <= 1 || canvas.height <= 1)) initCanvas(true);
     invalidateRect();
   } else {
+    if (window.AnkaWindowUtils) window.AnkaWindowUtils.deactivate('paint');
     menu.style.display = 'none';
     hidePaintCursor();
     menu.classList.remove('paint-touch-mode');
@@ -900,33 +994,102 @@ function toggleTimerTool() {
   if (!mainView) return;
   timer = document.createElement('div');
   timer.id = 'lesson-timer';
-  timer.innerHTML = '<strong>00:00</strong><button type="button">Başlat</button><button type="button">Sıfırla</button>';
+  const header = document.createElement('div');
+  header.className = 'lesson-timer-header';
+  const title = document.createElement('strong');
+  title.textContent = 'Kronometre';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.textContent = '×';
+  closeButton.setAttribute('aria-label', 'Kronometreyi kapat');
+  header.append(title, closeButton);
+  const mode = document.createElement('select');
+  mode.setAttribute('aria-label', 'Zamanlayıcı türü');
+  mode.innerHTML = '<option value="stopwatch">Kronometre</option><option value="countdown">Geri sayım</option>';
+  const duration = document.createElement('input');
+  duration.type = 'number';
+  duration.min = '1';
+  duration.max = '999';
+  duration.value = '25';
+  duration.setAttribute('aria-label', 'Geri sayım dakikası');
+  duration.hidden = true;
+  const output = document.createElement('strong');
+  output.className = 'lesson-timer-output';
+  output.textContent = '00:00';
+  const actions = document.createElement('div');
+  actions.className = 'lesson-timer-actions';
+  const startButton = document.createElement('button');
+  startButton.type = 'button';
+  startButton.textContent = 'Başlat';
+  const resetButton = document.createElement('button');
+  resetButton.type = 'button';
+  resetButton.textContent = 'Sıfırla';
+  actions.append(startButton, resetButton);
+  timer.append(header, mode, duration, output, actions);
   mainView.appendChild(timer);
-  let elapsed = 0;
-  const output = timer.querySelector('strong');
-  const startButton = timer.querySelector('button');
-  const resetButton = timer.querySelectorAll('button')[1];
-  if (startButton) {
-    startButton.onclick = () => {
-      if (timerToolId) {
-        clearInterval(timerToolId);
-        timerToolId = 0;
-        startButton.textContent = 'Başlat';
-        return;
-      }
-      startButton.textContent = 'Durdur';
-      timerToolId = setInterval(() => {
-        elapsed += 1;
-        if (output) output.textContent = `${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`;
-      }, 1000);
-    };
-  }
-  if (resetButton) {
-    resetButton.onclick = () => {
-      elapsed = 0;
-      if (output) output.textContent = '00:00';
-    };
-  }
+  let elapsedMs = 0;
+  let startedAt = 0;
+  let lastDisplayedTime = '';
+  const formatTime = (milliseconds) => {
+    const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+    const minutes = Math.floor(seconds / 60);
+    return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  };
+  const updateTime = () => {
+    const currentElapsed = elapsedMs + (timerToolId ? performance.now() - startedAt : 0);
+    const remaining = mode.value === 'countdown'
+      ? Math.max(0, Number(duration.value || 25) * 60000 - currentElapsed)
+      : currentElapsed;
+    const formatted = formatTime(remaining);
+    if (formatted !== lastDisplayedTime) {
+      output.textContent = formatted;
+      lastDisplayedTime = formatted;
+    }
+    if (mode.value === 'countdown' && remaining <= 0 && timerToolId) {
+      clearInterval(timerToolId);
+      timerToolId = 0;
+      elapsedMs = Number(duration.value || 25) * 60000;
+      startButton.textContent = 'Başlat';
+      if (typeof showToast === 'function') showToast('Geri sayım tamamlandı', 'success');
+    }
+  };
+  mode.addEventListener('change', () => {
+    if (timerToolId) {
+      clearInterval(timerToolId);
+      timerToolId = 0;
+      elapsedMs = 0;
+      startButton.textContent = 'Başlat';
+    } else elapsedMs = 0;
+    duration.hidden = mode.value !== 'countdown';
+    title.textContent = mode.value === 'countdown' ? 'Geri Sayım' : 'Kronometre';
+    updateTime();
+  });
+  startButton.addEventListener('click', () => {
+    if (timerToolId) {
+      elapsedMs += performance.now() - startedAt;
+      clearInterval(timerToolId);
+      timerToolId = 0;
+      startButton.textContent = 'Devam';
+      updateTime();
+      return;
+    }
+    if (mode.value === 'countdown' && elapsedMs >= Number(duration.value || 25) * 60000) elapsedMs = 0;
+    startedAt = performance.now();
+    startButton.textContent = 'Duraklat';
+    timerToolId = setInterval(updateTime, 250);
+  });
+  resetButton.addEventListener('click', () => {
+    if (timerToolId) clearInterval(timerToolId);
+    timerToolId = 0;
+    elapsedMs = 0;
+    startButton.textContent = 'Başlat';
+    updateTime();
+  });
+  closeButton.addEventListener('click', () => {
+    if (timerToolId) clearInterval(timerToolId);
+    timerToolId = 0;
+    timer.remove();
+  });
 }
 
 function togglePageInteraction() {
@@ -1196,17 +1359,38 @@ function loadPenFile(event) {
 function exportBoardPdf() {
   if (!canvas) return;
   const image = buildBoardImage().toDataURL('image/png');
-  const printWindow = window.open('', '_blank', 'noopener,noreferrer');
-  if (!printWindow) {
-    if (typeof showToast === 'function') showToast('PDF penceresi açılamadı', 'error');
-    return;
+  const previous = document.getElementById('anka-paint-print-stage');
+  if (previous) previous.remove();
+  const previousStyle = document.getElementById('anka-paint-print-style');
+  if (previousStyle) previousStyle.remove();
+  const stage = document.createElement('main');
+  stage.id = 'anka-paint-print-stage';
+  stage.setAttribute('aria-label', 'Anka Web çizimi');
+  const printImage = document.createElement('img');
+  printImage.src = image;
+  printImage.alt = 'Anka Web çizimi';
+  stage.appendChild(printImage);
+  const style = document.createElement('style');
+  style.id = 'anka-paint-print-style';
+  style.textContent = '@media print{@page{margin:0}html,body{width:100%;height:100%;margin:0!important;background:#fff!important}body>*:not(#anka-paint-print-stage){display:none!important}#anka-paint-print-stage{display:grid!important;position:fixed;inset:0;place-items:center;overflow:hidden;background:#fff!important}#anka-paint-print-stage img{display:block;max-width:100%;max-height:100%;width:100%;height:100%;object-fit:contain}}';
+  document.head.appendChild(style);
+  document.body.appendChild(stage);
+  stage.style.display = 'none';
+  let cleanupTimer = 0;
+  const cleanup = () => {
+    window.removeEventListener('afterprint', cleanup);
+    if (cleanupTimer) clearTimeout(cleanupTimer);
+    stage.remove();
+    style.remove();
+  };
+  window.addEventListener('afterprint', cleanup, { once: true });
+  try {
+    window.print();
+    cleanupTimer = setTimeout(cleanup, 60000);
+  } catch (error) {
+    cleanup();
+    if (typeof showToast === 'function') showToast('PDF yazdırma penceresi açılamadı', 'error');
   }
-  printWindow.document.write(`<!DOCTYPE html><html><head><title>Anka Web Çizimi</title><style>html,body{margin:0;background:#fff}img{display:block;width:100%;height:auto}</style></head><body><img src="${image}" alt="Anka Web çizimi"></body></html>`);
-  printWindow.document.close();
-  printWindow.addEventListener('load', () => {
-    printWindow.focus();
-    printWindow.print();
-  });
 }
 
 function paintCaptureBackground(targetCtx, width, height, pageImage) {
@@ -1374,23 +1558,18 @@ function closeCaptureWorkspace() {
 }
 
 function zoomCapturedArea() {
-  if (!captureSourceRect) return;
-  const source = { ...captureSourceRect };
-  captureReturnState = {
-    image: captureImage ? captureImage.src : '',
-    drawing: captureCanvas && captureCanvas.width > 0 ? captureCanvas.toDataURL('image/png') : '',
-    source
-  };
-  if (captureWorkspace) captureWorkspace.hidden = true;
-  document.body.classList.remove('capture-active');
-  captureDrawing = false;
-  captureShapeDrawing = false;
-  capturePointers.clear();
-  capturePinchDistance = 0;
-  captureShapeSnapshot = null;
-  const drawLayer = document.getElementById('draw-layer');
-  if (drawLayer) drawLayer.classList.add('active');
-  zoomPageFromSelection(source.x, source.y, source.width, source.height);
+  if (!captureImage || !captureImage.naturalWidth) return;
+  setCaptureZoom(captureZoom + 0.25);
+}
+
+function zoomCapturedAreaOut() {
+  if (!captureImage || !captureImage.naturalWidth) return;
+  setCaptureZoom(captureZoom - 0.25);
+}
+
+function resetCapturedAreaZoom() {
+  if (!captureImage || !captureImage.naturalWidth) return;
+  setCaptureZoom(1);
 }
 
 function reopenCapturedWorkspace() {
@@ -1669,6 +1848,7 @@ if (canvas) {
     try { canvas.setPointerCapture(event.pointerId); } catch (error) {}
     invalidateRect();
     startDrawing(event, event.clientX, event.clientY);
+    if (event.cancelable) event.preventDefault();
   }, { passive: false });
 
   canvas.addEventListener('pointermove', (event) => {
@@ -1676,7 +1856,10 @@ if (canvas) {
     if (typeof event.getCoalescedEvents === 'function') {
       const coalesced = event.getCoalescedEvents();
       if (coalesced && coalesced.length > 0) {
-        for (let index = 0; index < coalesced.length; index++) draw(event, coalesced[index].clientX, coalesced[index].clientY);
+        const stride = isLowEndPaintMode() ? Math.max(1, Math.ceil(coalesced.length / 8)) : 1;
+        for (let index = 0; index < coalesced.length; index += stride) draw(event, coalesced[index].clientX, coalesced[index].clientY);
+        const last = coalesced[coalesced.length - 1];
+        if (stride > 1 && (coalesced.length - 1) % stride !== 0) draw(event, last.clientX, last.clientY);
         return;
       }
     }

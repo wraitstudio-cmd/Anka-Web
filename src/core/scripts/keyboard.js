@@ -366,6 +366,19 @@
         kb.classList.toggle('open', open);
         const button = document.getElementById('btn-keyboard');
         if (button) button.classList.toggle('active', open);
+        if (window.AnkaWindowUtils) {
+            window.AnkaWindowUtils.register('keyboard', {
+                panel: kb,
+                trigger: button,
+                role: 'dialog',
+                group: 'tools',
+                isOpen: () => kb.classList.contains('open'),
+                close: () => toggleKeyboard(false),
+                dismissOnOutside: false
+            });
+            if (open) window.AnkaWindowUtils.activate('keyboard');
+            else window.AnkaWindowUtils.deactivate('keyboard');
+        }
         if (open) {
             buildKeyboard();
             bindKeys();

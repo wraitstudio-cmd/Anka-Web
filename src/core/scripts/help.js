@@ -445,6 +445,16 @@ function bindHelpEvents() {
     }
 
     document.addEventListener('keydown', helpKeyHandler);
+    if (window.AnkaWindowUtils) {
+        window.AnkaWindowUtils.register('help', {
+            panel,
+            overlay,
+            group: 'modal',
+            isOpen: () => panel.dataset.ankaOpen === 'true',
+            close: closeHelpPanel,
+            dismissOnEscape: false
+        });
+    }
 }
 
 function helpKeyHandler(event) {
@@ -509,15 +519,14 @@ function toggleHelp() {
     const overlay = document.getElementById('help-overlay');
     if (!panel || !overlay) return;
 
-    const isOpen = panel.style.display === 'flex';
+    const isOpen = panel.dataset.ankaOpen === 'true';
     if (!isOpen) {
         panel.style.display = 'flex';
+        panel.dataset.ankaOpen = 'true';
         overlay.style.display = 'block';
         panel.offsetHeight;
         panel.classList.add('open');
         overlay.style.opacity = '1';
-        const settingsPanel = document.getElementById('settings-panel');
-        if (settingsPanel) settingsPanel.style.display = 'none';
         const searchInput = document.getElementById('help-search-input');
         if (searchInput) {
             searchInput.value = '';
@@ -531,14 +540,30 @@ function toggleHelp() {
             helpState.sections = null;
             scheduleHelpRefresh();
         }
+        if (window.AnkaWindowUtils) window.AnkaWindowUtils.activate('help');
     } else {
-        panel.classList.remove('open');
-        overlay.style.opacity = '0';
-        setTimeout(() => {
+        closeHelpPanel();
+    }
+}
+
+function closeHelpPanel() {
+    if (document.body.dataset.systemPage === 'help' && typeof window.__ankaCloseSystemTab === 'function') {
+        window.__ankaCloseSystemTab();
+        return;
+    }
+    const panel = document.getElementById('help-panel');
+    const overlay = document.getElementById('help-overlay');
+    if (!panel || !overlay || panel.dataset.ankaOpen !== 'true') return;
+    panel.dataset.ankaOpen = 'false';
+    panel.classList.remove('open');
+    overlay.style.opacity = '0';
+    if (window.AnkaWindowUtils) window.AnkaWindowUtils.deactivate('help');
+    setTimeout(() => {
+        if (panel.dataset.ankaOpen !== 'true') {
             panel.style.display = 'none';
             overlay.style.display = 'none';
-        }, 200);
-    }
+        }
+    }, 200);
 }
 
 function filterHelpSections(query) {

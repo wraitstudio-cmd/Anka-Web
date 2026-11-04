@@ -459,6 +459,8 @@
         if (on) scheduleLayout();
     }
 
+    window.addEventListener('anka-chrome', updateBar);
+
     function layout() {
         layoutRaf = 0;
         if (!document.body.classList.contains('bm-visible')) return;
@@ -1217,6 +1219,19 @@
         sideOpen = true;
         panel.hidden = false;
         const btn = $('side-btn');
+        if (window.AnkaWindowUtils) {
+            window.AnkaWindowUtils.register('side-panel', {
+                panel,
+                trigger: btn,
+                group: 'side-panels',
+                role: 'complementary',
+                isOpen: () => sideOpen,
+                close: closeSide,
+                dismissOnOutside: true,
+                dismissOnEscape: true
+            });
+            window.AnkaWindowUtils.activate('side-panel');
+        }
         if (btn) {
             btn.classList.add('active');
             btn.setAttribute('aria-pressed', 'true');
@@ -1231,6 +1246,7 @@
     function closeSide() {
         if (!sideOpen) return;
         sideOpen = false;
+        if (window.AnkaWindowUtils) window.AnkaWindowUtils.deactivate('side-panel');
         const panel = $('xt-side');
         if (panel) panel.hidden = true;
         const btn = $('side-btn');

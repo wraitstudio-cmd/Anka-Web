@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain, shell, screen } = require('electron');
+const { app, BrowserWindow, session, ipcMain, shell, screen, safeStorage, Tray, Menu, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -12,6 +12,9 @@ const instance = setupDefaultBrowser({ getWindow: () => win });
 if (!instance.primary) return;
 
 let win = null;
+let tray = null;
+let appQuitting = false;
+let startMinimizedOnLaunch = process.argv.includes('--start-minimized');
 const downloads = new Map();
 let runtimeSettings = {};
 let cacheCleanupStarted = false;
@@ -24,13 +27,17 @@ let i18nCacheTimer = 0;
 let _downloadCleanupTimer = null;
 let cachedWindowBounds = null;
 let cachedWindowBoundsTime = 0;
+let previousSystemCpuSample = null;
 
 const SETTINGS_FILE = 'anka-settings.json';
 const SCHOOL_CONFIG_FILE = 'anka-school-mode.json';
+const PASSWORDS_FILE = 'anka-passwords.enc';
 const I18N_CACHE_FILE = 'anka-i18n-cache.json';
 const DRAWING_FILE = 'anka-drawing.png';
+const DEV_EXTENSIONS_FILE = 'anka-developer-extensions.json';
 const DEFAULT_SCHOOL_URL = 'https://www.eba.gov.tr/';
 const DANGEROUS_EXT = /\.(exe|msi|com|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|scr|pif|jar|sh|bash|zsh|desktop|appimage|deb|rpm|run|dll|so|dylib|reg|lnk|url|command|pkg|html?|shtml|xhtml|svg|xml|mht|mhtml|xsl|xslt)$/i;
+const RISKY_DOWNLOAD_EXT = /\.(exe|msi|com|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|scr|pif|jar|sh|bash|zsh|appimage|deb|rpm|run|dll|so|dylib|reg|command|pkg)$/i;
 const FINGERPRINT_HEADERS = ['Sec-Ch-Ua', 'Sec-Ch-Ua-Mobile', 'Sec-Ch-Ua-Platform', 'Sec-Ch-Ua-Platform-Version', 'Sec-Ch-Ua-Arch', 'Sec-Ch-Ua-Bitness', 'Sec-Ch-Ua-Full-Version', 'Sec-Ch-Ua-Full-Version-List', 'Sec-Ch-Ua-Model'];
 const BASE_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write', 'fullscreen', 'pointerLock', 'media']);
 const PLATFORM_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -64,6 +71,17 @@ function applyCacheSizeLimit() {
 function updateRuntimeSetting(id, value) {
     runtimeSettings[id] = value;
     if (id === 'cache-size-limit') applyCacheSizeLimit();
+    if (id === 'tray-in-background') {
+        if (value === true || value === 'true') createTray();
+        else destroyTray();
+        if ((value === true || value === 'true') && !tray && win && !win.isDestroyed()) {
+            win.webContents.send('settings-error', 'Sistem tepsisi başlatılamadı; masaüstü ortamınızı veya tepsi simgesi desteğini kontrol edin.');
+        }
+    }
+    if (id === 'start-on-login') {
+        const result = applyStartupOnLogin(value === true || value === 'true');
+        if (!result.ok && win && !win.isDestroyed()) win.webContents.send('settings-error', result.error || 'Otomatik başlatma ayarı uygulanamadı.');
+    }
 }
 
 function enforceSafeSearch(url) {
@@ -148,6 +166,41 @@ function writeSchoolConfig(config) {
         fs.writeFileSync(getAppDataFile(SCHOOL_CONFIG_FILE), JSON.stringify(config), { encoding: 'utf8', mode: 0o600 });
         return true;
     } catch (err) { return false; }
+}
+
+function passwordStorageAvailable() {
+    if (!safeStorage.isEncryptionAvailable()) return false;
+    return typeof safeStorage.getSelectedStorageBackend !== 'function' ||
+        safeStorage.getSelectedStorageBackend() !== 'basic_text';
+}
+
+function readPasswordDatabase() {
+    const file = getAppDataFile(PASSWORDS_FILE);
+    if (!fs.existsSync(file)) return [];
+    if (!passwordStorageAvailable()) throw new Error('secure-storage-unavailable');
+    const encrypted = fs.readFileSync(file);
+    const parsed = JSON.parse(safeStorage.decryptString(encrypted));
+    if (!Array.isArray(parsed)) throw new Error('password-store-invalid');
+    return parsed.filter((entry) =>
+        entry && typeof entry.origin === 'string' &&
+        typeof entry.username === 'string' &&
+        typeof entry.password === 'string'
+    );
+}
+
+function writePasswordDatabase(entries) {
+    if (!passwordStorageAvailable()) throw new Error('secure-storage-unavailable');
+    const directory = getUserDataPath();
+    fs.mkdirSync(directory, { recursive: true });
+    const file = getAppDataFile(PASSWORDS_FILE);
+    const temporary = file + '.' + process.pid + '.tmp';
+    try {
+        fs.writeFileSync(temporary, safeStorage.encryptString(JSON.stringify(entries)), { mode: 0o600 });
+        fs.renameSync(temporary, file);
+    } catch (err) {
+        try { fs.rmSync(temporary, { force: true }); } catch (cleanupErr) {}
+        throw err;
+    }
 }
 
 function normalizeSchoolUrl(value) {
@@ -293,12 +346,10 @@ function applyPerformanceFlags() {
     }
     app.commandLine.appendSwitch('log-level', '3');
     app.commandLine.appendSwitch('enable-pointer-events');
-    if (startupSettings['preload-pages'] !== false && startupSettings['preload-pages'] !== 'false') {
-        app.commandLine.appendSwitch('enable-features', 'Prerender2');
-    }
-    if (startupSettings['memory-saver'] === true || startupSettings['memory-saver'] === 'true') {
-        app.commandLine.appendSwitch('enable-features', 'MemoryPressureBasedOptimization');
-    }
+    const chromiumFeatures = [];
+    if (startupSettings['preload-pages'] !== false && startupSettings['preload-pages'] !== 'false') chromiumFeatures.push('Prerender2');
+    if (startupSettings['memory-saver'] === true || startupSettings['memory-saver'] === 'true') chromiumFeatures.push('MemoryPressureBasedOptimization');
+    if (chromiumFeatures.length) app.commandLine.appendSwitch('enable-features', chromiumFeatures.join(','));
     if (process.platform === 'linux') {
         app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
     } else if (process.platform === 'win32') {
@@ -321,6 +372,8 @@ function createWindow() {
     const isMac = process.platform === 'darwin';
     const startupSettings = readAppState().settings || {};
     const startFullscreen = startupSettings['start-fullscreen'] === true || startupSettings['start-fullscreen'] === 'true';
+    const startMinimized = startMinimizedOnLaunch && settingEnabled('tray-in-background');
+    startMinimizedOnLaunch = false;
 
     win = new BrowserWindow({
         width,
@@ -355,8 +408,11 @@ function createWindow() {
 
     win.once('ready-to-show', () => {
         if (win && !win.isDestroyed()) {
-            win.show();
-            win.focus();
+            if (startMinimized) win.hide();
+            else {
+                win.show();
+                win.focus();
+            }
             if (startFullscreen) win.setFullScreen(true);
             else win.maximize();
             if (typeof checkUpdates === 'function') checkUpdates(win);
@@ -383,6 +439,13 @@ function createWindow() {
     win.on('resize', () => { cachedWindowBounds = null; });
     win.on('move', () => { cachedWindowBounds = null; });
 
+    win.on('close', (event) => {
+        if (!appQuitting && tray && settingEnabled('tray-in-background')) {
+            event.preventDefault();
+            win.hide();
+        }
+    });
+
     win.on('enter-full-screen', () => {
         if (win && !win.isDestroyed()) win.webContents.send('window-fullscreen-change', true);
     });
@@ -394,7 +457,7 @@ function createWindow() {
     win.on('closed', () => {
         win = null;
         cachedWindowBounds = null;
-        if (process.platform !== 'darwin') app.quit();
+        if (process.platform !== 'darwin' && !tray) app.quit();
     });
 
     win.webContents.setWindowOpenHandler(({ url }) => {
@@ -493,7 +556,13 @@ function setupDownloadManager() {
 
             if (win && !win.isDestroyed()) {
                 win.webContents.send('download-done', { id: downloadId, state, savePath: downloadData.savePath });
-                win.webContents.send('download-completed', { id: downloadId, state: downloadData.state, savePath: downloadData.savePath });
+                win.webContents.send('download-completed', {
+                    id: downloadId,
+                    state: downloadData.state,
+                    savePath: downloadData.savePath,
+                    fileName: downloadData.fileName,
+                    risky: settingEnabled('download-scan', true) && RISKY_DOWNLOAD_EXT.test(downloadData.fileName || '')
+                });
             }
         });
     });
@@ -577,7 +646,247 @@ function setupSessionHandlers() {
     if (typeof ses.setSpellCheckerEnabled === 'function') ses.setSpellCheckerEnabled(false);
 }
 
+function readDeveloperExtensionPaths() {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(getAppDataFile(DEV_EXTENSIONS_FILE), 'utf8'));
+        return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string' && item.length <= 4096).slice(0, 40) : [];
+    } catch (err) {
+        return [];
+    }
+}
+
+function writeDeveloperExtensionPaths(paths) {
+    const file = getAppDataFile(DEV_EXTENSIONS_FILE);
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify(paths.slice(0, 40)), { encoding: 'utf8', mode: 0o600 });
+        return true;
+    } catch (err) {
+        console.error('Developer extension list could not be saved:', err);
+        return false;
+    }
+}
+
+function inspectDeveloperExtension(directory) {
+    const resolved = fs.realpathSync(directory);
+    const manifestFile = path.join(resolved, 'manifest.json');
+    const stats = fs.statSync(manifestFile);
+    if (!stats.isFile() || stats.size > 1024 * 1024) throw new Error('manifest-invalid');
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+    if (!manifest || ![2, 3].includes(manifest.manifest_version) ||
+        typeof manifest.name !== 'string' || manifest.name.trim().length < 1 || manifest.name.length > 128 ||
+        typeof manifest.version !== 'string' || !/^\d+(?:\.\d+){0,3}$/.test(manifest.version)) {
+        throw new Error('manifest-invalid');
+    }
+    return { path: resolved, name: manifest.name.trim(), version: manifest.version, manifestVersion: manifest.manifest_version };
+}
+
+function getDeveloperExtensions() {
+    const extensions = session.defaultSession.getAllExtensions();
+    return extensions.map((extension) => ({
+        id: extension.id,
+        name: extension.name,
+        version: extension.version,
+        path: extension.path
+    }));
+}
+
+async function loadSavedDeveloperExtensions() {
+    const loadedPaths = new Set(getDeveloperExtensions().map((extension) => path.resolve(extension.path)));
+    for (const directory of readDeveloperExtensionPaths()) {
+        try {
+            const info = inspectDeveloperExtension(directory);
+            if (loadedPaths.has(info.path)) continue;
+            await session.defaultSession.loadExtension(info.path, { allowFileAccess: false });
+            loadedPaths.add(info.path);
+        } catch (err) {
+            console.error('Saved developer extension could not be loaded:', directory, err);
+            if (win && !win.isDestroyed()) win.webContents.send('settings-error', `Geliştirici paketi yüklenemedi: ${path.basename(directory)}`);
+        }
+    }
+}
+
 function registerDefaultBrowserHandlers() {
+    const isPasswordManagerRequest = (event) => !!win && !win.isDestroyed() &&
+        event.sender === win.webContents && (!event.senderFrame || event.senderFrame === win.webContents.mainFrame);
+    const passwordEntryId = (entry) => crypto.createHash('sha256')
+        .update(entry.origin + '\0' + entry.username)
+        .digest('hex');
+
+    ipcMain.handle('developer-packs:list', (event) => {
+        if (!isPasswordManagerRequest(event)) return { ok: false, error: 'not-authorized' };
+        try {
+            const allowedPaths = readDeveloperExtensionPaths();
+            const extensions = getDeveloperExtensions();
+            const allowedSet = new Set(allowedPaths.map((directory) => path.resolve(directory)));
+            const loadedSet = new Set(extensions.map((extension) => path.resolve(extension.path)));
+            return {
+                ok: true,
+                entries: extensions.filter((extension) => allowedSet.has(path.resolve(extension.path))),
+                missing: allowedPaths
+                    .filter((directory) => !loadedSet.has(path.resolve(directory)))
+                    .map((directory) => ({ id: directory, name: path.basename(directory) }))
+            };
+        } catch (err) {
+            console.error('Developer extensions could not be listed:', err);
+            return { ok: false, error: 'list-failed' };
+        }
+    });
+
+    ipcMain.handle('developer-packs:install', async (event) => {
+        if (!isPasswordManagerRequest(event)) return { ok: false, error: 'not-authorized' };
+        if (process.platform !== 'win32' && process.platform !== 'linux') return { ok: false, error: 'unsupported-platform' };
+        const selected = await dialog.showOpenDialog(win, {
+            title: 'Geliştirici paketi klasörünü seç',
+            properties: ['openDirectory']
+        });
+        if (selected.canceled || !selected.filePaths.length) return { ok: false, error: 'cancelled' };
+        let info;
+        try {
+            info = inspectDeveloperExtension(selected.filePaths[0]);
+        } catch (err) {
+            console.error('Developer extension manifest validation failed:', err);
+            return { ok: false, error: 'manifest-invalid' };
+        }
+        const confirm = await dialog.showMessageBox(win, {
+            type: 'warning',
+            title: 'Geliştirici paketine güveniyor musunuz?',
+            message: `${info.name} (${info.version}) yükleniyor`,
+            detail: 'Bu yerel paket tarayıcı sekmelerindeki verilere erişebilen kod çalıştırabilir. Yalnızca kaynağına güvendiğiniz paketleri yükleyin. Yönetici izni gerekmez; paket bu kullanıcı hesabı için yüklenir.',
+            buttons: ['İptal', 'Paketi yükle'],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true
+        });
+        if (confirm.response !== 1) return { ok: false, error: 'cancelled' };
+        try {
+            const current = getDeveloperExtensions();
+            const existing = current.find((extension) => path.resolve(extension.path) === info.path);
+            const loaded = existing || await session.defaultSession.loadExtension(info.path, { allowFileAccess: false });
+            const paths = readDeveloperExtensionPaths();
+            if (!paths.includes(info.path)) paths.push(info.path);
+            if (!writeDeveloperExtensionPaths(paths)) {
+                if (!existing) session.defaultSession.removeExtension(loaded.id);
+                return { ok: false, error: 'save-failed' };
+            }
+            return { ok: true, extension: { id: loaded.id, name: loaded.name, version: loaded.version, path: loaded.path } };
+        } catch (err) {
+            console.error('Developer extension could not be loaded:', err);
+            return { ok: false, error: 'load-failed' };
+        }
+    });
+
+    ipcMain.handle('developer-packs:remove', (event, id) => {
+        if (!isPasswordManagerRequest(event) || typeof id !== 'string' || id.length > 4096 || id.includes('\0')) {
+            return { ok: false, error: 'not-authorized' };
+        }
+        try {
+            const paths = readDeveloperExtensionPaths();
+            const extension = getDeveloperExtensions().find((item) => item.id === id);
+            const managedPath = extension
+                ? paths.find((directory) => path.resolve(directory) === path.resolve(extension.path))
+                : paths.find((directory) => path.resolve(directory) === path.resolve(id));
+            if (!managedPath) return { ok: false, error: extension ? 'not-managed' : 'not-found' };
+            const remainingPaths = paths.filter((directory) => path.resolve(directory) !== path.resolve(managedPath));
+            if (!writeDeveloperExtensionPaths(remainingPaths)) {
+                return { ok: false, error: 'save-failed' };
+            }
+            if (extension) {
+                try {
+                    session.defaultSession.removeExtension(extension.id);
+                } catch (err) {
+                    writeDeveloperExtensionPaths(paths);
+                    throw err;
+                }
+            }
+            return { ok: true };
+        } catch (err) {
+            console.error('Developer extension could not be removed:', err);
+            return { ok: false, error: 'remove-failed' };
+        }
+    });
+
+    ipcMain.handle('password-manager:list', (event) => {
+        if (!isPasswordManagerRequest(event)) return { ok: false, error: 'not-authorized' };
+        try {
+            return { ok: true, entries: readPasswordDatabase().map((entry) => ({
+                id: passwordEntryId(entry),
+                origin: entry.origin,
+                username: entry.username,
+                updatedAt: entry.updatedAt || 0
+            })) };
+        } catch (err) {
+            console.error('Password manager could not read its encrypted store:', err);
+            return { ok: false, error: err.message === 'secure-storage-unavailable' ? err.message : 'store-unreadable' };
+        }
+    });
+
+    ipcMain.handle('password-manager:get-for-origin', (event, origin) => {
+        if (!isPasswordManagerRequest(event) || typeof origin !== 'string') return { ok: false, error: 'not-authorized' };
+        let normalized;
+        try {
+            const parsed = new URL(origin);
+            if (!['http:', 'https:'].includes(parsed.protocol)) return { ok: false, error: 'invalid-origin' };
+            normalized = parsed.origin;
+        } catch (err) {
+            return { ok: false, error: 'invalid-origin' };
+        }
+        try {
+            return { ok: true, entries: readPasswordDatabase()
+                .filter((entry) => entry.origin === normalized)
+                .map(({ username, password }) => ({ username, password })) };
+        } catch (err) {
+            console.error('Password manager could not retrieve a credential:', err);
+            return { ok: false, error: err.message === 'secure-storage-unavailable' ? err.message : 'store-unreadable' };
+        }
+    });
+
+    ipcMain.handle('password-manager:save', (event, payload) => {
+        if (!isPasswordManagerRequest(event) || !payload || typeof payload !== 'object') return { ok: false, error: 'not-authorized' };
+        if (typeof payload.origin !== 'string' || typeof payload.username !== 'string' ||
+            typeof payload.password !== 'string' || payload.username.length > 512 ||
+            !payload.username.trim() || payload.password.length < 1 || payload.password.length > 4096) {
+            return { ok: false, error: 'invalid-credential' };
+        }
+        let origin;
+        try {
+            const parsed = new URL(payload.origin);
+            if (!['http:', 'https:'].includes(parsed.protocol)) return { ok: false, error: 'invalid-origin' };
+            origin = parsed.origin;
+        } catch (err) {
+            return { ok: false, error: 'invalid-origin' };
+        }
+        try {
+            const entries = readPasswordDatabase();
+            const username = payload.username.trim();
+            const index = entries.findIndex((entry) => entry.origin === origin && entry.username === username);
+            const entry = { origin, username, password: payload.password, updatedAt: Date.now() };
+            if (index >= 0) entries[index] = entry;
+            else entries.push(entry);
+            writePasswordDatabase(entries);
+            return { ok: true };
+        } catch (err) {
+            console.error('Password manager could not save a credential:', err);
+            return { ok: false, error: err.message === 'secure-storage-unavailable' ? err.message : 'store-write-failed' };
+        }
+    });
+
+    ipcMain.handle('password-manager:remove', (event, id) => {
+        if (!isPasswordManagerRequest(event) || typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) {
+            return { ok: false, error: 'not-authorized' };
+        }
+        try {
+            const entries = readPasswordDatabase();
+            const next = entries.filter((entry) => passwordEntryId(entry) !== id);
+            if (next.length === entries.length) return { ok: false, error: 'credential-not-found' };
+            writePasswordDatabase(next);
+            return { ok: true };
+        } catch (err) {
+            console.error('Password manager could not remove a credential:', err);
+            return { ok: false, error: err.message === 'secure-storage-unavailable' ? err.message : 'store-write-failed' };
+        }
+    });
+
     ipcMain.on('i18n-cache-update', (event, data) => queueI18nCacheWrite(data));
 
     ipcMain.on('i18n-clear-cache', () => {
@@ -623,7 +932,64 @@ function registerDefaultBrowserHandlers() {
         }
     });
 
+    ipcMain.handle('clear-browsing-data', async (event, options) => {
+        const categories = Array.isArray(options && options.categories)
+            ? [...new Set(options.categories.filter((item) => ['downloads', 'cookies', 'siteData', 'cache'].includes(item)))]
+            : [];
+        const operations = [];
+        const allTimeOnly = [];
+        const cutoff = Number.isFinite(options && options.cutoff) ? Math.max(0, options.cutoff) : 0;
+        if (categories.includes('downloads')) clearDownloadHistory(cutoff);
+        if (categories.includes('cookies')) {
+            operations.push(session.defaultSession.clearStorageData({ storages: ['cookies'] }));
+            allTimeOnly.push('cookies');
+        }
+        if (categories.includes('siteData')) {
+            operations.push(session.defaultSession.clearStorageData({
+                storages: ['localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'websql', 'filesystem']
+            }));
+            allTimeOnly.push('siteData');
+        }
+        if (categories.includes('cache')) {
+            operations.push(session.defaultSession.clearCache());
+            allTimeOnly.push('cache');
+        }
+        await Promise.all(operations);
+        return { ok: true, allTimeOnly };
+    });
+
+    ipcMain.handle('get-memory-pressure', (event) => {
+        if (!win || event.sender !== win.webContents) return null;
+        const totalBytes = os.totalmem();
+        return { totalBytes, freeBytes: os.freemem() };
+    });
+
+    ipcMain.handle('get-system-performance', (event) => {
+        if (!isPasswordManagerRequest(event)) return { cpuPercent: null };
+        const cores = os.cpus();
+        let idle = 0;
+        let total = 0;
+        for (const core of cores) {
+            for (const value of Object.values(core.times)) total += value;
+            idle += core.times.idle;
+        }
+        const current = { idle, total };
+        const previous = previousSystemCpuSample;
+        previousSystemCpuSample = current;
+        if (!previous || current.total <= previous.total) return { cpuPercent: null };
+        const totalDelta = current.total - previous.total;
+        const idleDelta = current.idle - previous.idle;
+        return { cpuPercent: Math.max(0, Math.min(100, (1 - idleDelta / totalDelta) * 100)) };
+    });
+
     ipcMain.on('devtools-toggle', () => { if (win && !win.isDestroyed()) win.webContents.toggleDevTools(); });
+    ipcMain.on('open-network-settings', (event) => {
+        if (!win || win.isDestroyed() || event.sender !== win.webContents || process.platform !== 'win32') return;
+        shell.openExternal('ms-settings:network-status').catch((err) => {
+            console.error('Windows ağ ayarları açılamadı:', err);
+            win.webContents.send('settings-error', 'Windows ağ ayarları açılamadı. Ayarlar uygulamasından Ağ ve internet bölümünü açın.');
+        });
+    });
     ipcMain.on('devtools-detached', () => { if (win && !win.isDestroyed()) win.webContents.openDevTools({ mode: 'detach' }); });
     ipcMain.on('hard-reload', () => { if (win && !win.isDestroyed()) win.webContents.reloadIgnoringCache(); });
 
@@ -916,9 +1282,9 @@ function cancelDownload(id) {
     }
 }
 
-function clearDownloadHistory() {
+function clearDownloadHistory(cutoff = 0) {
     for (const [id, item] of downloads.entries()) {
-        if (item.state !== 'progressing') downloads.delete(id);
+        if (item.state !== 'progressing' && (!cutoff || item._createdAt <= cutoff)) downloads.delete(id);
     }
 }
 
@@ -935,6 +1301,82 @@ function windowMaximize() {
 
 function windowClose() {
     if (win && !win.isDestroyed()) win.close();
+}
+
+function showWindow() {
+    if (!win || win.isDestroyed()) {
+        createWindow();
+        return;
+    }
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+}
+
+function destroyTray() {
+    if (!tray) return;
+    tray.destroy();
+    tray = null;
+}
+
+function createTray() {
+    if (tray || !settingEnabled('tray-in-background')) return;
+    try {
+        const iconPath = path.join(app.getAppPath(), 'src', 'icons', 'dark-logo.png');
+        tray = new Tray(iconPath);
+        tray.setToolTip(`Anka Web ${app.getVersion()}`);
+        const menu = Menu.buildFromTemplate([
+            { label: 'Anka Web ' + app.getVersion(), enabled: false },
+            { type: 'separator' },
+            { label: 'Anka Web’i Aç', click: showWindow },
+            { label: 'Pencereyi Gizle', click: () => { if (win && !win.isDestroyed()) win.hide(); } },
+            { label: 'Yeni Sekme Aç', click: () => {
+                showWindow();
+                if (win && !win.isDestroyed()) win.webContents.send('open-new-tab', 'newtab.html');
+            } },
+            { label: 'Güncellemeleri Kontrol Et', click: () => { showWindow(); checkUpdates(win); } },
+            { type: 'separator' },
+            { label: 'Uygulamadan Çık', click: () => { appQuitting = true; app.quit(); } }
+        ]);
+        tray.setContextMenu(menu);
+        tray.on('click', () => {
+            if (win && !win.isDestroyed() && win.isVisible()) win.hide();
+            else showWindow();
+        });
+        tray.on('double-click', showWindow);
+    } catch (err) {
+        tray = null;
+        console.error('Sistem tepsisi oluşturulamadı:', err);
+    }
+}
+
+function applyStartupOnLogin(enabled) {
+    try {
+        if (process.platform === 'win32' || process.platform === 'darwin') {
+            const args = process.defaultApp ? [app.getAppPath(), '--start-minimized'] : ['--start-minimized'];
+            app.setLoginItemSettings({ openAtLogin: enabled, args });
+            return { ok: true };
+        }
+        if (process.platform === 'linux') {
+            const autostartDir = path.join(app.getPath('home'), '.config', 'autostart');
+            const entry = path.join(autostartDir, 'anka-web.desktop');
+            if (!enabled) {
+                fs.rmSync(entry, { force: true });
+                return { ok: true };
+            }
+            const executable = process.defaultApp
+                ? `"${process.execPath.replace(/(["\\])/g, '\\$1')}" "${app.getAppPath().replace(/(["\\])/g, '\\$1')}"`
+                : `"${process.execPath.replace(/(["\\])/g, '\\$1')}"`;
+            fs.mkdirSync(autostartDir, { recursive: true });
+            fs.writeFileSync(entry, `[Desktop Entry]\nType=Application\nName=Anka Web\nExec=${executable} --start-minimized\nTerminal=false\nX-GNOME-Autostart-enabled=true\n`, { encoding: 'utf8', mode: 0o600 });
+            fs.chmodSync(entry, 0o600);
+            return { ok: true };
+        }
+        return { ok: false, error: 'Bu işletim sisteminde otomatik başlatma desteklenmiyor.' };
+    } catch (err) {
+        console.error('Otomatik başlatma ayarı uygulanamadı:', err);
+        return { ok: false, error: err.message };
+    }
 }
 
 function setFullscreen(val) {
@@ -959,6 +1401,8 @@ app.whenReady().then(async () => {
     setupDownloadManager();
     registerDefaultBrowserHandlers();
     ensureLinuxDesktopShortcut();
+    createTray();
+    if (settingEnabled('start-on-login')) applyStartupOnLogin(true);
 
     let flow = { proceed: true, release() {} };
     try { flow = await runFirstLaunch(); }
@@ -966,6 +1410,10 @@ app.whenReady().then(async () => {
     if (!flow.proceed) return;
 
     createWindow();
+    loadSavedDeveloperExtensions().catch((err) => {
+        console.error('Saved developer extensions could not be loaded:', err);
+        if (win && !win.isDestroyed()) win.webContents.send('settings-error', 'Yerel geliştirici paketleri başlatılamadı.');
+    });
 
     const releaseTimer = setTimeout(() => flow.release(), 10000);
     if (typeof releaseTimer.unref === 'function') releaseTimer.unref();
@@ -980,11 +1428,12 @@ app.whenReady().then(async () => {
     }
 
     app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
+        showWindow();
     });
 });
 
 app.on('before-quit', (event) => {
+    appQuitting = true;
     flushI18nCache();
     if (cacheCleanupComplete || !settingEnabled('clear-cache-exit')) return;
     event.preventDefault();
@@ -1017,6 +1466,7 @@ ipcMain.handle('stop-find-in-page', (event, action) => {
 
 app.on('window-all-closed', () => {
     if (isSplashOpen()) return;
+    if (tray && settingEnabled('tray-in-background')) return;
     if (process.platform !== 'darwin') app.quit();
 });
 

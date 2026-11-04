@@ -8,19 +8,16 @@
             const list = document.querySelectorAll('script[src*="logo-theme"]');
             const s = list[list.length - 1];
             if (s && s.src) {
-                const u = new URL(s.src);
-                u.pathname = u.pathname.replace(/\/scripts\/[^\/]+$/, '/icons/');
-                u.search = '';
-                u.hash = '';
-                return u.href.replace(/\/$/, '') + '/';
+                return new URL('../../icons/', s.src).href;
             }
         } catch (e) {}
-        return '../../src/icons/';
+        return new URL('../icons/', document.baseURI).href;
     }
 
     const ICONS_BASE = resolveIconsBase();
     const LOGO_NORMAL = ICONS_BASE + 'dark-logo.png';
-    const LOGO_WHITE = ICONS_BASE + 'white-dark-logo.png';
+    const LOGO_WHITE = ICONS_BASE + 'white-logo.png';
+    const LOGO_FILE_RE = /\/(?:dark-logo|white-logo)\.png$/i;
 
     function isLight() {
         const html = document.documentElement;
@@ -47,8 +44,18 @@
         );
     }
 
-    function isLogoPath(src) {
-        return /\/(white-)?logo\.(png|svg|ico|webp)(\?.*)?$/i.test(String(src || ''));
+    function logoVariant(src, name) {
+        try {
+            const url = new URL(String(src || ''), document.baseURI);
+            if (url.protocol !== 'file:' && url.origin !== window.location.origin) return '';
+            if (!LOGO_FILE_RE.test(url.pathname)) return '';
+            url.pathname = url.pathname.replace(LOGO_FILE_RE, '/' + name);
+            url.search = '';
+            url.hash = '';
+            return url.href;
+        } catch (error) {
+            return '';
+        }
     }
 
     function swapImg(img) {
@@ -57,13 +64,13 @@
         let base = img.getAttribute('data-anka-logo-base');
 
         if (!base) {
-            if (!isLogoPath(current)) return;
-            base = current.replace(/white-logo\.(png|svg|ico|webp)/i, 'logo.$1');
+            base = logoVariant(current, 'dark-logo.png');
+            if (!base) return;
             img.setAttribute('data-anka-logo-base', base);
         }
 
-        const whiteSrc = base.replace(/logo\.(png|svg|ico|webp)/i, 'white-logo.$1');
-        const target = isLight() ? whiteSrc : base;
+        const target = isLight() ? logoVariant(base, 'white-logo.png') : base;
+        if (!target) return;
 
         if (current !== target) {
             img.setAttribute('src', target);
@@ -77,7 +84,8 @@
                 const href = link.getAttribute('href') || '';
                 if (/^(data:|https?:)/i.test(href)) return;
                 const marked = link.getAttribute('data-anka-logo') === 'true';
-                if (!marked && !isLogoPath(href)) return;
+                const darkLogo = logoVariant(href, 'dark-logo.png');
+                if (!marked && !darkLogo) return;
                 link.setAttribute('data-anka-logo', 'true');
                 link.setAttribute('href', currentLogo());
             });

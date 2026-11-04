@@ -2,6 +2,11 @@
     --bm-h: 34px;
 }
 
+#site-info-btn{flex:0 0 34px;width:34px;min-width:34px;padding:0;border-color:transparent;background:transparent;color:var(--text-secondary,#d1d5db)}
+#site-info-btn.site-insecure{color:var(--warn,#f59e0b)}
+#site-info-btn .site-indicator{width:17px;height:17px}
+@media(pointer:coarse){#site-info-btn{flex-basis:44px;width:44px;min-width:44px;min-height:44px}}
+
 .xi {
     width: 16px;
     height: 16px;
@@ -21,7 +26,7 @@
 
 #toolbar .nav-tool-btn.active:not(#profile-btn):not(#star-btn) {
     background: var(--accent-soft);
-    color: var(--accent);
+    color: var(--text);
     border-color: var(--accent);
 }
 
@@ -573,7 +578,9 @@ body.bm-visible #draw-layer {
 }
 
 .xt-tabs button.active {
-    color: var(--accent);
+    color: var(--text);
+    background: var(--accent-soft);
+    border-color: var(--accent);
     border-bottom-color: var(--accent);
 }
 

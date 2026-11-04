@@ -1,13 +1,15 @@
 const AI_TAB_ID = 'tab-ai-assistant';
 let activeTabId = null;
 let closedTabsStack = [];
+let lastMemoryPressureCheck = 0;
 
 const ankaTabs = new Map();
 let ankaTabSeq = 0;
-const ANKA_LOGO = '../../src/icons/dark-logo.png';
+const ANKA_LOGO = '../icons/dark-logo.png';
 const ANKA_ALLOWED_FILES = new Set();
-const ANKA_GUEST_PREFS = 'contextIsolation=yes, sandbox=yes, nodeIntegration=no, webSecurity=yes, allowRunningInsecureContent=no';
-const ANKA_DARK_CSS = 'html{filter:invert(1) hue-rotate(180deg)!important;background:#fff}img,picture,video,canvas,iframe{filter:invert(1) hue-rotate(180deg)!important}';
+const ANKA_GUEST_PREFS = 'contextIsolation=yes, sandbox=yes, nodeIntegration=no, webSecurity=yes, allowRunningInsecureContent=no, javascript=yes';
+const ANKA_DARK_CSS = 'html{color-scheme:dark!important;background:#121212!important;color:#e8eaed!important}html body,html body *:not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe){background-color:transparent!important;color:#e8eaed!important;border-color:#3c4043!important}html body{background:#121212!important}html body a,html body a *{color:#8ab4f8!important}html body input,html body textarea,html body select,html body button{background-color:#202124!important;color:#e8eaed!important;border-color:#5f6368!important}img,picture,video,canvas,svg,iframe{filter:none!important}';
+const ANKA_GOOGLE_DARK_CSS = 'html,body,#main,#cnt,#rcnt,#appbar,#searchform,#sfcnt,.MjjYud,.g,.sfbg,.appbar,.M8H8pb,.RNNXgb,.aajZCb,.UUbT9,#hdtb,#hdtbMenus,.Tg7LZd{background-color:#171717!important;color:#e8eaed!important}html body *:not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe){border-color:#3c4043!important}a,.q:visited,a:visited{color:#8ab4f8!important}input,textarea,select,button{background-color:#202124!important;color:#e8eaed!important;border-color:#5f6368!important}img,picture,video,canvas,svg,iframe{filter:none!important}';
 const ANKA_DROP_EXT = /\.(pdf|html?|txt|md|json|png|jpe?g|gif|webp|svg|mp4|webm|mp3|ogg|wav)$/i;
 const ANKA_MAC = /Mac/i.test(navigator.platform || '');
 const ANKA_LINUX = /Linux/i.test(navigator.platform || navigator.userAgent || '');
@@ -377,6 +379,7 @@ function ankaIsPrivateHost(host) {
 }
 
 let ankaNewTabUrl = null;
+let ankaErrorPageUrl = null;
 
 function getNewTabUrl() {
     if (ankaNewTabUrl) return ankaNewTabUrl;
@@ -390,6 +393,54 @@ function getNewTabUrl() {
     } catch (err) {}
     ankaNewTabUrl = new URL('newtab.html', window.location.href).href;
     return ankaNewTabUrl;
+}
+
+let ankaWelcomeUrl = null;
+
+function getWelcomeUrl() {
+    if (ankaWelcomeUrl) return ankaWelcomeUrl;
+    try {
+        const path = require('path');
+        const { pathToFileURL } = require('url');
+        ankaWelcomeUrl = pathToFileURL(path.join(__dirname, '../renderer/welcome.html')).href;
+        ANKA_ALLOWED_FILES.add(ankaFileKey(ankaWelcomeUrl));
+        return ankaWelcomeUrl;
+    } catch (err) {
+        try {
+            ankaWelcomeUrl = new URL('welcome.html', window.location.href).href;
+            ANKA_ALLOWED_FILES.add(ankaFileKey(ankaWelcomeUrl));
+            return ankaWelcomeUrl;
+        } catch (fallbackError) {
+            return '';
+        }
+    }
+}
+
+function ankaIsWelcomeUrl(url) {
+    return !!getWelcomeUrl() && ankaFileKey(url) === ankaFileKey(getWelcomeUrl());
+}
+
+function getErrorPageUrl(target, code) {
+    if (!ankaErrorPageUrl) {
+        try {
+            const path = require('path');
+            const { pathToFileURL } = require('url');
+            ankaErrorPageUrl = pathToFileURL(path.join(__dirname, '../renderer/error.html')).href;
+            ANKA_ALLOWED_FILES.add(ankaFileKey(ankaErrorPageUrl));
+        } catch (err) {
+            return '';
+        }
+    }
+    const url = new URL(ankaErrorPageUrl);
+    if (/^https?:\/\//i.test(String(target || ''))) url.searchParams.set('url', target);
+    url.searchParams.set('code', String(code || 0));
+    url.searchParams.set('platform', ANKA_WIN ? 'win32' : ANKA_LINUX ? 'linux' : 'other');
+    return url.href;
+}
+
+function isErrorPageUrl(url) {
+    if (!ankaErrorPageUrl) return false;
+    return ankaFileKey(url) === ankaFileKey(ankaErrorPageUrl);
 }
 
 function ankaFileKey(url) {
@@ -603,6 +654,7 @@ function ankaBridgeScript(nonce) {
         const log = console.log.bind(console);
         const N = ${JSON.stringify(nonce)};
         const send = (type, data) => { try { log('anka:' + N + ':' + type + ':' + data); } catch (e) {} };
+        window.__ankaOpenNetworkSettings = () => send('network-help', '');
         const active = () => !!(navigator.userActivation && navigator.userActivation.isActive);
         const linkOf = (e) => {
             const path = e.composedPath ? e.composedPath() : [e.target];
@@ -751,8 +803,432 @@ function ankaHandleBridge(vw, message) {
                 ankaHandleShortcut({ key: k.key, code: String(k.code || ''), shift: !!k.shift, alt: !!k.alt, ctrl: !!k.ctrl, editing: false });
             }
         } catch (err) {}
+    } else if (type === 'password-save') {
+        ankaPromptSavePassword(vw, data);
+    } else if (type === 'network-help' && isErrorPageUrl(vw.getURL())) {
+        try {
+            const ipc = require('electron').ipcRenderer;
+            ipc.send('open-network-settings');
+        } catch (err) {
+            showNotification('Ağ ayarları bu ortamda açılamadı.');
+        }
     }
     return true;
+}
+
+function ankaPromptSavePassword(vw, encoded) {
+    let credential;
+    try { credential = JSON.parse(decodeURIComponent(encoded)); } catch (err) { return; }
+    let currentOrigin;
+    try { currentOrigin = new URL(vw.getURL()).origin; } catch (err) { return; }
+    if (!credential || credential.origin !== currentOrigin ||
+        typeof credential.username !== 'string' || typeof credential.password !== 'string' ||
+        credential.password.length > 4096) return;
+    const ipc = ankaBridgeApi();
+    if (!ipc || !ipc.invoke || typeof window.confirm !== 'function') return;
+    if (!window.confirm('Anka Web, ' + currentOrigin + ' için bu hesabın parolasını güvenli şekilde kaydetsin mi?')) return;
+    ipc.invoke('password-manager:save', credential).then((result) => {
+        if (result && result.ok) showNotification('Parola Anka Web güvenli deposuna kaydedildi.');
+        else showNotification(result && result.error === 'secure-storage-unavailable'
+            ? 'Bu cihazda güvenli parola deposu kullanılamıyor; parola kaydedilmedi.'
+            : 'Parola güvenli şekilde kaydedilemedi.');
+    }).catch((err) => {
+        console.error('Password manager save request failed:', err);
+        showNotification('Parola kaydı tamamlanamadı.');
+    });
+}
+
+function ankaSetupPasswordManager(vw) {
+    if (!vw || getSetting('password-manager', 'true') !== 'true') return;
+    if (String(vw.getAttribute('partition') || '').startsWith('ankaprivate-')) return;
+    let origin;
+    try {
+        const url = new URL(vw.getURL());
+        if (url.protocol !== 'https:') return;
+        origin = url.origin;
+    } catch (err) { return; }
+    const ipc = ankaBridgeApi();
+    if (!ipc || !ipc.invoke) return;
+    ipc.invoke('password-manager:get-for-origin', origin).then((result) => {
+        if (!result || !result.ok || !Array.isArray(result.entries) || !result.entries.length ||
+            !vw.isConnected) return;
+        try { if (new URL(vw.getURL()).origin !== origin) return; } catch (err) { return; }
+        const entries = JSON.stringify(result.entries);
+        const prefix = JSON.stringify('anka:' + vw.__ankaNonce + ':password-save:');
+        const source = `(() => {
+            if (window.__ankaPasswordManagerInstalled) return;
+            window.__ankaPasswordManagerInstalled = true;
+            const entries = ${entries};
+            const setValue = (field, value) => {
+                if (!field || field.disabled || field.value) return;
+                const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value');
+                if (setter && setter.set) setter.set.call(field, value);
+                else field.value = value;
+                field.dispatchEvent(new Event('input', { bubbles: true }));
+                field.dispatchEvent(new Event('change', { bubbles: true }));
+            };
+            const fill = (entry) => {
+                const password = document.querySelector('input[type="password"]:not([disabled])');
+                if (!password) return;
+                const form = password.form || password.parentElement;
+                const username = (form || document).querySelector('input[autocomplete="username"],input[type="email"],input[type="text"]:not([autocomplete="off"])');
+                setValue(username, entry.username);
+                setValue(password, entry.password);
+                password.focus();
+            };
+            const installFill = () => {
+                if (!document.querySelector('input[type="password"]')) return false;
+                if (entries.length === 1) fill(entries[0]);
+                else {
+                    const host = document.createElement('div');
+                    host.style.cssText = 'position:fixed;z-index:2147483647;top:12px;right:12px';
+                    const shadow = host.attachShadow({ mode: 'closed' });
+                    const button = document.createElement('button');
+                    button.textContent = 'Anka Web: giriş bilgileri';
+                    button.style.cssText = 'font:13px system-ui;padding:9px 12px;color:#fff;background:#24242b;border:1px solid #ff4757;border-radius:8px;cursor:pointer;box-shadow:0 2px 12px #0008';
+                    button.addEventListener('click', () => {
+                        const menu = document.createElement('div');
+                        menu.style.cssText = 'display:grid;gap:4px;padding:6px;margin-top:5px;background:#24242b;border:1px solid #555;border-radius:8px';
+                        entries.forEach((entry) => {
+                            const option = document.createElement('button');
+                            option.textContent = entry.username;
+                            option.style.cssText = button.style.cssText;
+                            option.addEventListener('click', () => { fill(entry); host.remove(); });
+                            menu.appendChild(option);
+                        });
+                        shadow.replaceChildren(button, menu);
+                    });
+                    shadow.appendChild(button);
+                    document.documentElement.appendChild(host);
+                }
+                return true;
+            };
+            installFill();
+            const observer = new MutationObserver(() => {
+                if (document.querySelector('input[type="password"]')) {
+                    observer.disconnect();
+                    installFill();
+                }
+            });
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+            document.addEventListener('submit', (event) => {
+                const form = event.target;
+                if (!(form instanceof HTMLFormElement)) return;
+                const password = form.querySelector('input[type="password"]');
+                if (!password || !password.value) return;
+                const username = form.querySelector('input[autocomplete="username"],input[type="email"],input[type="text"]:not([autocomplete="off"])');
+                const data = { origin: location.origin, username: username ? username.value.trim() : '', password: password.value };
+                if (!data.username) return;
+                console.info(${prefix} + encodeURIComponent(JSON.stringify(data)));
+            }, true);
+        })();`;
+        vw.executeJavaScript(source).catch(() => {});
+    }).catch((err) => {
+        console.error('Password manager lookup failed:', err);
+    });
+}
+
+window.openPasswordManager = function () {
+    let panel = document.getElementById('anka-password-manager');
+    if (!panel) {
+        const style = document.createElement('style');
+        style.id = 'anka-password-manager-style';
+        style.textContent = '#anka-password-manager{position:fixed;inset:0;z-index:10000010;display:grid;place-items:center;padding:16px;background:#0009;font:14px system-ui;color:var(--text-color,#f4f4f5)}#anka-password-manager[hidden]{display:none}#anka-password-manager .apm-card{width:min(560px,100%);max-height:90vh;overflow:auto;padding:20px;background:var(--panel,#1e1e25);border:1px solid var(--border,#333);border-radius:14px;box-shadow:var(--shadow-pop,0 16px 48px #0008)}#anka-password-manager .apm-head,#anka-password-manager .apm-row{display:flex;align-items:center;justify-content:space-between;gap:10px}#anka-password-manager .apm-row{padding:10px 0;border-bottom:1px solid var(--border,#333)}#anka-password-manager .apm-row span{min-width:0;overflow-wrap:anywhere}#anka-password-manager button{min-height:40px;padding:7px 12px;border:1px solid var(--border,#444);border-radius:8px;color:inherit;background:var(--bg-tertiary,#292930);cursor:pointer}#anka-password-manager .apm-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}#anka-password-manager input{min-width:0;min-height:42px;padding:8px;border:1px solid var(--border,#444);border-radius:8px;color:inherit;background:var(--input-bg,#111)}#anka-password-manager .apm-fields input:first-child{grid-column:1/-1}#anka-password-manager .apm-status{min-height:22px;color:var(--text-secondary,#aaa)}@media(max-width:520px){#anka-password-manager .apm-fields{grid-template-columns:1fr}#anka-password-manager .apm-fields input:first-child{grid-column:auto}}';
+        document.head.appendChild(style);
+        panel = document.createElement('section');
+        panel.id = 'anka-password-manager';
+        panel.hidden = true;
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-modal', 'true');
+        panel.setAttribute('aria-label', 'Anka Web Parola Yöneticisi');
+        panel.innerHTML = '<div class="apm-card"><div class="apm-head"><h2>Anka Web Parola Yöneticisi</h2><button type="button" data-apm-close aria-label="Kapat">✕</button></div><p>Parolalar bu cihazda işletim sisteminin güvenli deposuyla şifrelenir. Anka Web parolalarınızı sunucuya göndermez.</p><div class="apm-status" role="status"></div><div class="apm-list"></div><form class="apm-fields"><input name="origin" type="url" required placeholder="https://ornek.com" autocomplete="url" aria-label="Site adresi"><input name="username" type="text" required maxlength="512" placeholder="Kullanıcı adı" autocomplete="username" aria-label="Kullanıcı adı"><input name="password" type="password" required maxlength="4096" placeholder="Parola" autocomplete="new-password" aria-label="Parola"><button type="submit">Güvenli Kaydet</button></form></div>';
+        document.body.appendChild(panel);
+        const close = () => { panel.hidden = true; };
+        panel.querySelector('[data-apm-close]').addEventListener('click', close);
+        panel.addEventListener('click', (event) => { if (event.target === panel) close(); });
+        const form = panel.querySelector('form');
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const status = panel.querySelector('.apm-status');
+            const formData = new FormData(form);
+            try {
+                const ipc = ankaBridgeApi();
+                const result = await ipc.invoke('password-manager:save', {
+                    origin: String(formData.get('origin') || ''),
+                    username: String(formData.get('username') || ''),
+                    password: String(formData.get('password') || '')
+                });
+                status.textContent = result && result.ok ? 'Parola güvenli olarak kaydedildi.' :
+                    result && result.error === 'secure-storage-unavailable' ? 'Bu cihazda güvenli parola deposu yok; parola kaydedilmedi.' :
+                    'Parola kaydedilemedi. Site adresini ve alanları kontrol edin.';
+                if (result && result.ok) {
+                    form.reset();
+                    await refreshPasswordManager();
+                }
+            } catch (err) {
+                console.error('Password manager save failed:', err);
+                status.textContent = 'Parola kaydedilemedi.';
+            }
+        });
+        panel.querySelector('.apm-list').addEventListener('click', async (event) => {
+            const button = event.target.closest('[data-apm-remove]');
+            if (!button || !window.confirm('Bu kayıtlı parolayı silmek istiyor musunuz?')) return;
+            const ipc = ankaBridgeApi();
+            try {
+                const result = await ipc.invoke('password-manager:remove', button.dataset.apmRemove);
+                if (!result || !result.ok) throw new Error('Silme işlemi başarısız oldu.');
+                await refreshPasswordManager();
+            } catch (err) {
+                console.error('Password manager delete failed:', err);
+                panel.querySelector('.apm-status').textContent = 'Kayıt silinemedi.';
+            }
+        });
+    }
+    panel.hidden = false;
+    const activeUrl = ankaActiveView() && ankaActiveView().getURL();
+    try { panel.querySelector('[name="origin"]').value = new URL(activeUrl).origin; } catch (err) {}
+    refreshPasswordManager();
+    panel.querySelector('[name="origin"]').focus();
+};
+
+window.showSiteInfo = function () {
+    const st = ankaTabs.get(activeTabId);
+    let url = '';
+    try { url = st && st.vw ? st.vw.getURL() : st && st.url || ''; } catch (err) {}
+    let parsed = null;
+    try {
+        parsed = new URL(url);
+    } catch (err) {}
+    const old = document.getElementById('anka-site-info-panel');
+    if (old) { old.remove(); return; }
+    if (!st) {
+        showNotification('Site bilgisi alınamadı. Önce bir sekme açın.');
+        return;
+    }
+    if (!parsed || !/^https?:$/.test(parsed.protocol)) {
+        const panel = document.createElement('section');
+        panel.id = 'anka-site-info-panel';
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-label', 'Site bilgisi');
+        panel.style.cssText = 'position:fixed;z-index:2147482000;width:min(360px,calc(100vw - 24px));max-height:calc(100vh - 76px);overflow:auto;padding:16px;border:1px solid var(--border-color,#30323a);border-radius:14px;background:var(--bg-secondary,#18181b);color:var(--text-color,#f4f4f5);box-shadow:0 18px 50px #0008;font:inherit';
+        const title = document.createElement('strong');
+        title.textContent = parsed && parsed.protocol === 'file:' ? 'Yerel dosya' : 'Anka Web sayfası';
+        title.style.cssText = 'display:block;font-size:15px;overflow-wrap:anywhere';
+        const status = document.createElement('p');
+        let filePath = '';
+        if (parsed && parsed.protocol === 'file:') {
+            try { filePath = decodeURIComponent(parsed.pathname); } catch (err) { filePath = parsed.pathname; }
+        }
+        status.textContent = filePath
+            ? 'Bu içerik cihazınızdaki yerel dosyadan açıldı: ' + filePath
+            : 'Bu dahili sayfada siteye özel izinler kullanılamaz. Bir web sitesine geçtiğinizde bağlantı ve site ayarları burada görünür.';
+        status.style.cssText = 'font-size:12px;line-height:1.55;overflow-wrap:anywhere;opacity:.82;margin:10px 0';
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = 'Kapat';
+        close.style.cssText = 'min-height:40px;padding:0 14px;border:1px solid var(--border-color,#30323a);border-radius:8px;background:var(--input-bg,#111318);color:inherit;font:inherit;touch-action:manipulation';
+        close.addEventListener('click', () => panel.remove());
+        panel.append(title, status, close);
+        document.body.append(panel);
+        requestAnimationFrame(() => ankaPlaceToolbarPopover(panel, 'site-info-btn'));
+        panel.addEventListener('pointerdown', (event) => event.stopPropagation());
+        panel.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') panel.remove();
+        });
+        return;
+    }
+    const prefs = st.incognito ? {} : ankaReadSiteSettings(parsed.hostname);
+    const panel = document.createElement('section');
+    panel.id = 'anka-site-info-panel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'Site ayarları');
+    panel.style.cssText = 'position:fixed;z-index:2147482000;width:min(360px,calc(100vw - 24px));max-height:calc(100vh - 76px);overflow:auto;padding:16px;border:1px solid var(--border-color,#30323a);border-radius:14px;background:var(--bg-secondary,#18181b);color:var(--text-color,#f4f4f5);box-shadow:0 18px 50px #0008;font:inherit';
+    const title = document.createElement('strong');
+    title.textContent = parsed.hostname;
+    title.style.cssText = 'display:block;font-size:15px;overflow-wrap:anywhere';
+    const status = document.createElement('p');
+    status.textContent = parsed.protocol === 'https:'
+        ? 'HTTPS bağlantısı şifrelenmiştir; sitenin içeriğinin güvenilir olduğunu garanti etmez.'
+        : 'HTTP bağlantısı şifrelenmez. Bu sitede parola veya hassas bilgi girmeyin.';
+    status.style.cssText = 'font-size:12px;line-height:1.5;opacity:.72;margin:8px 0 14px';
+    const makeToggle = (labelText, checked, onChange, disabled) => {
+        const label = document.createElement('label');
+        label.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;border-top:1px solid var(--border-color,#30323a);font-size:13px';
+        label.append(document.createTextNode(labelText));
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = checked;
+        input.disabled = !!disabled;
+        input.style.cssText = 'width:22px;height:22px;accent-color:var(--accent,#ff4757);touch-action:manipulation';
+        input.addEventListener('change', () => onChange(input));
+        label.append(input);
+        return label;
+    };
+    const javascript = makeToggle('JavaScript', prefs.javascript !== false, async (input) => {
+        if (st.incognito) {
+            input.checked = true;
+            showNotification('Gizli sekmelerde site ayarı kaydedilmiyor.');
+            return;
+        }
+        const allowed = await window.ankaConfirm('JavaScript ayarının uygulanması için sayfa yeniden yüklenecek. Form ve sayfa içi geçici durum kaybolabilir. Devam edilsin mi?', { title: 'Sayfayı yeniden yükle' });
+        if (!allowed) { input.checked = !input.checked; return; }
+        const next = ankaReadSiteSettings(parsed.hostname);
+        next.javascript = input.checked;
+        if (!ankaWriteSiteSettings(parsed.hostname, next)) {
+            input.checked = !input.checked;
+            showNotification('Site tercihi kaydedilemedi. Depolama alanınızı kontrol edin.');
+            return;
+        }
+        try {
+            if (st.vw) {
+                ankaUnwireTabLoading(st, st.vw);
+                st.vw.remove();
+            }
+        } catch (err) { console.error('Site ayarı uygulanamadı:', err); }
+        st.vw = null;
+        st.url = url;
+        st.sleeping = true;
+        panel.remove();
+        switchTab(st.id);
+    }, st.incognito);
+    const media = makeToggle('Bu sekmenin sesini kapat', !!st.muted, (input) => {
+        st.muted = input.checked;
+        if (st.vw) {
+            try { st.vw.setAudioMuted(st.muted); }
+            catch (err) {
+                input.checked = !st.muted;
+                st.muted = !st.muted;
+                console.error('Sekme sesi ayarlanamadı:', err);
+                showNotification('Bu sekmenin sesi değiştirilemedi.');
+                return;
+            }
+        }
+        ankaUpdateMuteButton(st);
+    }, false);
+    const popups = makeToggle('Açılır pencereleri yeni sekmede aç', prefs.openPopups !== false, (input) => {
+        if (st.incognito) {
+            input.checked = true;
+            showNotification('Gizli sekmelerde site ayarı kaydedilmiyor.');
+            return;
+        }
+        const next = ankaReadSiteSettings(parsed.hostname);
+        next.openPopups = input.checked;
+        if (!ankaWriteSiteSettings(parsed.hostname, next)) {
+            input.checked = !input.checked;
+            showNotification('Site tercihi kaydedilemedi. Depolama alanınızı kontrol edin.');
+        }
+    }, st.incognito);
+    const zoomLabel = document.createElement('label');
+    zoomLabel.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;border-top:1px solid var(--border-color,#30323a);font-size:13px';
+    zoomLabel.append(document.createTextNode('Bu site için yakınlaştırma'));
+    const zoom = document.createElement('select');
+    zoom.setAttribute('aria-label', 'Bu site için yakınlaştırma');
+    zoom.style.cssText = 'max-width:125px;min-height:36px;padding:0 8px;border:1px solid var(--border-color,#30323a);border-radius:8px;background:var(--input-bg,#111318);color:inherit;font:inherit;touch-action:manipulation';
+    const host = parsed.hostname.toLowerCase();
+    const zoomMap = ankaRead('anka_zoom', {});
+    const savedZoom = zoomMap && typeof zoomMap[host] === 'number' ? zoomMap[host] : null;
+    const zoomValues = [
+        { value: 'default', label: 'Varsayılan' },
+        { value: '75', label: '75%' },
+        { value: '90', label: '90%' },
+        { value: '100', label: '100%' },
+        { value: '110', label: '110%' },
+        { value: '120', label: '120%' },
+        { value: '125', label: '125%' },
+        { value: '144', label: '144%' },
+        { value: '150', label: '150%' }
+    ];
+    for (const optionData of zoomValues) {
+        const option = document.createElement('option');
+        option.value = optionData.value;
+        option.textContent = optionData.label;
+        zoom.append(option);
+    }
+    zoom.value = savedZoom === null ? 'default' : String(Math.round(Math.pow(1.2, savedZoom) * 100));
+    zoom.addEventListener('change', () => {
+        const values = ankaRead('anka_zoom', {});
+        if (zoom.value === 'default') delete values[host];
+        else values[host] = Math.log(Number(zoom.value) / 100) / Math.log(1.2);
+        if (!ankaWrite('anka_zoom', values)) {
+            zoom.value = savedZoom === null ? 'default' : String(Math.round(Math.pow(1.2, savedZoom) * 100));
+            showNotification('Site yakınlaştırması kaydedilemedi.');
+            return;
+        }
+        if (st.vw) ankaApplyStoredZoom(st, st.vw);
+    });
+    zoomLabel.append(zoom);
+    const dark = makeToggle('Bu sitede koyu görünüm', prefs.dark === true, (input) => {
+        if (st.incognito) {
+            input.checked = !input.checked;
+            showNotification('Gizli sekmelerde site ayarı kaydedilmiyor.');
+            return;
+        }
+        const next = ankaReadSiteSettings(parsed.hostname);
+        next.dark = input.checked;
+        if (!ankaWriteSiteSettings(parsed.hostname, next)) {
+            input.checked = !input.checked;
+            showNotification('Site tercihi kaydedilemedi. Depolama alanınızı kontrol edin.');
+            return;
+        }
+        st.dark = input.checked;
+        if (st.vw) {
+            if (input.checked) ankaApplyDark(st, st.vw);
+            else if (st.darkKey) {
+                st.vw.removeInsertedCSS(st.darkKey).catch((err) => {
+                    console.error('Koyu görünüm kapatılamadı:', err);
+                    showNotification('Koyu görünüm kapatılamadı. Sayfayı yenilemeyi deneyin.');
+                });
+                st.darkKey = null;
+            }
+        }
+    }, st.incognito);
+    const privateNote = document.createElement('small');
+    privateNote.textContent = st.incognito ? 'Gizli sekmede bu site tercihleri geçici ve kaydedilmez.' : 'JavaScript değişikliği bu sayfayı yeniden yükler.';
+    privateNote.style.cssText = 'display:block;padding-top:10px;font-size:11px;opacity:.6';
+    panel.append(title, status, javascript, dark, media, popups, zoomLabel, privateNote);
+    document.body.append(panel);
+    requestAnimationFrame(() => ankaPlaceToolbarPopover(panel, 'site-info-btn'));
+    panel.addEventListener('pointerdown', (event) => event.stopPropagation());
+    panel.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') panel.remove();
+    });
+};
+
+async function refreshPasswordManager() {
+    const panel = document.getElementById('anka-password-manager');
+    if (!panel) return;
+    const list = panel.querySelector('.apm-list');
+    const status = panel.querySelector('.apm-status');
+    list.replaceChildren();
+    status.textContent = 'Şifreli kayıtlar yükleniyor…';
+    try {
+        const ipc = ankaBridgeApi();
+        const result = ipc && await ipc.invoke('password-manager:list');
+        if (!result || !result.ok) {
+            status.textContent = result && result.error === 'secure-storage-unavailable'
+                ? 'İşletim sisteminin güvenli parola deposu kullanılamıyor. Kayıtlar güvensiz biçimde saklanmadı.'
+                : 'Kayıtlı parolalar açılamadı. Depo bozuk veya erişilemiyor olabilir.';
+            return;
+        }
+        status.textContent = result.entries.length ? result.entries.length + ' güvenli kayıt' : 'Henüz kayıtlı parola yok.';
+        const fragment = document.createDocumentFragment();
+        result.entries.forEach((entry) => {
+            const row = document.createElement('div');
+            row.className = 'apm-row';
+            const label = document.createElement('span');
+            label.textContent = entry.origin + ' · ' + entry.username;
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.dataset.apmRemove = entry.id;
+            remove.textContent = 'Sil';
+            row.append(label, remove);
+            fragment.appendChild(row);
+        });
+        list.replaceChildren(fragment);
+    } catch (err) {
+        console.error('Password manager list failed:', err);
+        status.textContent = 'Kayıtlı parolalar açılamadı.';
+    }
 }
 
 function ankaShowLinkStatus(text) {
@@ -785,7 +1261,15 @@ function applyMandatorySecurity(vw) {
 
         vw.addEventListener('new-window', (e) => {
             if (e && typeof e.preventDefault === 'function') e.preventDefault();
-            if (e && e.url) createNewTab(e.url);
+            if (!e || !e.url) return;
+            let currentUrl = '';
+            try { currentUrl = vw.getURL(); } catch (err) {}
+            const preferences = ankaReadSiteSettingsForUrl(currentUrl);
+            if (preferences.openPopups === false) {
+                showNotification('Bu site için açılır pencereler engellendi.');
+                return;
+            }
+            createNewTab(e.url);
         });
 
         vw.addEventListener('dom-ready', () => {
@@ -793,6 +1277,7 @@ function applyMandatorySecurity(vw) {
             try {
                 if (typeof vw.getURL === 'function') checkUrlSecurity(vw.getURL(), vw);
                 injectForcedRestrictions(vw);
+                ankaSetupPasswordManager(vw);
             } catch (err) {}
         });
 
@@ -802,13 +1287,17 @@ function applyMandatorySecurity(vw) {
 
         vw.addEventListener('did-fail-load', (e) => {
             if (!e || e.errorCode === -3 || e.isMainFrame === false) return;
+            if (isErrorPageUrl(e.validatedURL || vw.getURL())) return;
             if (vw.__ankaUpgraded && e.validatedURL === vw.__ankaUpgraded) {
-                showNotification('Güvenli (HTTPS) bağlantı kurulamadı; HTTP üzerinden açılmadı.');
+                vw.__ankaUpgraded = '';
+            }
+            const failedUrl = e.validatedURL || st.url || '';
+            const errorUrl = getErrorPageUrl(failedUrl, e.errorCode);
+            if (errorUrl && vw.isConnected) {
+                ankaLoad(vw, errorUrl);
                 return;
             }
-            const msg = 'Sayfa yüklenemedi: ' + (e.errorDescription || e.errorCode);
-            if (typeof showToast === 'function') showToast(msg, 'error');
-            else showNotification(msg);
+            showNotification('Sayfa açılamadı. Bağlantınızı ve adresi kontrol edip yeniden deneyin.');
         });
     }
 
@@ -935,12 +1424,13 @@ function ankaInjectStyles() {
 
     #anka-side-devtools {
         position: fixed;
-        top: 0;
+        top: 42px;
         right: -50%;
         width: 45%;
-        min-width: 340px;
+        min-width: min(340px, 100vw);
         max-width: 780px;
-        height: 100%;
+        height: calc(100% - 42px);
+        max-height: calc(100% - 42px);
         background: var(--anka-surface);
         color: var(--anka-text);
         border-left: 1px solid var(--anka-border);
@@ -1825,20 +2315,80 @@ function ankaUpdateHistoryTitle(st, url, title) {
 }
 
 async function clearBrowsingData() {
-    if (!await window.ankaConfirm('Geçmiş, kayıtlı notlar ve kapatılan sekmeler temizlensin mi?')) return;
-    ankaHistoryCache = [];
-    ankaWrite('anka_history', []);
-    closedTabsStack.length = 0;
-    try {
-        localStorage.removeItem('anka_saved_snippets');
-        localStorage.removeItem('anka_zoom');
-        localStorage.removeItem('anka_last_session');
-    } catch (err) {}
-    try {
-        if (window.electronAPI && typeof window.electronAPI.clearBrowsingData === 'function') window.electronAPI.clearBrowsingData();
-    } catch (err) {}
-    showNotification('Gezinti verileri temizlendi.');
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', 'anka-clear-data-title');
+    dialog.style.cssText = 'position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;padding:18px;background:rgba(0,0,0,.62);backdrop-filter:blur(5px)';
+    dialog.innerHTML = `<section style="width:min(480px,100%);max-height:90vh;overflow:auto;padding:22px;border:1px solid var(--border-color,#30323a);border-radius:18px;background:var(--bg-secondary,#18181b);color:var(--text-color,#f4f4f5);box-shadow:0 24px 70px #0008;font:inherit">
+        <h2 id="anka-clear-data-title" style="margin:0 0 7px;font-size:20px">Gezinti verilerini temizle</h2>
+        <p style="margin:0 0 16px;opacity:.76;line-height:1.5">Silinecek verileri ve zaman aralığını seçin. Yer imleriniz ve kayıtlı parolalarınız korunur.</p>
+        <label style="display:grid;gap:6px;margin-bottom:14px">Zaman aralığı
+            <select data-clear-period style="min-height:42px;padding:8px 10px;border-radius:9px">
+                <option value="900000">Son 15 dakika</option><option value="3600000">Son 1 saat</option>
+                <option value="86400000">Son 24 saat</option><option value="604800000">Son 7 gün</option>
+                <option value="0" selected>Tüm zamanlar</option>
+            </select>
+        </label>
+        <div style="display:grid;gap:10px;margin:12px 0 14px">
+            <label><input type="checkbox" data-clear-category="history" checked> Gezinti geçmişi</label>
+            <label><input type="checkbox" data-clear-category="downloads" checked> İndirme listesi</label>
+            <label><input type="checkbox" data-clear-category="cookies" checked> Çerezler</label>
+            <label><input type="checkbox" data-clear-category="siteData" checked> Site verileri ve izinleri</label>
+            <label><input type="checkbox" data-clear-category="cache" checked> Önbelleğe alınmış dosyalar</label>
+        </div>
+        <p style="margin:0 0 18px;font-size:12px;line-height:1.45;opacity:.68">Zaman aralığı geçmiş ve indirme listesine uygulanır. Electron güvenli biçimde kısmi süre temizliğini desteklemediğinden çerez, site verisi ve önbellek seçilirse tümü temizlenir.</p>
+        <div style="display:flex;justify-content:flex-end;gap:9px">
+            <button type="button" data-clear-cancel style="min-height:40px;padding:0 14px;border:1px solid var(--border-color,#30323a);border-radius:9px;background:transparent;color:inherit">İptal</button>
+            <button type="button" data-clear-confirm style="min-height:40px;padding:0 14px;border:0;border-radius:9px;background:#d64545;color:white;font-weight:650">Verileri temizle</button>
+        </div>
+    </section>`;
+    document.body.append(dialog);
+    const closeDialog = () => {
+        document.removeEventListener('keydown', onKey);
+        dialog.remove();
+    };
+    const onKey = (event) => { if (event.key === 'Escape') closeDialog(); };
+    document.addEventListener('keydown', onKey);
+    dialog.addEventListener('click', (event) => {
+        if (event.target === dialog || event.target.closest('[data-clear-cancel]')) closeDialog();
+    });
+    const confirmButton = dialog.querySelector('[data-clear-confirm]');
+    confirmButton.focus();
+    confirmButton.addEventListener('click', async () => {
+        const selected = Array.from(dialog.querySelectorAll('[data-clear-category]:checked')).map((input) => input.dataset.clearCategory);
+        if (!selected.length) {
+            showNotification('Temizlenecek en az bir veri türü seçin.');
+            return;
+        }
+        confirmButton.disabled = true;
+        confirmButton.textContent = 'Temizleniyor…';
+        const duration = Number(dialog.querySelector('[data-clear-period]').value);
+        const cutoff = duration ? Date.now() - duration : 0;
+        try {
+            let ipc = null;
+            try { ipc = require('electron').ipcRenderer; } catch (err) {}
+            if (!ipc || typeof ipc.invoke !== 'function') throw new Error('Tarayıcı veri temizleme hizmetine ulaşılamadı.');
+            const result = await ipc.invoke('clear-browsing-data', { categories: selected.filter((item) => item !== 'history'), cutoff });
+            if (!result || !result.ok) throw new Error('Gezinti verileri temizlenemedi.');
+            if (selected.includes('history')) {
+                ankaHistoryCache = ankaHistory().filter((entry) => cutoff && Number(entry.time) < cutoff);
+                ankaWrite('anka_history', ankaHistoryCache);
+                closedTabsStack.length = 0;
+            }
+            closeDialog();
+            const allTimeLabels = { cookies: 'çerezler', siteData: 'site verileri', cache: 'önbellek' };
+            const clearedAllTime = (result.allTimeOnly || []).map((item) => allTimeLabels[item]).filter(Boolean);
+            const note = clearedAllTime.length ? ' Tüm zamanlar için temizlenenler: ' + clearedAllTime.join(', ') + '.' : '';
+            showNotification('Seçilen gezinti verileri temizlendi.' + note);
+        } catch (err) {
+            confirmButton.disabled = false;
+            confirmButton.textContent = 'Yeniden dene';
+            showNotification('Veriler temizlenemedi: ' + (err.message || 'Bilinmeyen hata'));
+        }
+    });
 }
+window.clearBrowsingData = clearBrowsingData;
 
 function openHistoryPanel() {
     ankaOpenListPanel({
@@ -1878,7 +2428,14 @@ function openTabSearch() {
 
 function ankaSuggestions(query) {
     const q = query.trim().toLowerCase();
-    if (q.length < 2) return [];
+    if (q.startsWith('@')) {
+        const needle = q.slice(1).trim();
+        return Array.from(ankaTabs.values())
+            .filter((st) => !needle || (st.title + ' ' + st.url).toLowerCase().includes(needle))
+            .slice(0, 8)
+            .map((st) => ({ url: st.url, title: st.title || ankaHostLabel(st.url) || 'Yeni Sekme', kind: 'Sekme', tabId: st.id }));
+    }
+    if (q.length < 1) return [];
     const out = [];
     const seen = new Set();
     const push = (entry, kind) => {
@@ -1887,9 +2444,85 @@ function ankaSuggestions(query) {
         seen.add(entry.url);
         out.push({ url: entry.url, title: entry.title || entry.url, kind });
     };
+    const utility = ankaOmniboxUtility(query);
+    if (utility) out.push({ url: query, title: utility.label, kind: 'Hesap' });
     ankaBookmarks().forEach((b) => push(b, '★'));
     ankaHistory().forEach((h) => push(h, '◷'));
     return out;
+}
+
+function ankaOmniboxUtility(query) {
+    const value = String(query || '').trim();
+    const numberFormat = new Intl.NumberFormat('tr-TR', { maximumSignificantDigits: 9 });
+    const conversion = /^(-?\d+(?:[.,]\d+)?)\s*(mm|cm|km|m|kg|g|ml|l|°?c|°?f)\s+(?:in|to|→)\s*(mm|cm|km|m|kg|g|ml|l|°?c|°?f)$/i.exec(value);
+    if (conversion) {
+        const amount = Number(conversion[1].replace(',', '.'));
+        const from = conversion[2].toLowerCase().replace('°', '');
+        const to = conversion[3].toLowerCase().replace('°', '');
+        const dimensions = {
+            distance: { mm: 0.001, cm: 0.01, m: 1, km: 1000 },
+            mass: { g: 0.001, kg: 1 },
+            volume: { ml: 0.001, l: 1 }
+        };
+        for (const units of Object.values(dimensions)) {
+            if (units[from] && units[to]) {
+                const result = amount * units[from] / units[to];
+                return Number.isFinite(result) ? { label: numberFormat.format(result) + ' ' + to, value: result } : null;
+            }
+        }
+        if (from === 'c' && to === 'f') return { label: numberFormat.format(amount * 9 / 5 + 32) + ' °F', value: amount * 9 / 5 + 32 };
+        if (from === 'f' && to === 'c') return { label: numberFormat.format((amount - 32) * 5 / 9) + ' °C', value: (amount - 32) * 5 / 9 };
+        return null;
+    }
+    if (!value.startsWith('=')) return null;
+    const expression = value.slice(1).replace(/(\d),(\d)/g, '$1.$2').trim();
+    if (!expression || expression.length > 80) return null;
+    const tokens = expression.match(/\s*(?:\d+(?:\.\d*)?|\.\d+|[()+\-*/%])/g);
+    if (!tokens) return null;
+    const parts = tokens.map((token) => token.trim()).filter(Boolean);
+    if (parts.join('') !== expression.replace(/\s+/g, '')) return null;
+    let index = 0;
+    const factor = () => {
+        const token = parts[index++];
+        if (token === '+' || token === '-') {
+            const value = factor();
+            return token === '-' ? -value : value;
+        }
+        if (token === '(') {
+            const value = expressionValue();
+            if (parts[index++] !== ')') throw new Error('Invalid expression');
+            return value;
+        }
+        const number = Number(token);
+        if (!Number.isFinite(number)) throw new Error('Invalid number');
+        return number;
+    };
+    const term = () => {
+        let result = factor();
+        while (['*', '/', '%'].includes(parts[index])) {
+            const operator = parts[index++];
+            const right = factor();
+            if ((operator === '/' || operator === '%') && right === 0) throw new Error('Division by zero');
+            result = operator === '*' ? result * right : operator === '/' ? result / right : result % right;
+        }
+        return result;
+    };
+    const expressionValue = () => {
+        let result = term();
+        while (parts[index] === '+' || parts[index] === '-') {
+            const operator = parts[index++];
+            const right = term();
+            result = operator === '+' ? result + right : result - right;
+        }
+        return result;
+    };
+    try {
+        const result = expressionValue();
+        if (index !== parts.length || !Number.isFinite(result)) return null;
+        return { label: '= ' + numberFormat.format(result), value: result };
+    } catch (err) {
+        return null;
+    }
 }
 
 function ankaSetupUrlBar(input) {
@@ -1907,8 +2540,19 @@ function ankaSetupUrlBar(input) {
         idx = -1;
     };
     const mark = () => Array.from(box.children).forEach((r, i) => r.classList.toggle('active', i === idx));
-    const go = (value) => {
+    const go = (value, suggestion) => {
         hide();
+        if (suggestion && suggestion.tabId) {
+            switchTab(suggestion.tabId);
+            input.blur();
+            return;
+        }
+        const utility = ankaOmniboxUtility(value);
+        if (utility) {
+            showNotification('Sonuç: ' + utility.label);
+            input.blur();
+            return;
+        }
         ankaNavigateActive(value);
         input.blur();
     };
@@ -1919,7 +2563,7 @@ function ankaSetupUrlBar(input) {
             row.addEventListener('pointerdown', (e) => {
                 e.preventDefault();
                 input.value = it.url;
-                go(it.url);
+                go(it.url, it);
             });
             box.append(row);
         });
@@ -1954,7 +2598,7 @@ function ankaSetupUrlBar(input) {
             mark();
         } else if (e.key === 'Enter') {
             e.preventDefault();
-            go(input.value);
+            go(input.value, idx >= 0 ? items[idx] : null);
         } else if (e.key === 'Escape') {
             hide();
             const st = ankaTabs.get(activeTabId);
@@ -1984,9 +2628,27 @@ function ankaNavigateActive(value) {
 }
 
 function ankaSyncUrlBar(st) {
+    if (!st) return;
     const input = ankaById('url-input');
-    if (!input || document.activeElement === input) return;
-    input.value = ankaIsNewTabUrl(st.url) || st.url === 'about:blank' || /^file:/i.test(st.url) ? '' : st.url;
+    const localDocument = /^file:/i.test(st.url) && /\.(pdf|html?|txt|md|json|png|jpe?g|gif|webp|svg|mp4|webm|mp3|ogg|wav)(?:[?#]|$)/i.test(st.url);
+    if (input && document.activeElement !== input) {
+        input.value = ankaIsWelcomeUrl(st.url) ? 'Anka Web' : ankaIsNewTabUrl(st.url) || st.url === 'about:blank' ? '' : (localDocument ? st.url : /^file:/i.test(st.url) ? '' : st.url);
+    }
+    const info = ankaById('site-info-btn');
+    if (info) {
+        let protocol = '';
+        try { protocol = new URL(st.url).protocol; } catch (err) {}
+        const secure = protocol === 'https:';
+        info.innerHTML = secure
+            ? '<svg class="xi site-indicator" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>'
+            : protocol === 'http:'
+                ? '<svg class="xi site-indicator" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5m0 3h.01"/></svg>'
+                : '<svg class="xi site-indicator" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-9h.01"/></svg>';
+        info.classList.toggle('site-insecure', protocol === 'http:');
+        info.title = secure ? 'HTTPS ile şifrelenmiş bağlantı; site içeriğinin güvenilirliğini garanti etmez' :
+            protocol === 'http:' ? 'Güvenli değil: HTTP bağlantısı şifrelenmiyor' : 'Bağlantı bilgisi';
+        info.setAttribute('aria-label', info.title);
+    }
 }
 
 function ankaActiveView() {
@@ -2089,6 +2751,8 @@ function ankaZoom(delta) {
     const defaultZoom = Math.max(0.75, Math.min(1.5, Number(getSetting('page-zoom', '100')) / 100 || 1));
     const factor = (level === 0 ? defaultZoom : Math.pow(1.2, level)) * fontScale;
     try { vw.setZoomFactor(factor); st.appliedZoomFactor = factor; } catch (err) {}
+    const zoomLabel = ankaById('page-zoom-value');
+    if (zoomLabel) zoomLabel.textContent = '%' + Math.round(factor * 100);
     const host = ankaHostLabel(st.url);
     if (host && !st.incognito && /^https?:/i.test(st.url)) {
         const map = ankaRead('anka_zoom', {});
@@ -2125,10 +2789,23 @@ window.__ankaApplyZoomSettings = function () {
 
 function ankaApplyDark(st, vw) {
     if (!vw || !vw.__ankaReady || typeof vw.insertCSS !== 'function') return;
+    const url = st.url || '';
+    const css = ankaIsGoogleHost(ankaTryUrl(url) && ankaTryUrl(url).hostname)
+        ? ANKA_GOOGLE_DARK_CSS
+        : ANKA_DARK_CSS;
+    if (st.darkKey) {
+        try { vw.removeInsertedCSS(st.darkKey).catch(() => {}); } catch (err) {}
+    }
     st.darkKey = null;
     try {
-        vw.insertCSS(ANKA_DARK_CSS).then((key) => { st.darkKey = key; }).catch(() => {});
-    } catch (err) {}
+        vw.insertCSS(css).then((key) => { st.darkKey = key; }).catch((err) => {
+            console.error('Site koyu görünümü uygulanamadı:', err);
+            showNotification('Site koyu görünümü uygulanamadı. Bu sayfada desteklenmiyor olabilir.');
+        });
+    } catch (err) {
+        console.error('Site koyu görünümü uygulanamadı:', err);
+        showNotification('Site koyu görünümü uygulanamadı. Bu sayfada desteklenmiyor olabilir.');
+    }
 }
 
 function toggleDarkMode(vw) {
@@ -2360,11 +3037,44 @@ function ankaBuildWebview(id, opts) {
     const vw = document.createElement('webview');
     if (id) vw.id = id;
     vw.className = o.className || 'browser-view';
-    vw.setAttribute('webpreferences', ANKA_GUEST_PREFS);
+    let webPreferences = ANKA_GUEST_PREFS;
+    if (!o.incognito && o.url && ankaReadSiteSettingsForUrl(o.url).javascript === false) {
+        webPreferences = webPreferences.replace('javascript=yes', 'javascript=no');
+    }
+    vw.setAttribute('webpreferences', webPreferences);
     if (o.partition) vw.setAttribute('partition', o.partition);
     if (o.preload) vw.setAttribute('preload', o.preload);
     vw.style.cssText = o.style || 'display:none; width:100%; height:100%; flex:1;';
     return vw;
+}
+
+function ankaReadSiteSettings(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    const all = ankaRead('anka_site_settings', {});
+    return all && typeof all === 'object' && all[host] && typeof all[host] === 'object' ? all[host] : {};
+}
+
+function ankaReadSiteSettingsForUrl(url) {
+    const parsed = ankaTryUrl(url);
+    return parsed && /^https?:$/.test(parsed.protocol) ? ankaReadSiteSettings(parsed.hostname) : {};
+}
+
+function ankaWriteSiteSettings(hostname, preferences) {
+    const host = String(hostname || '').toLowerCase();
+    if (!host || host.length > 253 || (!/^[a-z0-9.:-]+$/i.test(host) && !/^\[[0-9a-f:]+\]$/i.test(host))) return false;
+    const all = ankaRead('anka_site_settings', {});
+    all[host] = {
+        javascript: preferences.javascript !== false,
+        dark: preferences.dark === true,
+        openPopups: preferences.openPopups !== false
+    };
+    return ankaWrite('anka_site_settings', all);
+}
+
+function ankaIsGoogleHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    return host === 'google.com' || host.endsWith('.google.com') ||
+        /^google\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host);
 }
 
 function ankaEnsurePinnedPanel() {
@@ -2397,7 +3107,7 @@ function pinToSidePanel(vw) {
     const titleEl = ankaById('pinned-side-title');
     if (titleEl) titleEl.textContent = 'Yan Panel · ' + ankaTruncate(typeof vw.getTitle === 'function' ? vw.getTitle() : 'Sekme', 40);
 
-    const pinnedView = ankaBuildWebview('', { className: 'pinned-side-webview', partition: vw.getAttribute('partition') || '', style: 'width:100%;height:100%;border:none;' });
+    const pinnedView = ankaBuildWebview('', { className: 'pinned-side-webview', partition: vw.getAttribute('partition') || '', url: parsed.href, incognito: !!(ankaTabs.get(vw.id) && ankaTabs.get(vw.id).incognito), style: 'width:100%;height:100%;border:none;' });
     applyMandatorySecurity(pinnedView);
     attachWebviewContextMenu(pinnedView);
     pinnedView.addEventListener('page-title-updated', (event) => {
@@ -2616,7 +3326,8 @@ function ankaCreateTabEntry(id, o) {
 
     const memEl = ankaMk('span', { className: 'tab-memory' });
     tab.append(icon, titleEl, memEl, controls);
-    const st = { id, tab, icon, titleEl, muteEl, memEl, vw: null, url: o.url, title: o.title || '', internal: o.internal || '', pinned: false, incognito: !!o.incognito, sleeping: false, lastActive: Date.now(), zoom: 0, dark: false, darkKey: null, reader: false, audible: false, muted: false, loading: false, ai: !!o.ai, lastCrash: 0, group: '' };
+    const st = { id, tab, icon, titleEl, muteEl, memEl, vw: null, url: o.url, title: o.title || '', internal: o.internal || '', pinned: false, incognito: !!o.incognito, sleeping: false, lastActive: Date.now(), zoom: 0, dark: false, darkKey: null, reader: false, audible: false, muted: false, loading: false, ai: !!o.ai, lastCrash: 0, group: String(o.group || '').slice(0, 32) };
+    if (st.group) ankaSetTabGroup(st, st.group);
     ankaTabs.set(id, st);
     if (tabBar) tabBar.append(tab);
     return st;
@@ -2627,12 +3338,156 @@ function ankaUpdateMuteButton(st) {
     st.muteEl.style.display = show ? 'block' : 'none';
     st.muteEl.textContent = st.muted ? '🔇' : '🔊';
     st.muteEl.title = st.muted ? 'Sesi Aç' : 'Sesi Kapat';
+    if (typeof ankaRefreshMediaPanel === 'function') ankaRefreshMediaPanel();
 }
+
+function ankaMediaTime(value) {
+    if (!Number.isFinite(value) || value < 0) return '0:00';
+    const seconds = Math.floor(value);
+    return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+}
+
+function ankaRunMediaScript(st, script) {
+    if (!st || !st.vw || typeof st.vw.executeJavaScript !== 'function') return Promise.resolve(null);
+    try { return st.vw.executeJavaScript(script).catch(() => null); }
+    catch (err) { return Promise.resolve(null); }
+}
+
+function ankaUpdateMediaProgress() {
+    const panel = document.getElementById('anka-media-panel');
+    if (!panel || panel.hidden) return;
+    for (const st of ankaTabs.values()) {
+        if (!st.vw || (!st.audible && !st.muted)) continue;
+        const row = Array.from(panel.querySelectorAll('[data-media-tab]')).find((item) => item.dataset.mediaTab === st.id);
+        if (!row) continue;
+        ankaRunMediaScript(st, `(()=>{const media=[...document.querySelectorAll('audio,video')].find(item=>!item.paused)||document.querySelector('audio,video');return media?{time:media.currentTime,duration:media.duration}:null})()`).then((state) => {
+            if (!state || !row.isConnected) return;
+            const time = row.querySelector('[data-media-time]');
+            const seek = row.querySelector('[data-media-seek]');
+            if (time) time.textContent = ankaMediaTime(state.time) + ' / ' + ankaMediaTime(state.duration);
+            if (seek && Number.isFinite(state.duration) && state.duration > 0 && document.activeElement !== seek) {
+                seek.value = String(Math.round(state.time / state.duration * 1000));
+            }
+        }).catch(() => {});
+    }
+}
+
+function ankaRefreshMediaPanel() {
+    const panel = document.getElementById('anka-media-panel');
+    if (!panel || panel.hidden) return;
+    const list = panel.querySelector('[data-media-list]');
+    if (!list) return;
+    list.replaceChildren();
+    const entries = Array.from(ankaTabs.values()).filter((st) => st.vw && (st.audible || st.muted));
+    if (!entries.length) {
+        const empty = document.createElement('p');
+        empty.textContent = 'Şu anda ses çalan sekme yok.';
+        empty.style.cssText = 'margin:8px 0;padding:16px;text-align:center;opacity:.7';
+        list.append(empty);
+        return;
+    }
+    for (const st of entries) {
+        const row = document.createElement('article');
+        row.dataset.mediaTab = st.id;
+        row.style.cssText = 'padding:12px;border:1px solid var(--border-color,#30323a);border-radius:11px;margin:8px 0';
+        const title = document.createElement('div');
+        title.textContent = st.title || ankaHostLabel(st.url) || 'Sekme';
+        title.title = st.url;
+        title.style.cssText = 'font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:8px';
+        const tools = document.createElement('div');
+        tools.style.cssText = 'display:flex;align-items:center;gap:8px';
+        const time = document.createElement('span');
+        time.dataset.mediaTime = 'true';
+        time.textContent = '—:—';
+        time.style.cssText = 'font-size:12px;min-width:76px;opacity:.75';
+        const seek = document.createElement('input');
+        seek.dataset.mediaSeek = 'true';
+        seek.type = 'range';
+        seek.min = '0';
+        seek.max = '1000';
+        seek.value = '0';
+        seek.setAttribute('aria-label', 'Medya zamanı');
+        seek.style.cssText = 'min-width:60px;flex:1';
+        const mute = document.createElement('button');
+        mute.type = 'button';
+        mute.textContent = st.muted ? 'Sesi Aç' : 'Sessize Al';
+        mute.setAttribute('aria-label', st.muted ? 'Sekmenin sesini aç' : 'Sekmeyi sessize al');
+        mute.style.cssText = 'min-height:34px;padding:0 9px;border:1px solid var(--border-color,#30323a);border-radius:8px;background:transparent;color:inherit';
+        mute.addEventListener('click', () => toggleMute(st.id));
+        const volume = document.createElement('input');
+        volume.type = 'range';
+        volume.min = '0';
+        volume.max = '1';
+        volume.step = '0.05';
+        volume.value = '1';
+        volume.setAttribute('aria-label', 'Sekme ses düzeyi');
+        volume.style.cssText = 'width:76px';
+        volume.addEventListener('input', () => {
+            ankaRunMediaScript(st, `(()=>{for(const media of document.querySelectorAll('audio,video'))media.volume=${Number(volume.value)}})()`);
+        });
+        seek.addEventListener('change', () => {
+            ankaRunMediaScript(st, `(()=>{const media=[...document.querySelectorAll('audio,video')].find(item=>!item.paused)||document.querySelector('audio,video');if(media&&Number.isFinite(media.duration))media.currentTime=${Number(seek.value)}/1000*media.duration})()`);
+        });
+        tools.append(time, seek, volume, mute);
+        row.append(title, tools);
+        list.append(row);
+        ankaRunMediaScript(st, `(()=>{const media=[...document.querySelectorAll('audio,video')].find(item=>!item.paused)||document.querySelector('audio,video');return media?{time:media.currentTime,duration:media.duration,volume:media.volume}:null})()`).then((state) => {
+            if (!state || !row.isConnected) return;
+            time.textContent = ankaMediaTime(state.time) + ' / ' + ankaMediaTime(state.duration);
+            if (Number.isFinite(state.duration) && state.duration > 0) seek.value = String(Math.round(state.time / state.duration * 1000));
+            if (Number.isFinite(state.volume)) volume.value = String(state.volume);
+        }).catch(() => {});
+    }
+}
+
+function openMediaCenter() {
+    let panel = document.getElementById('anka-media-panel');
+    if (panel) {
+        panel.hidden = !panel.hidden;
+        if (!panel.hidden) {
+            ankaPlaceToolbarPopover(panel, 'media-center-btn');
+            ankaRefreshMediaPanel();
+        }
+        return;
+    }
+    panel = document.createElement('section');
+    panel.id = 'anka-media-panel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'Medya denetimleri');
+    panel.style.cssText = 'position:fixed;z-index:2147482000;width:min(470px,calc(100vw - 24px));max-height:75vh;overflow:auto;padding:14px;border:1px solid var(--border-color,#30323a);border-radius:14px;background:var(--bg-secondary,#18181b);color:var(--text-color,#f4f4f5);box-shadow:0 18px 50px #0008;font:inherit';
+    const heading = document.createElement('div');
+    heading.dataset.movableHandle = 'true';
+    heading.textContent = 'Medya denetimleri';
+    heading.style.cssText = 'font-weight:700;font-size:16px;padding:2px 3px 8px';
+    const list = document.createElement('div');
+    list.dataset.mediaList = 'true';
+    panel.append(heading, list);
+    document.body.append(panel);
+    ankaPlaceToolbarPopover(panel, 'media-center-btn');
+    window.setInterval(ankaUpdateMediaProgress, 1000);
+    ankaRefreshMediaPanel();
+}
+
+function ankaPlaceToolbarPopover(panel, buttonId) {
+    const button = document.getElementById(buttonId);
+    if (!button || !panel) return;
+    const anchor = button.getBoundingClientRect();
+    const width = Math.min(470, window.innerWidth - 24);
+    panel.style.left = Math.max(12, Math.min(anchor.right - width, window.innerWidth - width - 12)) + 'px';
+    panel.style.top = Math.min(anchor.bottom + 8, Math.max(12, window.innerHeight - Math.min(panel.offsetHeight || 300, window.innerHeight - 24) - 12)) + 'px';
+}
+
+window.__ankaCloseTransientMenus = function (target) {
+    const media = document.getElementById('anka-media-panel');
+    if (media && !media.hidden && !media.contains(target) && (!target || target.id !== 'media-center-btn')) media.hidden = true;
+    const site = document.getElementById('anka-site-info-panel');
+    if (site && !site.contains(target) && (!target || target.id !== 'site-info-btn')) site.remove();
+};
 
 function ankaSetTitle(st, title) {
     st.title = ankaIsNewTabUrl(st.url) ? 'Yeni Sekme' : (title || st.title || '');
     st.titleEl.textContent = ankaTruncate(st.title, 22);
-    st.tab.title = st.title;
+    st.tab.title = (st.group ? '[' + st.group + '] ' : '') + st.title;
 }
 
 function ankaSyncTab(st, vw) {
@@ -2649,6 +3504,12 @@ function ankaOnNavigated(st, vw, url) {
     if (!url) return;
     st.url = url;
     st.reader = false;
+    const sitePrefs = st.incognito ? {} : ankaReadSiteSettingsForUrl(url);
+    if (st.dark && !sitePrefs.dark && st.darkKey) {
+        try { vw.removeInsertedCSS(st.darkKey).catch(() => {}); } catch (err) {}
+        st.darkKey = null;
+    }
+    st.dark = sitePrefs.dark === true;
     ankaApplyStoredZoom(st, vw);
     if (st.dark) ankaApplyDark(st, vw);
     ankaRecordHistory(st, url, '');
@@ -2660,6 +3521,8 @@ function ankaOnNavigated(st, vw, url) {
 }
 
 function ankaWireTabEvents(st, vw) {
+    if (vw.__ankaTabEventsWired) return;
+    vw.__ankaTabEventsWired = true;
     vw.addEventListener('dom-ready', () => {
         ankaApplyStoredZoom(st, vw);
         if (st.muted) {
@@ -2676,17 +3539,28 @@ function ankaWireTabEvents(st, vw) {
         const fav = e.favicons && e.favicons.find((f) => /^(https?|data):/i.test(f));
         if (fav) st.icon.src = fav;
     });
+    vw.addEventListener('console-message', (event) => {
+        if (!event || event.message !== 'anka-welcome-complete') return;
+        let currentUrl = '';
+        try { currentUrl = vw.getURL(); } catch (err) {}
+        if (!ankaIsWelcomeUrl(currentUrl)) return;
+        ankaWrite('anka_welcome_completed', true);
+        st.url = ankaHomeUrl();
+        ankaLoad(vw, st.url);
+        if (st.id === activeTabId) ankaSyncUrlBar(st);
+    });
     vw.addEventListener('did-start-loading', () => {
         st.loading = true;
         st.tab.classList.add('loading');
         st.tab.classList.remove('crashed');
     });
-    vw.addEventListener('did-stop-loading', () => {
+    st.didStopLoadingHandler = () => {
         st.loading = false;
         st.tab.classList.remove('loading');
         ankaSyncTab(st, vw);
         if (typeof window.__ankaScheduleStar === 'function') window.__ankaScheduleStar();
-    });
+    };
+    st.didStopLoadingAttached = false;
     const onNav = (e) => {
         if (e.isMainFrame === false) return;
         ankaOnNavigated(st, vw, e.url);
@@ -2724,12 +3598,43 @@ function ankaWireTabEvents(st, vw) {
     if (st.muted && typeof vw.setAudioMuted === 'function') vw.setAudioMuted(true);
 }
 
+function ankaUnwireTabLoading(st, vw) {
+    if (!st || !vw || !st.didStopLoadingHandler) return;
+    if (st.didStopLoadingAttached) vw.removeEventListener('did-stop-loading', st.didStopLoadingHandler);
+    st.didStopLoadingAttached = false;
+    st.didStopLoadingHandler = null;
+}
+
+function ankaSetTabLoadTracking(st, enabled) {
+    const vw = st && st.vw;
+    if (!vw || !st.didStopLoadingHandler) return;
+    if (!enabled) {
+        if (st.didStopLoadingAttached) vw.removeEventListener('did-stop-loading', st.didStopLoadingHandler);
+        st.didStopLoadingAttached = false;
+        return;
+    }
+    if (!st.didStopLoadingAttached) {
+        vw.addEventListener('did-stop-loading', st.didStopLoadingHandler);
+        st.didStopLoadingAttached = true;
+    }
+    let loading = st.loading;
+    try { loading = vw.isLoading(); } catch (err) {}
+    st.loading = !!loading;
+    st.tab.classList.toggle('loading', st.loading);
+    if (!st.loading) {
+        ankaSyncTab(st, vw);
+        if (typeof window.__ankaScheduleStar === 'function') window.__ankaScheduleStar();
+    }
+}
+
 function ankaWake(st) {
     if (st.vw) return st.vw;
     const container = ankaById('wv-container');
     if (!container) return null;
     const vw = ankaBuildWebview(st.id, {
         partition: st.incognito ? 'ankaprivate-' + st.id : '',
+        url: st.url,
+        incognito: st.incognito,
         preload: ankaIsNewTabUrl(st.url) && window.__ankaGuestPreload ? window.__ankaGuestPreload : ''
     });
     st.vw = vw;
@@ -2740,12 +3645,14 @@ function ankaWake(st) {
     ankaWireTabEvents(st, vw);
     container.append(vw);
     vw.setAttribute('src', st.url);
+    if (st.id === activeTabId) ankaSetTabLoadTracking(st, true);
     return vw;
 }
 
 function ankaSleepTab(st) {
-    if (!st || !st.vw || st.id === activeTabId || st.ai) return false;
+    if (!st || !st.vw || st.id === activeTabId || st.ai || st.vw.classList.contains('split-visible')) return false;
     try { st.url = st.vw.getURL() || st.url; } catch (err) {}
+    ankaUnwireTabLoading(st, st.vw);
     st.vw.remove();
     st.vw = null;
     st.sleeping = true;
@@ -2755,17 +3662,41 @@ function ankaSleepTab(st) {
     st.tab.classList.remove('loading');
     st.tab.classList.add('sleeping');
     ankaUpdateMuteButton(st);
+    if (getSetting('restore-session', 'false') === 'true' || getSetting('disk-backed-tab-saver', 'false') === 'true') {
+        ankaPersistSession();
+    }
     return true;
 }
 
 function ankaStartSleepTimer() {
     setInterval(() => {
-        const minutes = parseInt(getSetting('tab-sleep-minutes', '20'), 10);
-        if (!(minutes > 0) || ankaTabs.size < 2) return;
-        const limit = Date.now() - minutes * 60000;
-        ankaTabs.forEach((st) => {
-            if (st.vw && !st.audible && !st.loading && st.lastActive < limit) ankaSleepTab(st);
-        });
+        ankaEnforceLiveLimit();
+        const memorySaver = getSetting('memory-saver', 'false') === 'true';
+        const smartManager = getSetting('smart-tab-manager', 'false') === 'true';
+        const diskSaver = getSetting('disk-backed-tab-saver', 'false') === 'true';
+        if (!memorySaver && !smartManager && !diskSaver) return;
+        const configuredMinutes = parseInt(getSetting('tab-sleep-minutes', '20'), 10);
+        const minutes = memorySaver ? configuredMinutes : Math.min(configuredMinutes || 10, 10);
+        if (minutes > 0 && ankaTabs.size > 1) {
+            const cutoff = Date.now() - minutes * 60000;
+            ankaTabs.forEach((st) => {
+                if (st.vw && !st.audible && !st.loading && st.lastActive < cutoff) ankaSleepTab(st);
+            });
+        }
+        if ((!smartManager && !diskSaver) || Date.now() - lastMemoryPressureCheck < 30000) return;
+        lastMemoryPressureCheck = Date.now();
+        let ipc = null;
+        try { ipc = require('electron').ipcRenderer; } catch (err) {}
+        if (!ipc || typeof ipc.invoke !== 'function') return;
+        ipc.invoke('get-memory-pressure').then((memory) => {
+            if (!memory || !(memory.totalBytes > 0) || memory.freeBytes / memory.totalBytes >= 0.12) return;
+            const candidates = Array.from(ankaTabs.values())
+                .filter((st) => st.vw && st.id !== activeTabId && !st.ai && !st.audible && !st.loading &&
+                    !st.vw.classList.contains('split-visible'))
+                .sort((a, b) => a.lastActive - b.lastActive);
+            for (const st of candidates.slice(0, 3)) ankaSleepTab(st);
+            if (candidates.length) ankaPersistSession();
+        }).catch((err) => console.error('Bellek durumu denetlenemedi:', err));
     }, 15000);
 }
 
@@ -2777,7 +3708,8 @@ function ankaEnforceLiveLimit() {
     ankaTabs.forEach((st) => {
         if (!st.vw) return;
         total += 1;
-        if (st.id !== activeTabId && !st.ai && !st.audible && !st.loading) live.push(st);
+        if (st.id !== activeTabId && !st.ai && !st.audible && !st.loading &&
+            !(st.vw.classList && st.vw.classList.contains('split-visible'))) live.push(st);
     });
     let excess = total - limit;
     if (excess <= 0) return;
@@ -2798,6 +3730,7 @@ function ankaReleaseMemory() {
 
 window.__ankaApplyLimits = function () {
     ankaEnforceLiveLimit();
+    if (getSetting('disk-backed-tab-saver', 'false') === 'true') ankaPersistSession();
 };
 
 let ankaPreviewEl = null;
@@ -3150,6 +4083,8 @@ function ankaShowTabMenu(id, x, y) {
         { label: 'Sekmeyi Çoğalt', action: () => duplicateTab(id), disabled: st.ai },
         { label: st.pinned ? 'Sabitlemeyi Kaldır' : 'Sekmeyi Sabitle', shortcut: 'Ctrl+Shift+K', action: () => togglePinTab(id) },
         { label: st.muted ? 'Sesi Aç' : 'Sekmeyi Sessize Al', shortcut: 'Ctrl+Shift+M', action: () => toggleMute(id) },
+        { label: 'Sekme Grubu Oluştur / Değiştir', action: () => ankaSetTabGroup(st) },
+        { label: 'Sekme Grubunu Kaldır', action: () => ankaSetTabGroup(st, ''), disabled: !st.group },
         '---',
         {
             label: 'Geliştirici Araçları',
@@ -3174,6 +4109,25 @@ function ankaShowTabMenu(id, x, y) {
         { label: 'Diğer Sekmeleri Kapat', action: () => closeOtherTabs(id) },
         { label: 'Sekmeyi Kapat', shortcut: 'Ctrl+W', danger: true, action: () => closeTab(id) }
     ]);
+}
+
+function ankaSetTabGroup(st, value) {
+    if (!st) return;
+    let name = value;
+    if (name === undefined) name = window.prompt('Sekme grubu adı (boş bırakarak grubu kaldırın):', st.group || '');
+    if (name === null) return;
+    name = String(name).trim().slice(0, 32);
+    st.group = name;
+    st.tab.dataset.group = name;
+    st.tab.style.borderTop = '';
+    st.tab.title = (name ? '[' + name + '] ' : '') + (st.title || '');
+    if (name) {
+        let hash = 0;
+        for (let index = 0; index < name.length; index += 1) hash = (hash * 31 + name.charCodeAt(index)) | 0;
+        const colors = ['#60a5fa', '#34d399', '#fbbf24', '#c084fc', '#fb7185', '#22d3ee'];
+        st.tab.style.borderTop = '2px solid ' + colors[Math.abs(hash) % colors.length];
+    }
+    ankaPersistSession();
 }
 
 function ankaSetupTabBar() {
@@ -3257,6 +4211,8 @@ function openAISession() {
 function switchTab(id) {
     const st = ankaTabs.get(id);
     if (st && !st.vw && !st.internal) ankaWake(st);
+    const previous = ankaTabs.get(activeTabId);
+    if (previous && previous.id !== id && previous.vw) ankaSetTabLoadTracking(previous, false);
     if (activeTabId !== id) {
         ankaCloseFindBar();
         ankaShowLinkStatus('');
@@ -3273,6 +4229,7 @@ function switchTab(id) {
             el.classList.toggle('active', on);
         }
     }
+    if (st && st.vw) ankaSetTabLoadTracking(st, true);
     if (typeof window.__ankaShowPage === 'function') window.__ankaShowPage(st && st.internal ? st : null);
     const bar = ankaById('tab-bar');
     if (bar) {
@@ -3288,7 +4245,7 @@ function switchTab(id) {
         const input = ankaById('url-input');
         if (input) {
             const internalUrls = { settings: 'ankaweb://ayarlar', help: 'ankaweb://yardım', downloads: 'ankaweb://indirilenler', history: 'ankaweb://geçmiş' };
-            input.value = internalUrls[st.internal] || (ankaIsNewTabUrl(st.url) || st.url === 'about:blank' || /^file:/i.test(st.url) ? '' : st.url);
+            input.value = internalUrls[st.internal] || (ankaIsWelcomeUrl(st.url) ? 'Anka Web' : ankaIsNewTabUrl(st.url) || st.url === 'about:blank' || /^file:/i.test(st.url) ? '' : st.url);
         }
     }
     ankaUpdateBookmarkButton();
@@ -3297,6 +4254,7 @@ function switchTab(id) {
 
     const dropdown = ankaById('tab-dropdown-menu');
     if (dropdown) dropdown.style.display = 'none';
+    if (typeof window.__ankaUpdateSplitView === 'function') window.__ankaUpdateSplitView();
 }
 
 function switchTabByIndex(index) {
@@ -3335,7 +4293,10 @@ function closeTab(id, e) {
         ankaShowLinkStatus('');
         hideTabPreview();
     }
-    if (vw) vw.remove();
+    if (vw) {
+        ankaUnwireTabLoading(st, vw);
+        vw.remove();
+    }
     if (tabBtn) tabBtn.remove();
     ankaTabs.delete(id);
 
@@ -3346,6 +4307,19 @@ function closeTab(id, e) {
     }
     ankaPersistSession();
 }
+
+window.__ankaOpenWelcomeGuide = function () {
+    const welcomeUrl = getWelcomeUrl();
+    if (!welcomeUrl) {
+        showNotification('Tanıtım sayfası açılamadı.');
+        return false;
+    }
+    const id = createNewTab(welcomeUrl + '?tour=1');
+    if (!id) return false;
+    const settingsPanel = ankaById('settings-panel');
+    if (settingsPanel && settingsPanel.style.display === 'flex' && typeof window.toggleSettings === 'function') window.toggleSettings();
+    return true;
+};
 
 function showNotification(msg) {
     if (typeof window.showToast === 'function') window.showToast(msg);
@@ -3530,16 +4504,18 @@ function openSessionManager() {
 }
 
 function ankaPersistSessionNow() {
-    if (getSetting('restore-session', 'false') !== 'true') return;
+    if (getSetting('restore-session', 'false') !== 'true' && getSetting('disk-backed-tab-saver', 'false') !== 'true') return;
     const urls = [];
+    const tabs = [];
     let active = 0;
     ankaTabIdsInOrder().forEach((id) => {
         const st = ankaTabs.get(id);
         if (!st || st.incognito || st.ai || !/^https?:/i.test(st.url)) return;
         if (id === activeTabId) active = urls.length;
         urls.push(st.url);
+        tabs.push({ url: st.url, group: st.group });
     });
-    ankaWrite('anka_last_session', { urls, active, time: Date.now() });
+    ankaWrite('anka_last_session', { urls, tabs, active, time: Date.now() });
 }
 
 const ankaPersistSession = ankaDebounce(ankaPersistSessionNow, 800);
@@ -3549,13 +4525,23 @@ function ankaOpenInitialTabs() {
         createNewTab(typeof getStartupUrl === 'function' ? getStartupUrl() : ankaHomeUrl(), { silent: true });
         return;
     }
-    if (getSetting('restore-session', 'false') === 'true') {
+    if (getSetting('show-welcome-on-start', 'true') === 'true' && ankaRead('anka_welcome_completed', false) !== true) {
+        const welcomeUrl = getWelcomeUrl();
+        if (welcomeUrl && createNewTab(welcomeUrl, { silent: true })) return;
+    }
+    if (getSetting('restore-session', 'false') === 'true' || getSetting('disk-backed-tab-saver', 'false') === 'true') {
         const saved = ankaRead('anka_last_session', null);
-        if (saved && Array.isArray(saved.urls)) {
-            const urls = saved.urls.map(normalizeSessionUrl).filter(Boolean).slice(0, getMaxTabs());
-            if (urls.length) {
-                const active = Math.min(Math.max(parseInt(saved.active, 10) || 0, 0), urls.length - 1);
-                urls.forEach((u, i) => createNewTab(u, i === active ? { silent: true } : { lazy: true, background: true }));
+        if (saved && (Array.isArray(saved.tabs) || Array.isArray(saved.urls))) {
+            const records = (Array.isArray(saved.tabs) ? saved.tabs : saved.urls.map((url) => ({ url, group: '' })))
+                .map((tab) => ({ url: normalizeSessionUrl(tab && tab.url), group: typeof (tab && tab.group) === 'string' ? tab.group.slice(0, 32) : '' }))
+                .filter((tab) => tab.url)
+                .slice(0, getMaxTabs());
+            if (records.length) {
+                const active = Math.min(Math.max(parseInt(saved.active, 10) || 0, 0), records.length - 1);
+                records.forEach((tab, i) => {
+                    const id = createNewTab(tab.url, i === active ? { silent: true } : { lazy: true, background: true });
+                    if (id && tab.group) ankaSetTabGroup(ankaTabs.get(id), tab.group);
+                });
                 return;
             }
         }

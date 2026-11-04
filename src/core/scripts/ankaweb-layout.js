@@ -49,11 +49,13 @@
     function applyChromeLayout() {
         const root = document.documentElement;
         const sidebarSide = ls('sidebar-side', 'left') === 'right' ? 'right' : 'left';
+        const sidePanelSide = ls('side-panel-side', 'right') === 'left' ? 'left' : 'right';
         const bookmarksBar = ls('bookmarks-bar', 'auto');
         const showHome = ls('show-home-btn', 'true') === 'false' ? 'off' : 'on';
         const tabMem = ls('tab-memory', 'false') === 'true' ? 'on' : 'off';
         const zoom = parseInt(ls('page-zoom', '100'), 10);
         root.dataset.sidebarSide = sidebarSide;
+        root.dataset.sidePanelSide = sidePanelSide;
         root.dataset.bookmarksBar = ['always', 'never', 'auto'].includes(bookmarksBar) ? bookmarksBar : 'auto';
         root.dataset.homeBtn = showHome;
         root.dataset.tabMem = tabMem;
@@ -100,9 +102,13 @@
             if (panel && panel.style.display === 'flex' && typeof window.__toggleSettings === 'function') window.__toggleSettings();
         } else if (oldKind === 'help') {
             const help = $('help-panel');
-            if (help) help.style.display = 'none';
+            if (help) {
+                help.style.display = 'none';
+                help.dataset.ankaOpen = 'false';
+            }
             const overlay = $('help-overlay');
             if (overlay) overlay.style.display = 'none';
+            if (window.AnkaWindowUtils) window.AnkaWindowUtils.deactivate('help');
         }
         pageKind = '';
     }
@@ -434,11 +440,13 @@
             const help = $('help-panel');
             if (help) {
                 help.style.display = 'block';
+                help.dataset.ankaOpen = 'true';
                 help.style.opacity = '1';
                 help.style.transform = 'none';
             }
             const overlay = $('help-overlay');
             if (overlay) overlay.style.display = 'none';
+            if (window.AnkaWindowUtils) window.AnkaWindowUtils.activate('help');
             ensurePage().classList.add('open');
         } else if (kind === 'history') {
             showHistory();

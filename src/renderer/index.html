@@ -104,14 +104,15 @@ window.addEventListener('message',(event)=>{const data=event.data;if(!data||data
 <div id="app-container">
 <div id="sidebar">
 <button type="button" class="logo" id="app-logo" onclick="location.reload()" title="Anka Web" aria-label="Anka Web">
-<img src="../../src/icons/dark-logo.png" alt="">
+<img src="../icons/dark-logo.png" alt="">
 </button>
 <div class="sidebar-spacer"></div>
 
 <button class="side-btn" type="button" id="btn-paint" onclick="togglePaintMenu()"><i>✎</i><span>KALEM</span></button>
 <button class="side-btn" type="button" id="btn-keyboard" onclick="toggleKeyboard()"><i>⌨</i><span>KLAVYE</span></button>
 <button class="side-btn" type="button" onclick="createNewTab(getHomeUrl())"><i>＋</i><span>SEKME</span></button>
-<button class="side-btn" type="button" id="btn-split" onclick="toggleSplitScreen()"><i>⊞</i><span>BÖL</span></button>
+<button class="side-btn" type="button" id="btn-split" onclick="toggleSplitScreen()" aria-pressed="false"><i>⊞</i><span>BÖL</span></button>
+<button class="side-btn" type="button" id="btn-grid" onclick="toggleGridView()" title="Dört Sekmeli Izgara" aria-pressed="false"><i>▦</i><span>IZGARA</span></button>
 <button class="side-btn" type="button" onclick="openAISession()"><i>✦</i><span>AI</span></button>
 <button class="side-btn" type="button" id="btn-limit" onclick="toggleLimit()"><i>🔒</i><span>LİMİT</span></button>
 <button class="side-btn" type="button" id="btn-sessions" onclick="openSessionManager()" title="Oturum Yöneticisi"><i>▤</i><span>OTURUM</span></button>
@@ -133,12 +134,14 @@ window.addEventListener('message',(event)=>{const data=event.data;if(!data||data
 <button class="nav-tool-btn" type="button" onclick="reloadTab()" title="Yenile (Ctrl+R)" aria-label="Yenile">
 <svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.2-5.5"/><path d="M20 4v6h-6"/></svg>
 </button>
+<button class="nav-tool-btn" id="sidebar-collapse-btn" type="button" onclick="toggleSidebar()" title="Sol menüyü daralt" aria-label="Sol menüyü daralt" aria-pressed="false"><svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 9l-3 3 3 3"/></svg></button>
 <button class="nav-tool-btn" id="home-btn" type="button" onclick="window.ankaHome(event)" title="Ana Sayfa (Alt+Home)" aria-label="Ana Sayfa">
 <svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg>
 </button>
 
 <div class="url-wrap">
 <input type="text" id="url-input" placeholder="Güvenli Arama..." autocomplete="off" spellcheck="false" autocapitalize="off">
+<button class="nav-tool-btn" id="site-info-btn" type="button" onclick="showSiteInfo()" title="Bağlantı bilgisi" aria-label="Bağlantı bilgisi">◈</button>
 <button class="nav-tool-btn" id="star-btn" type="button" title="Yer İmi Ekle (Ctrl+D)" aria-label="Yer İmi Ekle">
 <svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>
 </button>
@@ -146,6 +149,12 @@ window.addEventListener('message',(event)=>{const data=event.data;if(!data||data
 
 <button id="open-external-btn" class="nav-tool-btn" type="button" onclick="openInBrowserTab()" title="Tarayıcı sekmesinde aç">↗</button>
 <button id="downloads-btn" class="nav-tool-btn" type="button" onclick="openDownloadsPage()" title="İndirilenler">⭳<span class="dl-badge" id="dl-badge"></span></button>
+<button id="media-center-btn" class="nav-tool-btn" type="button" onclick="openMediaCenter()" title="Medya denetimleri" aria-label="Medya denetimleri"><svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></button>
+<div id="page-zoom-tools" role="group" aria-label="Sayfa yakınlaştırma">
+<button type="button" onclick="ankaZoom(-0.5)" title="Sayfayı küçült" aria-label="Sayfayı küçült">−</button>
+<button type="button" id="page-zoom-value" onclick="ankaZoom(null)" title="Yakınlaştırmayı sıfırla">100%</button>
+<button type="button" onclick="ankaZoom(0.5)" title="Sayfayı büyüt" aria-label="Sayfayı büyüt">＋</button>
+</div>
 <button class="nav-tool-btn" id="side-btn" type="button" title="Yan Panel (Ctrl+H)" aria-label="Yan Panel" aria-pressed="false">
 <svg class="xi" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
 </button>
@@ -175,7 +184,9 @@ window.addEventListener('message',(event)=>{const data=event.data;if(!data||data
 <strong>Seçilen Alan</strong>
 <div class="capture-actions">
 <button type="button" onclick="clearCaptureDrawing()" title="Çizimleri Temizle">Temizle</button>
-<button type="button" onclick="zoomCapturedArea()" title="Seçilen alanı sayfada büyüt">Büyüt</button>
+<button type="button" onclick="zoomCapturedAreaOut()" title="Yakalanan görseli küçült" aria-label="Yakalanan görseli küçült">−</button>
+<button type="button" onclick="resetCapturedAreaZoom()" title="Yakalanan görseli sığdır">Sığdır</button>
+<button type="button" onclick="zoomCapturedArea()" title="Yalnızca yakalanan görseli büyüt">Büyüt</button>
 <button type="button" onclick="exportCapture()" title="Görseli Kaydet">Kaydet</button>
 <button type="button" class="capture-return" onclick="closeCaptureWorkspace()" title="Sayfaya Dön">Sayfaya Dön</button>
 </div>
@@ -229,7 +240,7 @@ window.addEventListener('message',(event)=>{const data=event.data;if(!data||data
 <section id="school-login-screen" class="school-login-screen" hidden aria-label="Okul hesabı girişi">
 <div class="school-login-shell">
 <div class="school-login-brand">
-<img src="../../src/icons/dark-logo.png" alt="">
+<img src="../icons/dark-logo.png" alt="">
 <span>Anka Web</span>
 </div>
 <div class="school-login-content">
@@ -321,13 +332,19 @@ window.addEventListener('message',(event)=>{const data=event.data;if(!data||data
 <div class="t-btn" id="t-eraser" onclick="setToolActive(this); setTool('eraser')" title="Silgi">🧽</div>
 </div>
 <div class="tool-row grid-4">
+<button class="t-btn" id="t-pencil" type="button" onclick="setToolActive(this); setTool('pencil')" title="İnce uçlu kurşun kalem" aria-label="Kurşun kalem">✏️</button>
+<button class="t-btn" id="t-marker" type="button" onclick="setToolActive(this); setTool('marker')" title="Kalın işaretleme kalemi" aria-label="İşaretleme kalemi">🖍</button>
+<button class="t-btn" id="t-brush" type="button" onclick="setToolActive(this); setTool('brush')" title="Yumuşak fırça" aria-label="Fırça">🖌️</button>
+<button class="t-btn" id="t-chalk" type="button" onclick="setToolActive(this); setTool('chalk')" title="Tebeşir" aria-label="Tebeşir">▰</button>
+</div>
+<div class="tool-row grid-4">
 <div class="t-btn" id="t-line" onclick="setToolActive(this); setTool('line')" title="Düz Çizgi">➖</div>
 <div class="t-btn" id="t-rect" onclick="setToolActive(this); setTool('rect')" title="Dikdörtgen">▭</div>
 <div class="t-btn" id="t-circle" onclick="setToolActive(this); setTool('circle')" title="Daire / Oval">⬤</div>
 <div class="t-btn" id="t-arrow" onclick="setToolActive(this); setTool('arrow')" title="Ok">➜</div>
 </div>
 <div class="tool-row grid-4">
-<div class="t-btn" id="t-text" onclick="setToolActive(this); setTool('text')" title="Metin Ekle">🔤</div>
+<button class="t-btn" id="t-text" type="button" onclick="setToolActive(this); setTool('text')" title="Metin ekle" aria-label="Metin ekle">Abc</button>
 <div class="t-btn" id="t-select" onclick="setToolActive(this); setTool('select')" title="Seç ve Taşı">✂️</div>
 <div class="t-btn" onclick="toggleMathTool('ruler')" title="Cetvel">📏</div>
 <div class="t-btn" onclick="toggleMathTool('protractor')" title="Açıölçer">📐</div>
@@ -361,7 +378,7 @@ window.addEventListener('message',(event)=>{const data=event.data;if(!data||data
 <div class="t-btn" onclick="toggleScreenGrid()" title="Ekran Izgarası">▦</div>
 </div>
 <div class="tool-row grid-3">
-<div class="t-btn" onclick="toggleTimerTool()" title="Ders Zamanlayıcısı">⏱</div>
+<button class="t-btn" type="button" onclick="toggleTimerTool()" title="Kronometre ve geri sayım">⏱</button>
 <div class="t-btn" onclick="toggleLaserPointer()" title="Lazer İşaretçisi">⌖</div>
 <div class="t-btn" onclick="toggleSidebar()" title="Sol Menüyü Daralt">◀</div>
 </div>
@@ -425,6 +442,8 @@ if(ENV.isElectron){try{ipcRenderer=require('electron').ipcRenderer}catch(e){ipcR
 
 function safeIpcSend(channel,...args){if(ipcRenderer&&typeof ipcRenderer.send==='function'){ipcRenderer.send(channel,...args)}}
 if(ipcRenderer&&typeof ipcRenderer.on==='function'){ipcRenderer.on('open-new-tab',(event,url)=>{if(typeof createNewTab==='function'&&typeof url==='string')createNewTab(url)})}
+if(ipcRenderer&&typeof ipcRenderer.on==='function'){ipcRenderer.on('settings-error',(event,message)=>{if(window.showToast)window.showToast(String(message),'error');else console.error(String(message))})}
+if(ipcRenderer&&typeof ipcRenderer.on==='function'){ipcRenderer.on('download-completed',(event,result)=>{if(!result||result.state!=='completed'||typeof window.showToast!=='function')return;const fileName=String(result.fileName||result.savePath||'').split(/[\\/]/).pop();const message=result.risky?'Dikkat: çalıştırılabilir/komut dosyası indirildi. Kaynağı doğrulayın; Anka Web antivirüs taraması yapmaz.':'İndirme tamamlandı'+(fileName?': '+fileName:'');window.showToast(message,result.risky?'info':'success')})}
 if(ipcRenderer&&typeof ipcRenderer.invoke==='function'){ipcRenderer.invoke('is-window-fullscreen').then((active)=>{fullscreenShortcutActive=active}).catch(()=>{});ipcRenderer.on('window-fullscreen-change',(event,active)=>{fullscreenShortcutActive=!!active})}
 
 const DOM={body:document.body,themeIcon:null,btnTheme:null,aiModeBtn:null,toastStack:null,tabDropdownMenu:null,tabDropdownBtn:null,tabSearchInput:null,tabListDropdown:null,tabBar:null,ctxMenu:null,urlInput:null};
@@ -443,7 +462,7 @@ const activeView=()=>{const id=getActiveId();return id?document.getElementById(i
 
 function getTabUrl(id){const view=document.getElementById(id);if(!view)return '';try{if(typeof view.getURL==='function')return view.getURL()||''}catch(err){}return view.src||''}
 function applyThemeState(isDark){const light=!isDark;document.documentElement.classList.toggle('light-theme',light);DOM.body.classList.toggle('light-theme',light);if(DOM.btnTheme)DOM.btnTheme.classList.toggle('active',light)}
-function getNewTabThemeSettings(){return{themePreset:getSetting('theme-preset','dark'),uiScale:getSetting('ui-scale','normal'),fontScale:getSetting('font-scale','normal'),touchMode:getSetting('touch-mode','true')==='true',uiAnimations:getSetting('ui-animations','true')==='true'}}
+function getNewTabThemeSettings(){return{themePreset:getSetting('theme-preset','dark'),uiScale:getSetting('ui-scale','normal'),fontScale:getSetting('font-scale','normal'),logoSize:getSetting('logo-size','44'),touchMode:getSetting('touch-mode','true')==='true',uiAnimations:getSetting('ui-animations','true')==='true'}}
 function syncNewTabTheme(view){if(!view||typeof view.executeJavaScript!=='function')return;let url='';try{url=typeof view.getURL==='function'?view.getURL():view.src||''}catch(err){return}if(!url.includes('newtab.html'))return;const settings=JSON.stringify(getNewTabThemeSettings());view.executeJavaScript(`window.applyHostThemeSettings && window.applyHostThemeSettings(${settings})`).catch(()=>{})}
 function syncOpenNewTabThemes(){document.querySelectorAll('webview').forEach(syncNewTabTheme)}
 function applySavedTheme(){const preset=getSetting('theme-preset',null)||(getSetting('dark-mode','true')==='false'?'light':'dark');if(typeof window.applySetting==='function')window.applySetting('theme-preset',preset);else applyThemeState(preset!=='light')}
@@ -462,7 +481,7 @@ aiModeActive=getSetting('ai-mode-active','false')==='true';
 function isAiModeActive(){return aiModeActive}
 function setAiMode(state){aiModeActive=!!state;if(DOM.aiModeBtn){DOM.aiModeBtn.classList.toggle('active',aiModeActive);DOM.aiModeBtn.setAttribute('aria-pressed',String(aiModeActive))}setSetting('ai-mode-active',aiModeActive?'true':'false')}
 function toggleAiMode(){if(aiToggleLock)return;aiToggleLock=true;setAiMode(!aiModeActive);showToast(aiModeActive?'AI Modu Açık':'AI Modu Kapalı');setTimeout(()=>{aiToggleLock=false},180)}
-function getHomeUrl(){return getSetting('startup-page','home')==='blank'?'about:blank':'newtab.html'}
+function getHomeUrl(){const mode=getSetting('startup-page','home');if(mode==='blank')return'about:blank';if(mode==='custom'){try{const url=new URL(getSetting('startup-custom-url',''));if(url.protocol==='http:'||url.protocol==='https:')return url.href}catch(err){}return'newtab.html'}return'newtab.html'}
 function getStartupUrl(){return getSetting('school-mode','false')==='true'?getSetting('school-url','https://www.eba.gov.tr/'):getHomeUrl()}
 
 window.ankaHome=function(event){
@@ -523,7 +542,7 @@ function initPanels(){registerPanel('paint-menu','paint-handle','paint');registe
 
 function togglePaintMinimized(event){if(event)event.stopPropagation();const menu=document.getElementById('paint-menu');const button=document.querySelector('.paint-minimize');if(!menu)return;const minimized=menu.classList.toggle('is-minimized');if(button){button.setAttribute('aria-expanded',String(!minimized));button.title=minimized?'Menüyü Aç':'Menüyü Küçült'}}
 
-function toggleSidebar(){const collapsed=document.body.classList.toggle('sidebar-collapsed');closeTabDropdown();const button=document.getElementById('tab-dropdown-btn');if(button){button.setAttribute('aria-expanded',String(!collapsed));button.title=collapsed?'Sol Menüyü Aç':'Sol Menüyü Daralt'}const tools=document.getElementById('lesson-tools');if(tools&&collapsed&&!tools.hidden){tools.hidden=true}requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')))}
+function toggleSidebar(){const collapsed=document.body.classList.toggle('sidebar-collapsed');try{localStorage.setItem('anka_sidebar_collapsed',String(collapsed))}catch(err){}closeTabDropdown();const button=document.getElementById('sidebar-collapse-btn');if(button){button.setAttribute('aria-pressed',String(collapsed));button.setAttribute('aria-label',collapsed?'Sol menüyü aç':'Sol menüyü daralt');button.title=collapsed?'Sol menüyü aç':'Sol menüyü daralt'}const tools=document.getElementById('lesson-tools');if(tools&&collapsed&&!tools.hidden){tools.hidden=true}requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')))}
 
 function toggleLessonTools(){const tools=document.getElementById('lesson-tools');if(!tools)return;tools.hidden=!tools.hidden}
 
@@ -532,6 +551,7 @@ function trackSpotlight(event){spotlightX=event.clientX;spotlightY=event.clientY
 function toggleSpotlight(){const spotlight=document.getElementById('spotlight-layer');if(!spotlight)return;spotlight.hidden=!spotlight.hidden;spotlight.classList.toggle('active',!spotlight.hidden);spotlightEl=spotlight;spotlightRect=null;if(spotlight.hidden){document.removeEventListener('pointermove',trackSpotlight);if(spotlightRaf){cancelAnimationFrame(spotlightRaf);spotlightRaf=0}}else{spotlight.style.background='radial-gradient(circle 150px at var(--sx, 50%) var(--sy, 50%), transparent 0 145px, rgba(0, 0, 0, 0.72) 155px 100%)';document.addEventListener('pointermove',trackSpotlight,{passive:true})}}
 
 function toggleSplitScreen(){if(typeof window.__toggleSplitScreen==='function')window.__toggleSplitScreen()}
+function toggleGridView(){if(typeof window.__toggleGridView==='function')window.__toggleGridView()}
 function toggleLimit(){if(typeof window.__toggleLimit==='function')window.__toggleLimit()}
 function toggleHelp(){if(typeof window.__toggleHelp==='function')window.__toggleHelp()}
 function toggleSettings(){if(typeof window.__toggleSettings==='function')window.__toggleSettings()}
@@ -545,7 +565,7 @@ function handleAltShortcut(event){if(event.code==='ArrowLeft'&&!isTypingTarget(e
 
 window.addEventListener('keydown',(event)=>{if(window.__ankaRequireLogin&&!window.__ankaAuthenticated)return;if(event.isComposing||!event.key)return;const mod=event.ctrlKey||event.metaKey;if(mod&&!event.altKey){if(handleModShortcut(event.key.toLowerCase(),event))event.preventDefault();return}if(event.altKey&&!mod){if(handleAltShortcut(event))event.preventDefault();return}if(event.key==='F5'){if(api.reloadTab())event.preventDefault()}else if(event.key==='F6'){event.preventDefault();focusUrlBar()}else if(event.key==='F11'){event.preventDefault();fullscreenShortcutActive=!fullscreenShortcutActive;safeIpcSend('set-fullscreen',fullscreenShortcutActive)}else if(event.key==='Escape'){closeTabDropdown();hideContextMenu()}});
 
-window.addEventListener('pointerdown',(event)=>{if(DOM.ctxMenu&&!DOM.ctxMenu.hidden&&!DOM.ctxMenu.contains(event.target))hideContextMenu();const menu=DOM.tabDropdownMenu;if(menu&&menu.classList.contains('open')&&!menu.contains(event.target)&&!DOM.tabDropdownBtn.contains(event.target))closeTabDropdown()},true);
+window.addEventListener('pointerdown',(event)=>{if(DOM.ctxMenu&&!DOM.ctxMenu.hidden&&!DOM.ctxMenu.contains(event.target))hideContextMenu();const menu=DOM.tabDropdownMenu;if(menu&&menu.classList.contains('open')&&!menu.contains(event.target)&&!DOM.tabDropdownBtn.contains(event.target))closeTabDropdown();if(typeof window.__ankaCloseTransientMenus==='function')window.__ankaCloseTransientMenus(event.target)},true);
 
 window.addEventListener('blur',()=>{closeTabDropdown();hideContextMenu()});
 
@@ -567,9 +587,10 @@ window.addEventListener('blur',releaseUiPointerLock);
 window.addEventListener('resize',()=>{spotlightRect=null;hideContextMenu();closeTabDropdown();scheduleLayout()},{passive:true});
 document.addEventListener('fullscreenchange',scheduleLayout);
 
-window.addEventListener('DOMContentLoaded',async()=>{initDOMCache();applyPlatformLabels();bindWindowControls();bindDropdown();bindTabBar();bindContextMenu();initPanels();const pinnedClose=document.getElementById('pinned-side-close');if(pinnedClose){pinnedClose.addEventListener('click',()=>{if(typeof closePinnedSidePanel==='function')closePinnedSidePanel()})}updateLayoutState();await window.__ankaAccessReady;applySavedTheme();new MutationObserver(()=>{const light=DOM.body.classList.contains('light-theme');const root=document.documentElement;if(root.classList.contains('light-theme')!==light)root.classList.toggle('light-theme',light)}).observe(DOM.body,{attributes:true,attributeFilter:['class']});setAiMode(isAiModeActive());if(!ENV.isElectron){let seen=false;try{seen=sessionStorage.getItem('anka_frame_hint')==='1';sessionStorage.setItem('anka_frame_hint','1')}catch(err){}if(!seen){setTimeout(()=>showToast('Tarayıcı modunda bazı siteler çerçevede açılmaz. ↗ ile yeni sekmede açabilirsiniz.'),900)}}});
+window.addEventListener('DOMContentLoaded',async()=>{initDOMCache();applyPlatformLabels();bindWindowControls();bindDropdown();bindTabBar();bindContextMenu();initPanels();try{const collapsed=localStorage.getItem('anka_sidebar_collapsed')==='true';document.body.classList.toggle('sidebar-collapsed',collapsed);const button=document.getElementById('sidebar-collapse-btn');if(button){button.setAttribute('aria-pressed',String(collapsed));button.setAttribute('aria-label',collapsed?'Sol menüyü aç':'Sol menüyü daralt');button.title=collapsed?'Sol menüyü aç':'Sol menüyü daralt'}}catch(err){}const pinnedClose=document.getElementById('pinned-side-close');if(pinnedClose){pinnedClose.addEventListener('click',()=>{if(typeof closePinnedSidePanel==='function')closePinnedSidePanel()})}updateLayoutState();await window.__ankaAccessReady;applySavedTheme();new MutationObserver(()=>{const light=DOM.body.classList.contains('light-theme');const root=document.documentElement;if(root.classList.contains('light-theme')!==light)root.classList.toggle('light-theme',light)}).observe(DOM.body,{attributes:true,attributeFilter:['class']});setAiMode(isAiModeActive());if(!ENV.isElectron){let seen=false;try{seen=sessionStorage.getItem('anka_frame_hint')==='1';sessionStorage.setItem('anka_frame_hint','1')}catch(err){}if(!seen){setTimeout(()=>showToast('Tarayıcı modunda bazı siteler çerçevede açılmaz. ↗ ile yeni sekmede açabilirsiniz.'),900)}}});
 </script>
 
+<script defer src="../core/utils/window-utils.js"></script>
 <script defer src="../core/scripts/logo-theme.js"></script>
 <script defer src="../core/scripts/translations.js"></script>
 <script defer src="../core/scripts/feedback.js"></script>

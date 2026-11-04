@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Hoşgeldin</title>
+<style>
+:root{font-family:system-ui,"Segoe UI",sans-serif;color-scheme:dark;--bg:#111114;--panel:#1a1a1f;--border:#303038;--text:#f4f4f5;--muted:#a1a1aa;--accent:#ff4757}
+*{box-sizing:border-box}
+body{min-width:320px;min-height:100vh;margin:0;padding:clamp(16px,4vw,48px);display:grid;place-items:center;background:radial-gradient(ellipse at 18% 0%,rgba(255,71,87,.13),transparent 46%),var(--bg);color:var(--text)}
+main{width:min(100%,920px);min-height:min(660px,calc(100vh - 32px));display:flex;flex-direction:column;justify-content:space-between;padding:clamp(22px,5vw,56px);border:1px solid var(--border);border-radius:24px;background:var(--panel);box-shadow:0 24px 70px rgba(0,0,0,.32)}
+header{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:14px;font-weight:650}
+header img{width:44px;height:44px;object-fit:contain}
+.content{max-width:720px;margin:48px 0}
+.eyebrow{color:var(--accent);font-size:12px;font-weight:750;letter-spacing:.1em;text-transform:uppercase}
+h1{margin:12px 0;font-size:clamp(32px,6vw,58px);line-height:1.04;letter-spacing:-.04em}
+.lead{max-width:620px;color:var(--muted);font-size:clamp(15px,2vw,18px);line-height:1.65}
+.feature-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:28px 0 0;padding:0;list-style:none}
+.feature-list li{padding:16px;border:1px solid var(--border);border-radius:14px;background:rgba(255,255,255,.025)}
+.feature-list strong{display:block;margin-bottom:5px;font-size:14px}
+.feature-list span{color:var(--muted);font-size:13px;line-height:1.5}
+.guide-card{padding:clamp(20px,4vw,36px);border:1px solid var(--border);border-radius:18px;background:rgba(255,255,255,.025)}
+.guide-progress{height:5px;margin:0 0 24px;overflow:hidden;border-radius:4px;background:#303038}
+.guide-progress span{display:block;width:0;height:100%;border-radius:inherit;background:var(--accent);transition:width .2s ease}
+.guide-card h2{margin:10px 0;font-size:clamp(23px,4vw,34px)}
+.guide-card p{max-width:640px;color:var(--muted);font-size:16px;line-height:1.7}
+.guide-count{color:var(--muted);font-size:12px}
+.actions{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.action-group{display:flex;gap:10px;flex-wrap:wrap}
+button{min-height:48px;padding:0 20px;border:1px solid var(--border);border-radius:12px;background:transparent;color:var(--text);font:inherit;font-weight:650;cursor:pointer;touch-action:manipulation}
+button:hover{border-color:var(--accent);background:rgba(255,71,87,.09)}
+button:focus-visible{outline:3px solid rgba(255,71,87,.45);outline-offset:2px}
+button.primary{border-color:var(--accent);background:var(--accent);color:#fff}
+button.primary:hover{filter:brightness(1.08)}
+[hidden]{display:none!important}
+@media(max-width:640px){body{padding:10px}main{min-height:calc(100vh - 20px);padding:22px;border-radius:17px}.content{margin:32px 0}.feature-list{grid-template-columns:1fr}.actions{align-items:stretch}.action-group{width:100%}.action-group button{flex:1}.actions>.primary{width:100%}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<main>
+  <header><img src="../icons/white-logo.png" alt=""><span>Anka Web</span></header>
+  <section class="content" id="welcome-screen">
+    <div class="eyebrow">Hoşgeldiniz</div>
+    <h1>Anka Web’e hoş geldiniz.</h1>
+    <p class="lead">Anka Web’i indirdiğiniz için teşekkürler. Hızlı gezinme, dokunmatik kalem araçları, sekme yönetimi ve kişiselleştirilebilir ayarlar tek bir yerde.</p>
+    <ul class="feature-list">
+      <li><strong>Kolay gezinme</strong><span>Adres çubuğu, sekmeler, yer imleri ve indirmeler.</span></li>
+      <li><strong>Kalem ve araçlar</strong><span>Sayfaların üzerine çizin, alan yakalayın ve ders zamanlayıcısını kullanın.</span></li>
+      <li><strong>Görünüm ve erişilebilirlik</strong><span>Tema, yazı boyutu, dokunmatik kullanım ve performans seçenekleri.</span></li>
+      <li><strong>Gizlilik ve kontrol</strong><span>Site izinlerini, güvenlik tercihlerini ve tarama verilerini yönetin.</span></li>
+    </ul>
+  </section>
+  <section class="content" id="guide-screen" hidden>
+    <div class="eyebrow">Anka Web turu</div>
+    <h1>Özellikleri tanıyalım.</h1>
+    <article class="guide-card" aria-live="polite">
+      <div class="guide-progress" aria-hidden="true"><span id="guide-progress"></span></div>
+      <div class="guide-count" id="guide-count"></div>
+      <h2 id="guide-title"></h2>
+      <p id="guide-description"></p>
+    </article>
+  </section>
+  <section class="content" id="finish-screen" hidden>
+    <div class="eyebrow">Hazırsınız</div>
+    <h1>İyi gezinmeler!</h1>
+    <p class="lead">Tanıtımı istediğiniz zaman Ayarlar bölümündeki “Tüm özellikleri tanıt” seçeneğinden yeniden açabilirsiniz.</p>
+  </section>
+  <footer class="actions">
+    <div class="action-group" id="guide-actions" hidden>
+      <button id="guide-back" type="button">Geri</button>
+      <button id="guide-next" class="primary" type="button">Devam</button>
+      <button id="guide-finish" class="primary" type="button" hidden>Bitir</button>
+    </div>
+    <div class="action-group" id="welcome-actions">
+      <button id="start-guide" type="button">Bana özellikleri tanıt</button>
+      <button id="start-app" class="primary" type="button">Başla</button>
+    </div>
+    <button id="finish-app" class="primary" type="button" hidden>Başla</button>
+  </footer>
+</main>
+<script>
+(function(){
+  const steps=[
+    ['Sekmeler ve adres çubuğu','Adres çubuğuna site adresi veya arama yazın. Yeni sekme açın, sekmeleri gruplayın, sesi yönetin ve yer imlerinize araç çubuğundan ulaşın.'],
+    ['Kalem ve ders araçları','Kalem menüsünden çizim araçlarını seçin. Ekrandaki içeriği işaretleyin, alan yakalayın, not alın veya kronometre ve geri sayımı kullanın.'],
+    ['Bölünmüş ekran ve oturumlar','Sekmeleri yan yana ya da ızgara görünümünde karşılaştırın. Oturum yöneticisiyle sık kullandığınız sekmeleri birlikte kaydedin.'],
+    ['Ayarlar ve görünüm','Ayarlar bölümünden tema, yazı tipi, ölçek, dokunmatik hedefler, performans ve başlangıç davranışını kişiselleştirin.'],
+    ['Site izinleri ve gizlilik','Adres çubuğundaki site bilgisi panelinden bağlantı durumunu ve site izinlerini inceleyin. Tarama verilerini ve güvenlik tercihlerini ayarlardan yönetin.'],
+    ['Yardım ve indirmeler','Yardım bölümünde kısayolları ve açıklamaları bulun; indirmelerinizi, geçmişinizi ve kayıtlı oturumlarınızı ilgili panellerden yönetin.']
+  ];
+  const welcome=document.getElementById('welcome-screen');
+  const guide=document.getElementById('guide-screen');
+  const finish=document.getElementById('finish-screen');
+  const welcomeActions=document.getElementById('welcome-actions');
+  const guideActions=document.getElementById('guide-actions');
+  const finishApp=document.getElementById('finish-app');
+  const back=document.getElementById('guide-back');
+  const next=document.getElementById('guide-next');
+  const finishGuide=document.getElementById('guide-finish');
+  const title=document.getElementById('guide-title');
+  const description=document.getElementById('guide-description');
+  const count=document.getElementById('guide-count');
+  const progress=document.getElementById('guide-progress');
+  let step=0;
+  function render(){
+    title.textContent=steps[step][0];
+    description.textContent=steps[step][1];
+    count.textContent=(step+1)+' / '+steps.length;
+    progress.style.width=((step+1)/steps.length*100)+'%';
+    back.disabled=step===0;
+    next.hidden=step===steps.length-1;
+    finishGuide.hidden=step!==steps.length-1;
+  }
+  function showGuide(){
+    welcome.hidden=true;
+    finish.hidden=true;
+    guide.hidden=false;
+    welcomeActions.hidden=true;
+    guideActions.hidden=false;
+    render();
+  }
+  function showFinish(){
+    welcome.hidden=true;
+    guide.hidden=true;
+    finish.hidden=false;
+    welcomeActions.hidden=true;
+    guideActions.hidden=true;
+    finishApp.hidden=false;
+    document.getElementById('finish-app').focus();
+  }
+  function startApp(){console.log('anka-welcome-complete')}
+  document.getElementById('start-guide').addEventListener('click',showGuide);
+  document.getElementById('start-app').addEventListener('click',startApp);
+  back.addEventListener('click',function(){if(step>0){step--;render()}});
+  next.addEventListener('click',function(){if(step<steps.length-1){step++;render()}});
+  finishGuide.addEventListener('click',showFinish);
+  finishApp.addEventListener('click',startApp);
+  if(new URLSearchParams(location.search).get('tour')==='1')showGuide();
+})();
+</script>
+</body>
+</html>

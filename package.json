@@ -1,6 +1,6 @@
 {
   "name": "anka-web",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "Anka Web Tarayıcısı",
   "main": "src/core/main/main.js",
 "scripts": {

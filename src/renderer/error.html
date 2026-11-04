@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Anka Web · Sayfa açılamadı</title>
+<style>
+:root{font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color-scheme:dark;--bg:#111318;--panel:#1b1e25;--text:#f4f6fb;--muted:#a9afbd;--accent:#ff594d;--border:#343946}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:clamp(16px,4vw,48px);display:grid;place-items:center;background:var(--bg);color:var(--text)}
+main{width:min(760px,100%);padding:clamp(20px,5vw,40px);border:1px solid var(--border);border-radius:20px;background:var(--panel)}
+.brand{font-size:.8rem;font-weight:750;letter-spacing:.08em;color:var(--accent)}
+h1{margin:.5rem 0;font-size:clamp(1.7rem,5vw,2.4rem);line-height:1.15}
+p{color:var(--muted)}
+.address{padding:10px 12px;overflow-wrap:anywhere;border-radius:9px;background:#101217;color:var(--muted);font: .85rem/1.5 ui-monospace,monospace}
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}
+button{min-height:46px;padding:0 16px;border:1px solid var(--border);border-radius:10px;color:var(--text);background:#262a33;font:inherit;font-weight:650;cursor:pointer;touch-action:manipulation}
+button.primary{background:var(--accent);border-color:var(--accent);color:white}
+button:focus-visible{outline:3px solid #fff;outline-offset:2px}
+details{margin:10px 0;color:var(--muted);font-size:.9rem}
+canvas{display:block;width:100%;height:auto;max-height:300px;border:1px solid var(--border);border-radius:12px;background:#10141d;touch-action:none}
+.game{margin-top:22px;padding-top:18px;border-top:1px solid var(--border)}
+.game-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.game-head h2{margin:0;font-size:1.1rem}
+.game-stats{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:.85rem}
+.game-help{margin:6px 0 12px;font-size:.85rem}
+.game-controls{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.game-controls button{min-height:40px;padding:0 12px}
+.game-status{min-height:1.5em;margin:8px 0;color:#ffd166;font-size:.88rem}
+.net-options{display:flex;align-items:center;gap:9px;margin:12px 0;color:var(--muted);font-size:.9rem}
+.net-options input{width:20px;height:20px;accent-color:var(--accent)}
+.troubleshooting{padding-left:22px;color:var(--muted)}
+.game[hidden]{display:none}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+<div class="brand">ANKA WEB</div>
+<h1 id="title">Bu sayfa açılamadı</h1>
+<p id="message">Bağlantı kurulamadı. İnternet bağlantınızı veya site adresini kontrol edip yeniden deneyin.</p>
+<div class="address" id="address">Adres gösterilemiyor</div>
+<div class="actions">
+<button class="primary" id="retry" type="button">Yeniden dene</button>
+<button id="home" type="button">Ana sayfayı aç</button>
+<button id="network-settings" type="button" hidden>Windows ağ ayarlarını aç</button>
+<button id="game-toggle" type="button" aria-expanded="false">Anka Kaçış oyununu aç</button>
+</div>
+<label class="net-options"><input id="auto-retry" type="checkbox"> İnternet geri geldiğinde bu sayfayı otomatik aç</label>
+<details>
+<summary>Ne yapabilirim?</summary>
+<ul class="troubleshooting">
+<li>Wi-Fi veya Ethernet bağlantısının açık olduğunu kontrol edin.</li>
+<li>Modem/router bağlantısını ve uçak modunu kontrol edin.</li>
+<li>Adresin doğru yazıldığından emin olun; kurumsal ağdaysanız ağ yöneticinize danışın.</li>
+<li>Yalnızca bu site açılmıyorsa site geçici olarak kapalı olabilir.</li>
+</ul>
+</details>
+<section class="game" id="game" hidden aria-label="Anka Kaçış çevrimdışı oyunu">
+<div class="game-head"><h2>Anka Kaçış</h2><div class="game-stats"><span>Puan <b id="score">0</b></span><span>Can <b id="lives">3</b></span><span>Son <b id="last-score">0</b></span><span>Rekor <b id="best-score">0</b></span></div></div>
+<p class="game-help">Yıldızları topla, meteor ve kıvılcımlardan kaç. Mavi kalkan can kazandırır. Ok tuşları/WASD veya dokunmatik ekranla hareket et.</p>
+<div class="game-controls"><button class="primary" id="game-start" type="button">Başlat</button><button id="game-pause" type="button">Duraklat</button><button id="game-reset" type="button">Yeniden başlat</button></div>
+<canvas id="board" width="480" height="240" aria-label="Yıldızları topla, meteor ve kıvılcımlardan kaç"></canvas>
+<p class="game-status" id="game-status" aria-live="polite"></p>
+</section>
+</main>
+<script>
+(() => {
+    'use strict';
+    const params = new URLSearchParams(location.search);
+    const target = params.get('url') || '';
+    const code = Number(params.get('code')) || 0;
+    const errorMessages = {
+        '-102': ['Site bağlantıyı reddetti', 'Site şu anda bağlantıyı kabul etmiyor. Adresi kontrol edip daha sonra yeniden deneyin.'],
+        '-101': ['Bağlantı kesildi', 'Siteyle kurulan bağlantı beklenmedik şekilde kesildi. Yeniden deneyebilirsiniz.'],
+        '-107': ['Güvenli bağlantı kurulamadı', 'Bu sitenin güvenli bağlantısı doğrulanamadı. Güvenliğiniz için bağlantı otomatik olarak güvensiz biçimde açılmadı.'],
+        '-200': ['Sayfa güvenlik nedeniyle engellendi', 'Bu adres tarayıcının güvenlik kurallarıyla uyumlu değil. Adresi ve bağlantı türünü kontrol edin.'],
+        '-103': ['Sunucuya ulaşılamıyor', 'Sunucu adresi bulunamadı veya yanıt vermiyor. Ağ bağlantınızı ve adresi kontrol edin.'],
+        '-104': ['Sunucu bağlantıyı kapattı', 'Sunucu bağlantıyı beklenmedik biçimde kapattı. Biraz sonra yeniden deneyin.'],
+        '-109': ['Sunucuya erişilemiyor', 'Sunucuya giden yol bulunamadı. Ağınızı veya VPN/proxy ayarınızı kontrol edin.'],
+        '-118': ['Bağlantı zaman aşımına uğradı', 'Site zamanında yanıt vermedi. İnternetinizi kontrol edin veya biraz sonra yeniden deneyin.'],
+        '-130': ['Proxy bağlantı hatası', 'Proxy sunucusuna ulaşılamadı. Proxy ayarınızı ya da ağ yöneticinizi kontrol edin.'],
+        '-137': ['Site adı çözümlenemedi', 'DNS yanıt vermedi. Bağlantınızı kontrol edin veya daha sonra yeniden deneyin.'],
+        '-300': ['Site adresi geçersiz', 'Tarayıcı site adresini çözemedi. Adresi yeniden kontrol edin.'],
+        '-301': ['Site adresi bulunamadı', 'Bu adresin sunucusu bulunamadı. Adresi veya internet bağlantınızı kontrol edin.'],
+        '-324': ['Sunucudan yanıt alınamadı', 'Sunucu bağlantıyı kapattı ve yanıt göndermedi. Biraz sonra yeniden deneyin.'],
+        '-501': ['Bu bağlantı yöntemi desteklenmiyor', 'Site bu bağlantı türünü desteklemiyor. Adresi kontrol edin veya site yöneticinize danışın.'],
+        '-105': ['Site adresi bulunamadı', 'DNS, bu site adresini bulamadı. Adresi kontrol edin veya ağ bağlantınızı sınayın.'],
+        '-106': ['İnternet bağlantısı yok', 'Anka Web internete bağlanamıyor. Wi-Fi veya Ethernet bağlantınızı kontrol edin; çevrimdışıysanız Anka Kaçış oyununu oynayabilirsiniz.']
+    };
+    const [title, message] = errorMessages[String(code)] || (navigator.onLine
+        ? ['Bu sayfa açılamadı', 'Siteye ulaşılamadı. Adresi kontrol edin, bağlantınızı sınayın veya yeniden deneyin.']
+        : errorMessages['-106']);
+    document.getElementById('title').textContent = title;
+    document.getElementById('message').textContent = message;
+    document.getElementById('address').textContent = target || 'Site adresi alınamadı';
+    const retry = document.getElementById('retry');
+    retry.disabled = !/^https?:\/\//i.test(target);
+    retry.addEventListener('click', () => { if (!retry.disabled) location.href = target; });
+    document.getElementById('home').addEventListener('click', () => { location.href = new URL('newtab.html', location.href).href; });
+    const networkButton = document.getElementById('network-settings');
+    networkButton.hidden = params.get('platform') !== 'win32';
+    networkButton.addEventListener('click', () => {
+        if (typeof window.__ankaOpenNetworkSettings === 'function') window.__ankaOpenNetworkSettings();
+        else {
+            const hint = document.getElementById('message');
+            hint.textContent = 'Windows ağ ayarlarına erişilemiyor. Başlat menüsünden Ayarlar > Ağ ve internet bölümünü açın.';
+        }
+    });
+
+    const retryKey = 'anka-error-auto-retry';
+    const retrySetting = document.getElementById('auto-retry');
+    try { retrySetting.checked = localStorage.getItem(retryKey) === 'true'; } catch (error) {}
+    retrySetting.addEventListener('change', () => {
+        try { localStorage.setItem(retryKey, String(retrySetting.checked)); } catch (error) {}
+    });
+    let autoRetried = false;
+    window.addEventListener('online', () => {
+        if (retrySetting.checked && !autoRetried && /^https?:\/\//i.test(target)) {
+            autoRetried = true;
+            location.href = target;
+        }
+    });
+
+    const section = document.getElementById('game');
+    const toggle = document.getElementById('game-toggle');
+    const board = document.getElementById('board');
+    const ctx = board.getContext('2d', { alpha: false });
+    const scoreEl = document.getElementById('score');
+    const livesEl = document.getElementById('lives');
+    const lastEl = document.getElementById('last-score');
+    const bestEl = document.getElementById('best-score');
+    const statusEl = document.getElementById('game-status');
+    const startButton = document.getElementById('game-start');
+    const pauseButton = document.getElementById('game-pause');
+    const resetButton = document.getElementById('game-reset');
+    let record = { last: 0, best: 0 };
+    try {
+        const saved = JSON.parse(localStorage.getItem('anka-offline-game-record') || '{}');
+        if (Number.isFinite(saved.last)) record.last = saved.last;
+        if (Number.isFinite(saved.best)) record.best = saved.best;
+    } catch (error) {}
+    lastEl.textContent = String(record.last);
+    bestEl.textContent = String(record.best);
+    let active = false;
+    let paused = false;
+    let ended = false;
+    let frame = 0;
+    let score = 0;
+    let lives = 3;
+    let player = { x: 240, y: 205 };
+    let objects = [];
+    let last = 0;
+    let spawn = 0;
+    let invulnerable = 0;
+    let elapsed = 0;
+    const keys = new Set();
+    const stop = () => { active = false; if (frame) cancelAnimationFrame(frame); frame = 0; };
+    const finish = (message) => {
+        ended = true;
+        stop();
+        record.last = score;
+        record.best = Math.max(record.best, score);
+        lastEl.textContent = String(record.last);
+        bestEl.textContent = String(record.best);
+        statusEl.textContent = message;
+        try { localStorage.setItem('anka-offline-game-record', JSON.stringify(record)); } catch (error) {}
+    };
+    const reset = (begin) => {
+        stop();
+        paused = false;
+        ended = false;
+        score = 0;
+        lives = 3;
+        player = { x: 240, y: 205 };
+        objects = [];
+        last = 0;
+        spawn = 0;
+        invulnerable = 0;
+        elapsed = 0;
+        scoreEl.textContent = '0';
+        livesEl.textContent = '3';
+        pauseButton.textContent = 'Duraklat';
+        statusEl.textContent = 'Yıldızları yakala, meteorlerden sıyrıl!';
+        paint(0);
+        if (begin) start();
+    };
+    function start() {
+        if (active || ended) return;
+        paused = false;
+        active = true;
+        last = performance.now();
+        frame = requestAnimationFrame(draw);
+        statusEl.textContent = 'Kaçış başladı!';
+    }
+    const pause = () => {
+        if (ended) return;
+        paused = !paused;
+        if (paused) {
+            stop();
+            pauseButton.textContent = 'Devam et';
+            statusEl.textContent = 'Oyun duraklatıldı.';
+        } else {
+            pauseButton.textContent = 'Duraklat';
+            start();
+        }
+    };
+    function paint(now) {
+        if (!ctx) return;
+        ctx.fillStyle = '#10141d';
+        ctx.fillRect(0, 0, board.width, board.height);
+        for (let i = 0; i < 36; i++) {
+            const x = (i * 97 + Math.floor(now / 40) * (i % 3 + 1)) % board.width;
+            const y = (i * 53 + Math.floor(now / 60) * (i % 2 + 1)) % board.height;
+            ctx.fillStyle = i % 4 === 0 ? '#3d5874' : '#233142';
+            ctx.fillRect(x, y, 2, 2);
+        }
+        for (const item of objects) {
+            ctx.beginPath();
+            ctx.fillStyle = item.type === 'star' ? '#ffd166' : item.type === 'shield' ? '#6ee7ff' : '#ff695e';
+            ctx.arc(item.x, item.y, item.size, 0, Math.PI * 2);
+            ctx.fill();
+            if (item.type === 'hazard') {
+                ctx.strokeStyle = '#ffc2a8';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            } else if (item.type === 'shield') {
+                ctx.fillStyle = '#07131c';
+                ctx.font = 'bold 12px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('+', item.x, item.y + 4);
+            }
+        }
+        if (invulnerable <= 0 || Math.floor(now / 90) % 2 === 0) {
+            ctx.fillStyle = '#67c8ff';
+            ctx.beginPath();
+            ctx.moveTo(player.x, player.y - 12);
+            ctx.lineTo(player.x - 12, player.y + 10);
+            ctx.lineTo(player.x + 12, player.y + 10);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = '#ffd166';
+            ctx.fillRect(player.x - 3, player.y + 10, 6, 5);
+        }
+    }
+    function draw(now) {
+        if (!active || document.hidden) { stop(); return; }
+        if (now - last < 28) { frame = requestAnimationFrame(draw); return; }
+        const dt = Math.min(48, now - last) / 16.67;
+        last = now;
+        elapsed += dt;
+        invulnerable = Math.max(0, invulnerable - dt);
+        spawn += dt;
+        const level = Math.floor(score / 5);
+        if (spawn > Math.max(8, 24 - level) && objects.length < 18) {
+            const typeRoll = Math.random();
+            const type = typeRoll < .52 ? 'star' : typeRoll < .91 ? 'hazard' : 'shield';
+            objects.push({
+                type,
+                x: 14 + Math.random() * (board.width - 28),
+                y: -12,
+                speed: (type === 'hazard' ? 1.2 : .9) + Math.random() * .8 + level * .16,
+                size: type === 'hazard' ? 8 : type === 'shield' ? 9 : 6
+            });
+            spawn = 0;
+        }
+        const moveX = (keys.has('ArrowRight') || keys.has('d') ? 1 : 0) - (keys.has('ArrowLeft') || keys.has('a') ? 1 : 0);
+        const moveY = (keys.has('ArrowDown') || keys.has('s') ? 1 : 0) - (keys.has('ArrowUp') || keys.has('w') ? 1 : 0);
+        const moveScale = moveX && moveY ? .707 : 1;
+        player.x += moveX * 5 * dt * moveScale;
+        player.y += moveY * 5 * dt * moveScale;
+        player.x = Math.max(13, Math.min(board.width - 13, player.x));
+        player.y = Math.max(18, Math.min(board.height - 14, player.y));
+        for (let i = objects.length - 1; i >= 0; i--) {
+            const item = objects[i];
+            item.y += item.speed * dt;
+            if (Math.hypot(item.x - player.x, item.y - player.y) < item.size + 10) {
+                objects.splice(i, 1);
+                if (item.type === 'star') {
+                    score += 1 + Math.floor(score / 15);
+                    scoreEl.textContent = String(score);
+                    if (score % 5 === 0) statusEl.textContent = 'Dalga ' + (Math.floor(score / 5) + 1) + ' — hız artıyor!';
+                } else if (item.type === 'shield') {
+                    lives = Math.min(5, lives + 1);
+                    livesEl.textContent = String(lives);
+                    statusEl.textContent = 'Kalkan toplandı: +1 can';
+                } else if (invulnerable <= 0) {
+                    lives -= 1;
+                    livesEl.textContent = String(lives);
+                    invulnerable = 75;
+                    statusEl.textContent = 'Meteor çarptı! Kalan can: ' + lives;
+                    if (lives <= 0) {
+                        finish('Oyun bitti. Son puanın ' + score + '. Yeniden başlatıp rekorunu geç!');
+                        paint(now);
+                        return;
+                    }
+                }
+            } else if (item.y > board.height + 12) {
+                scoreEl.textContent = String(score);
+                objects.splice(i, 1);
+            }
+        }
+        if (elapsed > 1800) {
+            finish('Sonsuz uçuş tamamlandı! Puanın ' + score + '.');
+            paint(now);
+            return;
+        }
+        paint(now);
+        frame = requestAnimationFrame(draw);
+    }
+    toggle.addEventListener('click', () => {
+        section.hidden = !section.hidden;
+        toggle.setAttribute('aria-expanded', String(!section.hidden));
+        toggle.textContent = section.hidden ? 'Anka Kaçış oyununu aç' : 'Oyunu kapat';
+        if (section.hidden) stop(); else start();
+    });
+    startButton.addEventListener('click', () => { if (ended) reset(true); else start(); });
+    pauseButton.addEventListener('click', pause);
+    resetButton.addEventListener('click', () => reset(true));
+    window.addEventListener('keydown', (event) => {
+        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'a', 'd', 'w', 's'].includes(event.key)) {
+            keys.add(event.key);
+            if (active) event.preventDefault();
+        }
+    });
+    window.addEventListener('keyup', (event) => keys.delete(event.key));
+    const movePlayerFromPointer = (event) => {
+        if (!active) return;
+        const rect = board.getBoundingClientRect();
+        player.x = (event.clientX - rect.left) * board.width / rect.width;
+        player.y = (event.clientY - rect.top) * board.height / rect.height;
+    };
+    board.addEventListener('pointerdown', (event) => {
+        if (!active) start();
+        try { board.setPointerCapture(event.pointerId); } catch (error) {}
+        movePlayerFromPointer(event);
+    });
+    board.addEventListener('pointermove', (event) => {
+        if (event.pointerType === 'mouse' && event.buttons === 0) return;
+        movePlayerFromPointer(event);
+    }, { passive: true });
+    window.addEventListener('blur', () => keys.clear());
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) stop();
+        else if (!section.hidden && !paused && !ended) start();
+    });
+    paint(0);
+    if (!navigator.onLine || code === -106) {
+        section.hidden = false;
+        toggle.setAttribute('aria-expanded', 'true');
+        toggle.textContent = 'Oyunu kapat';
+        reset(false);
+    }
+})();
+</script>
+</body>
+</html>

@@ -30,6 +30,10 @@ function createLimitPanel() {
             <input id="limit-tabs" type="range" class="limit-slider" min="1" max="30" step="1" oninput="updateLimitValue('limit-tabs-val', this.value)">
         </div>
         <div class="limit-item">
+            <label for="limit-live-tabs">Canlı tutulacak sekme: <span id="limit-live-tabs-val">10</span></label>
+            <input id="limit-live-tabs" type="range" class="limit-slider" min="1" max="30" step="1" oninput="updateLimitValue('limit-live-tabs-val', this.value)">
+        </div>
+        <div class="limit-item">
             <label for="limit-sleep">Boşta sekmeyi uyut: <span id="limit-sleep-val">20 dk</span></label>
             <input id="limit-sleep" type="range" class="limit-slider" min="0" max="60" step="5" oninput="updateLimitValue('limit-sleep-val', this.value, ' dk', true)">
         </div>
@@ -44,6 +48,18 @@ function createLimitPanel() {
     </div>`;
 
     document.body.insertAdjacentHTML('beforeend', html);
+    if (window.AnkaWindowUtils) {
+        const panel = document.getElementById('limit-panel');
+        const overlay = document.getElementById('limit-overlay');
+        window.AnkaWindowUtils.register('performance', {
+            panel,
+            overlay,
+            group: 'modal',
+            isOpen: () => panel.dataset.ankaOpen === 'true',
+            close: () => { if (panel.dataset.ankaOpen === 'true') toggleLimit(); },
+            dismissOnEscape: true
+        });
+    }
 }
 
 function updateLimitValue(id, value, suffix = '', allowOff = false) {
@@ -57,14 +73,17 @@ function syncLimitPanel() {
         return Number.isFinite(value) && value >= min && value <= max ? value : fallback;
     };
     const tabs = document.getElementById('limit-tabs');
+    const liveTabs = document.getElementById('limit-live-tabs');
     const sleep = document.getElementById('limit-sleep');
     const cache = document.getElementById('limit-cache');
-    if (!tabs || !sleep || !cache) return;
+    if (!tabs || !liveTabs || !sleep || !cache) return;
     tabs.value = getValue('max-tabs', 10, 1, 30);
+    liveTabs.value = getValue('max-live-tabs', 10, 1, 30);
     sleep.value = getValue('tab-sleep-minutes', 20, 0, 60);
     cache.value = getValue('cache-size-limit', 500, 100, 5000);
     document.getElementById('gpu-check').checked = localStorage.getItem('set_hw-accel') !== 'false';
     updateLimitValue('limit-tabs-val', tabs.value);
+    updateLimitValue('limit-live-tabs-val', liveTabs.value);
     updateLimitValue('limit-sleep-val', sleep.value, ' dk', true);
     updateLimitValue('limit-cache-val', cache.value, ' MB');
 }
@@ -77,12 +96,16 @@ function toggleLimit() {
     createLimitPanel();
     const p = document.getElementById('limit-panel'), o = document.getElementById('limit-overlay');
     syncLimitPanel();
-    if (p.style.display === 'block') {
+    if (p.dataset.ankaOpen === 'true') {
+        p.dataset.ankaOpen = 'false';
+        if (window.AnkaWindowUtils) window.AnkaWindowUtils.deactivate('performance');
         p.style.transform = 'translate(-50%, -50%) scale(0.96)'; p.style.opacity = '0';
         o.style.display = 'none';
         setTimeout(() => { if (p.style.opacity === '0') p.style.display = 'none'; }, 180);
     } else {
+        p.dataset.ankaOpen = 'true';
         p.style.display = 'block'; o.style.display = 'block';
+        if (window.AnkaWindowUtils) window.AnkaWindowUtils.activate('performance');
         requestAnimationFrame(() => { p.style.transform = 'translate(-50%, -50%) scale(1)'; p.style.opacity = '1'; });
     }
 }
@@ -103,7 +126,7 @@ function applyLimits() {
 
         const values = {
             'max-tabs': getNumVal('limit-tabs', 1, 100, 10),
-            'max-live-tabs': getNumVal('limit-tabs', 1, 100, 10),
+            'max-live-tabs': getNumVal('limit-live-tabs', 1, 30, 10),
             'tab-sleep-minutes': getNumVal('limit-sleep', 0, 1440, 20),
             'cache-size-limit': getNumVal('limit-cache', 10, 5000, 500),
             'hw-accel': String(currentGpu)
