@@ -2,8 +2,6 @@
 
 Anka-Web projesinin kaynak kodları, sürüm yönetim stratejileri, sürekli entegrasyon süreçleri ve modern dağıtım (deployment) konfigürasyonları bu merkezi depo üzerinden profesyonel standartlarda yönetilmektedir.
 
-> **⚠️ Sistem Durumu Bilgilendirmesi:** Mevcut teknik bir aksaklık nedeniyle **Güncelleme Yöneticisi** geçici olarak devre dışı kalmıştır. Teknik ekibimiz bu sorunu çözmek ve sistemi en kısa sürede güvenli bir şekilde aktif hale getirmek için çalışmalarını sürdürmektedir.
-
 ---
 
 ## 🌐 Erişim ve Resmi Kanallar
@@ -11,7 +9,7 @@ Anka-Web projesinin kaynak kodları, sürüm yönetim stratejileri, sürekli ent
 Proje hakkında detaylı bilgi edinmek, adım adım kullanım kılavuzunu incelemek ve canlı demoyu test etmek için resmi kaynaklarımıza göz atabilirsiniz:
 
 * **Resmi Web Sitesi:** [AnkaWeb Surge Platformu](https://ankaweb.surge.sh)
-* **GitHub Kaynak Deposu:** [WraitStudio-Cmd / Anka-Web-Resource](https://github.com/wraitstudio-cmd/Anka-Web-Reseurce)
+* **GitHub Kaynak Deposu:** [WraitStudio-Cmd / Anka-Web-Resource](https://github.com/wraitstudio-cmd/Anka-Web)
 
 ---
 
