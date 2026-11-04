@@ -1,19 +1,26 @@
-# Anka Web
+# Anka Web Projesi – Kapsamlı Mimari ve Geliştirici Kılavuzu 🚀
 
-Anka-Web projesinin kaynak kodları, sürüm yönetimleri ve dağıtım konfigürasyonları bu depo üzerinden yönetilmektedir.
+Anka-Web projesinin kaynak kodları, sürüm yönetim stratejileri, sürekli entegrasyon süreçleri ve modern dağıtım (deployment) konfigürasyonları bu merkezi depo üzerinden profesyonel standartlarda yönetilmektedir.
 
-Not: Güncelleme Yöneticisi Teknik sorundan dolayı bozulmuştur. Bu sorununun üzerinde çalışıyoruz.
-
-Proje hakkında detaylı bilgi almak, kullanım kılavuzunu incelemek ve canlı demoya ulaşmak için resmi web sitemizi ziyaret edebilirsiniz:
-
-🌐 **Resmi Web Sitesi:** [Linke Gitmek İçin Tıkla](https://ankasite.vercel.app)  
+> **⚠️ Sistem Durumu Bilgilendirmesi:** Mevcut teknik bir aksaklık nedeniyle **Güncelleme Yöneticisi** geçici olarak devre dışı kalmıştır. Teknik ekibimiz bu sorunu çözmek ve sistemi en kısa sürede güvenli bir şekilde aktif hale getirmek için çalışmalarını sürdürmektedir.
 
 ---
 
-## ⚖️ Lisans Bilgilendirmesi
+## 🌐 Erişim ve Resmi Kanallar
 
-Anka-Web, açık kaynaklı bir yazılımdır ve **[GPL-3.0-or-later](https://spdx.org)** (GNU General Public License v3.0 veya sonraki sürümleri) ile lisanslanmıştır. 
+Proje hakkında detaylı bilgi edinmek, adım adım kullanım kılavuzunu incelemek ve canlı demoyu test etmek için resmi kaynaklarımıza göz atabilirsiniz:
 
-Bu projenin kaynak kodlarına erişme, değiştirme ve yeniden dağıtma hakları lisans çerçevesinde korunmaktadır. Lisansın tam metnine ve detaylarına doğrudan GitHub depomuz üzerinden ulaşabilirsiniz:
+* **Resmi Web Sitesi:** [AnkaWeb Surge Platformu](https://ankaweb.surge.sh)
+* **GitHub Kaynak Deposu:** [WraitStudio-Cmd / Anka-Web-Resource](https://github.com/wraitstudio-cmd/Anka-Web-Reseurce)
 
-📄 **Lisans Metni:** [LICENSE](https://github.com/wraitstudio-cmd/Anka-Web-Reseurce/blob/main/LICENSE)
+---
+
+## 🛠️ Teknik Altyapı ve Mimari Özellikler
+
+Anka-Web, modern web standartlarına tam uygun olarak yüksek performanslı, ölçeklenebilir ve modüler bir mimariyle tasarlanmıştır.
+
+### Öne Çıkan Mimari Özellikler
+* **Hızlı Statik Dağıtım:** Küresel CDN altyapısı sayesinde içeriklerin kullanıcılara milisaniyeler içerisinde, kesintisiz ve yüksek güvenlikli (HTTPS) olarak sunulması.
+* **Modüler Bileşen Yapısı:** Arayüz bileşenlerinin birbirinden bağımsız, sürdürülebilir ve kolayca optimize edilebilir bir düzende kurgulanması.
+* **Duyarlı (Responsive) Tasarım:** Dokunmatik ekranlar ve masaüstü ekranlarla tam uyumlu, akışkan kullanıcı deneyimi.
+* **Gelişmiş Sürüm Kontrolü:** Git iş akışları ile uyumlu, her dağıtımda revizyon takibi yapabilen altyapı entegrasyonu.
