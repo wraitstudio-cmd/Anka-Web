@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title data-anka-i18n>Anka Web - Kurtarma</title>
+<style>
+:root{font-family:"Segoe UI",system-ui,sans-serif;color:#f4f4f5;background:#111116;font-synthesis:none;text-rendering:optimizeLegibility}
+*{box-sizing:border-box}
+body{min-height:100vh;margin:0;display:grid;place-items:center;padding:24px;background:radial-gradient(ellipse at 50% 0,rgba(244,63,94,.2),transparent 58%),#111116}
+main{width:min(540px,100%);padding:clamp(24px,6vw,42px);border:1px solid #383842;border-radius:24px;background:rgba(27,27,34,.96);box-shadow:0 28px 80px rgba(0,0,0,.45)}
+.brand{display:flex;align-items:center;gap:14px;margin-bottom:28px}
+.brand img{width:48px;height:48px;object-fit:contain}
+.brand span{font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#b9b9c5}
+.mark{display:grid;place-items:center;width:58px;height:58px;margin-bottom:20px;border:1px solid rgba(248,113,113,.35);border-radius:18px;background:rgba(248,113,113,.1);color:#fca5a5;font-size:30px}
+h1{margin:0 0 12px;font-size:clamp(24px,5vw,32px);line-height:1.16;letter-spacing:-.03em}
+p{margin:0;color:#b2b2c0;font-size:15px;line-height:1.65}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:28px}
+button{min-height:48px;padding:10px 14px;border:1px solid #41414d;border-radius:12px;background:#272731;color:#f4f4f5;font:600 14px "Segoe UI",system-ui,sans-serif;cursor:pointer;touch-action:manipulation;transition:background .15s,border-color .15s,transform .15s}
+button:hover{background:#33333f;border-color:#646477}
+button:active{transform:translateY(1px)}
+button.primary{grid-column:1/-1;border-color:#e5485d;background:linear-gradient(135deg,#e5485d,#f97355);color:#fff}
+button.primary:hover{background:linear-gradient(135deg,#d53b50,#ea6248)}
+button:focus-visible{outline:3px solid #fda4af;outline-offset:3px}
+#status{min-height:20px;margin-top:14px;color:#b2b2c0;font-size:12px;text-align:center}
+@media(max-width:480px){body{padding:14px}.actions{grid-template-columns:1fr}button.primary{grid-column:auto}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+<div class="brand"><img src="../icons/dark-logo.png" alt=""><span>Anka Web</span></div>
+<div class="mark" aria-hidden="true">!</div>
+<h1 data-anka-i18n>Anka Web beklenmeyen bir sorunla karşılaştı</h1>
+<p data-anka-i18n>Son işlem tamamlanamamış olabilir. Günlük dosyasını açabilir veya Anka Web’i güvenli şekilde yeniden başlatabilirsiniz.</p>
+<div class="actions">
+<button id="restart" class="primary" type="button" data-anka-i18n>Uygulamayı Yeniden Başlat</button>
+<button id="open-log" type="button" data-anka-i18n>Log Dosyasını Aç</button>
+<button id="close" type="button" data-anka-i18n>Bu Pencereyi Kapat</button>
+</div>
+<div id="status" role="status" aria-live="polite" data-anka-i18n></div>
+</main>
+<script>
+const { ipcRenderer } = require('electron');
+const status = document.getElementById('status');
+document.getElementById('open-log').addEventListener('click', async () => {
+    status.textContent = 'Log dosyası açılıyor…';
+    try {
+        const result = await ipcRenderer.invoke('anka:crash-open-log');
+        status.textContent = result && result.ok ? '' : 'Log dosyası açılamadı.';
+    } catch {
+        status.textContent = 'Log dosyası açılamadı.';
+    }
+});
+document.getElementById('restart').addEventListener('click', () => {
+    status.textContent = 'Anka Web yeniden başlatılıyor…';
+    ipcRenderer.invoke('anka:crash-restart').catch(() => {
+        status.textContent = 'Uygulama yeniden başlatılamadı.';
+    });
+});
+document.getElementById('close').addEventListener('click', () => window.close());
+</script>
+<script src="../core/scripts/translations.js"></script>
+<script>
+(async () => {
+    try {
+        const [state, cache] = await Promise.all([
+            ipcRenderer.invoke('load-app-state'),
+            ipcRenderer.invoke('i18n-load-cache')
+        ]);
+        const lang = state && state.settings && state.settings.language;
+        if (lang) localStorage.setItem('set_language', lang);
+        if (window.AnkaI18n) {
+            if (cache) window.AnkaI18n.hydrateCacheFromMain(cache);
+            window.AnkaI18n.setLang(lang || 'tr');
+        }
+    } catch (error) {
+        console.error('Kurtarma penceresi dili yüklenemedi:', error);
+    }
+})();
+</script>
+</body>
+</html>

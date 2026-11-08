@@ -60,9 +60,72 @@
         root.dataset.homeBtn = showHome;
         root.dataset.tabMem = tabMem;
         root.dataset.pageZoom = String([75, 90, 100, 110, 125, 150].includes(zoom) ? zoom : 100);
+        applyVerticalSidebarWidth();
         applySchoolChrome();
         if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new Event('anka-chrome'));
         scheduleMem();
+    }
+
+    function applyVerticalSidebarWidth(width) {
+        let value = Number(width);
+        if (!Number.isFinite(value)) {
+            try { value = Number(localStorage.getItem('anka_vt_sidebar_width')); } catch (err) {}
+        }
+        if (!Number.isFinite(value) || value < 1) value = 240;
+        value = Math.max(200, Math.min(420, Math.round(value)));
+        document.documentElement.style.setProperty('--vt-sidebar-w', value + 'px');
+        const handle = $('vt-sidebar-resize');
+        if (handle) handle.setAttribute('aria-valuenow', String(value));
+    }
+
+    function bindVerticalSidebarResize() {
+        const handle = $('vt-sidebar-resize');
+        const sidebar = $('sidebar');
+        if (!handle || !sidebar || handle.__ankaBound) return;
+        handle.__ankaBound = true;
+        let pointerId = null;
+        const move = (event) => {
+            if (pointerId !== event.pointerId) return;
+            const rect = sidebar.getBoundingClientRect();
+            const fromRight = document.documentElement.dataset.sidebarSide === 'right';
+            const width = fromRight ? rect.right - event.clientX : event.clientX - rect.left;
+            applyVerticalSidebarWidth(width);
+        };
+        const finish = (event) => {
+            if (pointerId !== event.pointerId) return;
+            pointerId = null;
+            sidebar.classList.remove('vt-resizing');
+            try {
+                localStorage.setItem('anka_vt_sidebar_width',
+                    getComputedStyle(document.documentElement).getPropertyValue('--vt-sidebar-w').replace('px', '').trim());
+            } catch (err) {
+                console.error('Dikey sekme genişliği kaydedilemedi:', err);
+            }
+            document.removeEventListener('pointermove', move);
+            document.removeEventListener('pointerup', finish);
+            document.removeEventListener('pointercancel', finish);
+        };
+        handle.addEventListener('pointerdown', (event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            pointerId = event.pointerId;
+            if (typeof handle.setPointerCapture === 'function') handle.setPointerCapture(pointerId);
+            sidebar.classList.add('vt-resizing');
+            document.addEventListener('pointermove', move);
+            document.addEventListener('pointerup', finish);
+            document.addEventListener('pointercancel', finish);
+        });
+        handle.addEventListener('keydown', (event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            let current = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--vt-sidebar-w'));
+            if (!Number.isFinite(current)) current = 240;
+            const direction = document.documentElement.dataset.sidebarSide === 'right' ? -1 : 1;
+            const change = (event.key === 'ArrowRight' ? 1 : -1) * direction * (event.shiftKey ? 40 : 16);
+            applyVerticalSidebarWidth(current + change);
+            try { localStorage.setItem('anka_vt_sidebar_width', String(Math.max(200, Math.min(420, Math.round(current + change))))); }
+            catch (err) { console.error('Dikey sekme genişliği kaydedilemedi:', err); }
+        });
     }
 
     function applySchoolChrome() {
@@ -537,37 +600,41 @@
         host.addEventListener('pointercancel', clear);
     }
 
+    let memRefreshActive = false;
     async function refreshMem() {
         if (document.hidden) return;
         if (ls('tab-memory', 'false') !== 'true') return;
-        const ipc = getIpc();
-        if (!ipc) return;
-        let metrics;
-        try { metrics = await ipc.invoke('tabs:metrics'); } catch (err) { return; }
-        const byId = new Map();
-        if (metrics) {
-            for (let i = 0; i < metrics.length; i++) {
-                const row = metrics[i];
-                if (!row || !row.id) continue;
-                const mem = row.memory;
-                byId.set(row.id, (mem && (mem.residentSet || mem.privateBytes || mem.workingSetSize)) || 0);
-            }
-        }
+        if (memRefreshActive) return;
         const tabs = typeof ankaTabs !== 'undefined' ? ankaTabs : null;
         if (!tabs) return;
-        tabs.forEach((st) => {
-            if (!st.memEl) return;
-            if (!st.vw || typeof st.vw.getWebContentsId !== 'function') {
-                st.memEl.textContent = st.sleeping ? 'uyku' : '';
-                return;
+        memRefreshActive = true;
+        try {
+            for (const [id, st] of tabs) {
+                if (!st.memEl) continue;
+                if (!st.vw || typeof st.vw.executeJavaScript !== 'function') {
+                    st.memEl.textContent = st.sleeping ? 'uyku' : '—';
+                    st.memEl.title = st.sleeping ? 'Sekme uyutuldu' : 'Bellek ölçümü kullanılamıyor';
+                    continue;
+                }
+                try {
+                    const bytes = await st.vw.executeJavaScript(
+                        '(()=>{const memory=performance.memory;return memory&&Number.isFinite(memory.usedJSHeapSize)?memory.usedJSHeapSize:null})()'
+                    );
+                    if (tabs.get(id) !== st || !st.memEl.isConnected) continue;
+                    st.memEl.textContent = Number.isFinite(bytes) && bytes > 0
+                        ? '≈' + Math.max(1, Math.round(bytes / 1048576)) + ' MB' : '—';
+                    st.memEl.title = Number.isFinite(bytes)
+                        ? 'Sayfanın JavaScript belleği (yaklaşık)' : 'Bu sayfada bellek ölçümü desteklenmiyor';
+                } catch (err) {
+                    if (tabs.get(id) === st && st.memEl.isConnected) {
+                        st.memEl.textContent = '—';
+                        st.memEl.title = 'Bu sayfada bellek ölçümü alınamadı';
+                    }
+                }
             }
-            try {
-                const bytes = byId.get(st.vw.getWebContentsId()) || 0;
-                st.memEl.textContent = bytes ? Math.max(1, Math.round(bytes / 1048576)) + ' MB' : '';
-            } catch (err) {
-                st.memEl.textContent = '';
-            }
-        });
+        } finally {
+            memRefreshActive = false;
+        }
     }
 
     function scheduleMem() {
@@ -581,13 +648,19 @@
 
     window.applyChromeLayout = applyChromeLayout;
     window.applySchoolChrome = applySchoolChrome;
+    window.addEventListener('beforeunload', () => {
+        clearInterval(memTimer);
+        memTimer = 0;
+    }, { once: true });
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
+            bindVerticalSidebarResize();
             applyChromeLayout();
             pinchBind();
         }, { once: true });
     } else {
+        bindVerticalSidebarResize();
         applyChromeLayout();
         pinchBind();
     }

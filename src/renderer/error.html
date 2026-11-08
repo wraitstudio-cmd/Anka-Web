@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
-<title>Anka Web · Sayfa açılamadı</title>
+<title data-anka-i18n>Anka Web · Sayfa açılamadı</title>
 <style>
 :root{font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color-scheme:dark;--bg:#111318;--panel:#1b1e25;--text:#f4f6fb;--muted:#a9afbd;--accent:#ff594d;--border:#343946}
 *{box-sizing:border-box}
@@ -38,31 +38,31 @@ canvas{display:block;width:100%;height:auto;max-height:300px;border:1px solid va
 <body>
 <main>
 <div class="brand">ANKA WEB</div>
-<h1 id="title">Bu sayfa açılamadı</h1>
-<p id="message">Bağlantı kurulamadı. İnternet bağlantınızı veya site adresini kontrol edip yeniden deneyin.</p>
+<h1 id="title" data-anka-i18n>Bu sayfa açılamadı</h1>
+<p id="message" data-anka-i18n>Bağlantı kurulamadı. İnternet bağlantınızı veya site adresini kontrol edip yeniden deneyin.</p>
 <div class="address" id="address">Adres gösterilemiyor</div>
 <div class="actions">
-<button class="primary" id="retry" type="button">Yeniden dene</button>
-<button id="home" type="button">Ana sayfayı aç</button>
-<button id="network-settings" type="button" hidden>Windows ağ ayarlarını aç</button>
-<button id="game-toggle" type="button" aria-expanded="false">Anka Kaçış oyununu aç</button>
+<button class="primary" id="retry" type="button" data-anka-i18n>Yeniden dene</button>
+<button id="home" type="button" data-anka-i18n>Ana sayfayı aç</button>
+<button id="network-settings" type="button" data-anka-i18n hidden>Windows ağ ayarlarını aç</button>
+<button id="game-toggle" type="button" aria-expanded="false" data-anka-i18n>Anka Kaçış oyununu aç</button>
 </div>
-<label class="net-options"><input id="auto-retry" type="checkbox"> İnternet geri geldiğinde bu sayfayı otomatik aç</label>
+<label class="net-options"><input id="auto-retry" type="checkbox"><span data-anka-i18n>İnternet geri geldiğinde bu sayfayı otomatik aç</span></label>
 <details>
-<summary>Ne yapabilirim?</summary>
+<summary data-anka-i18n>Ne yapabilirim?</summary>
 <ul class="troubleshooting">
-<li>Wi-Fi veya Ethernet bağlantısının açık olduğunu kontrol edin.</li>
-<li>Modem/router bağlantısını ve uçak modunu kontrol edin.</li>
-<li>Adresin doğru yazıldığından emin olun; kurumsal ağdaysanız ağ yöneticinize danışın.</li>
-<li>Yalnızca bu site açılmıyorsa site geçici olarak kapalı olabilir.</li>
+<li data-anka-i18n>Wi-Fi veya Ethernet bağlantısının açık olduğunu kontrol edin.</li>
+<li data-anka-i18n>Modem/router bağlantısını ve uçak modunu kontrol edin.</li>
+<li data-anka-i18n>Adresin doğru yazıldığından emin olun; kurumsal ağdaysanız ağ yöneticinize danışın.</li>
+<li data-anka-i18n>Yalnızca bu site açılmıyorsa site geçici olarak kapalı olabilir.</li>
 </ul>
 </details>
 <section class="game" id="game" hidden aria-label="Anka Kaçış çevrimdışı oyunu">
-<div class="game-head"><h2>Anka Kaçış</h2><div class="game-stats"><span>Puan <b id="score">0</b></span><span>Can <b id="lives">3</b></span><span>Son <b id="last-score">0</b></span><span>Rekor <b id="best-score">0</b></span></div></div>
-<p class="game-help">Yıldızları topla, meteor ve kıvılcımlardan kaç. Mavi kalkan can kazandırır. Ok tuşları/WASD veya dokunmatik ekranla hareket et.</p>
-<div class="game-controls"><button class="primary" id="game-start" type="button">Başlat</button><button id="game-pause" type="button">Duraklat</button><button id="game-reset" type="button">Yeniden başlat</button></div>
+<div class="game-head"><h2 data-anka-i18n>Anka Kaçış</h2><div class="game-stats"><span>Puan <b id="score">0</b></span><span>Can <b id="lives">3</b></span><span>Son <b id="last-score">0</b></span><span>Rekor <b id="best-score">0</b></span></div></div>
+<p class="game-help" data-anka-i18n>Yıldızları topla, meteor ve kıvılcımlardan kaç. Mavi kalkan can kazandırır. Ok tuşları/WASD veya dokunmatik ekranla hareket et.</p>
+<div class="game-controls"><button class="primary" id="game-start" type="button" data-anka-i18n>Başlat</button><button id="game-pause" type="button" data-anka-i18n>Duraklat</button><button id="game-reset" type="button" data-anka-i18n>Yeniden başlat</button></div>
 <canvas id="board" width="480" height="240" aria-label="Yıldızları topla, meteor ve kıvılcımlardan kaç"></canvas>
-<p class="game-status" id="game-status" aria-live="polite"></p>
+<p class="game-status" id="game-status" aria-live="polite" data-anka-i18n></p>
 </section>
 </main>
 <script>
@@ -72,13 +72,38 @@ canvas{display:block;width:100%;height:auto;max-height:300px;border:1px solid va
     const target = params.get('url') || '';
     const code = Number(params.get('code')) || 0;
     const errorMessages = {
+        '-2': ['Bağlantı tamamlanamadı', 'İstek tamamlanırken beklenmeyen bir ağ hatası oluştu. Bağlantınızı kontrol edip yeniden deneyin.'],
+        '-3': ['İstek iptal edildi', 'Bu sayfa isteği iptal edildi. İsterseniz yeniden deneyebilirsiniz.'],
+        '-4': ['Adres veya istek geçersiz', 'Tarayıcı bu adresi veya isteği işleyemedi. Adresi kontrol edip yeniden deneyin.'],
+        '-6': ['Dosya bulunamadı', 'İstenen yerel dosya bulunamadı veya taşınmış olabilir. Dosya yolunu kontrol edin.'],
+        '-7': ['Bağlantı zaman aşımına uğradı', 'Sunucu zamanında yanıt vermedi. İnternetinizi kontrol edin veya biraz sonra yeniden deneyin.'],
+        '-8': ['Dosya boyutu desteklenmiyor', 'İstenen dosya tarayıcının işleyebileceğinden daha büyük.'],
+        '-10': ['Erişim izni yok', 'Dosyaya veya kaynağa erişim izni verilmedi. Adresi ve sistem izinlerini kontrol edin.'],
+        '-11': ['İşlem desteklenmiyor', 'İstenen ağ işlemi bu tarayıcıda desteklenmiyor.'],
+        '-12': ['Yetersiz sistem kaynağı', 'Sayfa açılırken yeterli sistem kaynağı ayrılamadı. Diğer sekmeleri kapatıp yeniden deneyin.'],
+        '-14': ['Yüklenen dosya değişti', 'Yükleme sırasında dosya değiştirildi veya taşındı. Dosyayı yeniden seçip deneyin.'],
+        '-15': ['Bağlantı artık etkin değil', 'Sunucu bağlantısı kapandı. Sayfayı yeniden yüklemeyi deneyin.'],
+        '-18': ['Diskte boş alan yok', 'İşlem için yeterli disk alanı bulunamadı. Disk alanı açıp yeniden deneyin.'],
+        '-19': ['Dosya güvenlik denetimine takıldı', 'Dosya güvenlik yazılımı tarafından zararlı olarak işaretlendi. Güvenliğiniz için indirme engellendi.'],
+        '-20': ['İstek tarayıcı tarafından engellendi', 'Bu istek tarayıcı veya bir içerik engelleyici tarafından engellendi.'],
+        '-21': ['Ağ bağlantısı değişti', 'Sayfa yüklenirken ağ bağlantısı değişti. Bağlantı kurulduktan sonra yeniden deneyin.'],
+        '-22': ['İstek yönetici tarafından engellendi', 'Bu adres veya işlem cihaz yöneticisinin politikasıyla engellendi.'],
+        '-27': ['Sayfa güvenlik nedeniyle engellendi', 'Sunucunun yanıtı tarayıcının güvenlik kurallarıyla uyumlu olmadığı için engellendi.'],
+        '-28': ['Güvenli olmayan bağlantı engellendi', 'Bu sayfa güvenli olmayan bir bağlantı kullanıyor. HTTPS adresini deneyin.'],
+        '-29': ['Sayfa içeriği güvenlik kuralıyla engellendi', 'Site, tarayıcının içerik güvenlik ilkesiyle uyumlu olmayan bir kaynak yüklemeye çalıştı.'],
+        '-100': ['Sunucu bağlantıyı kapattı', 'Sunucu bağlantıyı yanıt vermeden kapattı. Biraz sonra yeniden deneyin.'],
+        '-103': ['Bağlantı kesildi', 'Sunucu bağlantıyı beklenmedik biçimde sonlandırdı. Yeniden deneyebilirsiniz.'],
+        '-104': ['Sunucuya bağlanılamadı', 'Sunucuya bağlantı kurulamadı. Adresi ve ağ bağlantınızı kontrol edin.'],
         '-102': ['Site bağlantıyı reddetti', 'Site şu anda bağlantıyı kabul etmiyor. Adresi kontrol edip daha sonra yeniden deneyin.'],
         '-101': ['Bağlantı kesildi', 'Siteyle kurulan bağlantı beklenmedik şekilde kesildi. Yeniden deneyebilirsiniz.'],
-        '-107': ['Güvenli bağlantı kurulamadı', 'Bu sitenin güvenli bağlantısı doğrulanamadı. Güvenliğiniz için bağlantı otomatik olarak güvensiz biçimde açılmadı.'],
-        '-200': ['Sayfa güvenlik nedeniyle engellendi', 'Bu adres tarayıcının güvenlik kurallarıyla uyumlu değil. Adresi ve bağlantı türünü kontrol edin.'],
-        '-103': ['Sunucuya ulaşılamıyor', 'Sunucu adresi bulunamadı veya yanıt vermiyor. Ağ bağlantınızı ve adresi kontrol edin.'],
-        '-104': ['Sunucu bağlantıyı kapattı', 'Sunucu bağlantıyı beklenmedik biçimde kapattı. Biraz sonra yeniden deneyin.'],
+        '-107': ['Güvenli bağlantı kurulamadı', 'Bu sitenin TLS/SSL bağlantısı kurulamadı. Tarayıcı güvenli olmayan bir bağlantıya otomatik olarak geçmez.'],
+        '-108': ['Sunucu adresi geçersiz', 'Bu adres geçerli bir ağ adresine karşılık gelmiyor. Adresi yeniden kontrol edin.'],
         '-109': ['Sunucuya erişilemiyor', 'Sunucuya giden yol bulunamadı. Ağınızı veya VPN/proxy ayarınızı kontrol edin.'],
+        '-110': ['İstemci sertifikası gerekli', 'Sunucu kimlik doğrulaması için bir istemci sertifikası istiyor. Site yöneticinize danışın.'],
+        '-111': ['Proxy tüneli kurulamadı', 'Proxy sunucusu üzerinden güvenli bağlantı kurulamadı. Proxy veya ağ yöneticinizi kontrol edin.'],
+        '-112': ['Güvenli bağlantı kullanılamıyor', 'Tarayıcı ile sunucunun ortak bir güvenli bağlantı yöntemi bulunamadı.'],
+        '-113': ['Güvenli bağlantı sürümü uyumsuz', 'Sunucunun TLS/SSL sürümü veya şifreleme ayarları desteklenmiyor.'],
+        '-114': ['Güvenli bağlantı yeniden başlatılamadı', 'Sunucu güvenli bağlantıyı yeniden kuramadı. Biraz sonra yeniden deneyin.'],
         '-118': ['Bağlantı zaman aşımına uğradı', 'Site zamanında yanıt vermedi. İnternetinizi kontrol edin veya biraz sonra yeniden deneyin.'],
         '-130': ['Proxy bağlantı hatası', 'Proxy sunucusuna ulaşılamadı. Proxy ayarınızı ya da ağ yöneticinizi kontrol edin.'],
         '-137': ['Site adı çözümlenemedi', 'DNS yanıt vermedi. Bağlantınızı kontrol edin veya daha sonra yeniden deneyin.'],
@@ -86,6 +111,17 @@ canvas{display:block;width:100%;height:auto;max-height:300px;border:1px solid va
         '-301': ['Site adresi bulunamadı', 'Bu adresin sunucusu bulunamadı. Adresi veya internet bağlantınızı kontrol edin.'],
         '-324': ['Sunucudan yanıt alınamadı', 'Sunucu bağlantıyı kapattı ve yanıt göndermedi. Biraz sonra yeniden deneyin.'],
         '-501': ['Bu bağlantı yöntemi desteklenmiyor', 'Site bu bağlantı türünü desteklemiyor. Adresi kontrol edin veya site yöneticinize danışın.'],
+        '-200': ['Sertifika adı siteyle eşleşmiyor', 'Güvenlik sertifikası bu sitenin adresi için düzenlenmemiş. Güvenliğiniz için sayfa açılmadı.'],
+        '-201': ['Güvenlik sertifikasının tarihi geçersiz', 'Sitenin güvenlik sertifikasının süresi dolmuş veya henüz başlamamış. Cihazınızın tarihini ve saati kontrol edin.'],
+        '-202': ['Sertifika yetkilisine güvenilemiyor', 'Sitenin güvenlik sertifikası güvenilir bir sertifika yetkilisi tarafından doğrulanamadı.'],
+        '-203': ['Sertifika iptal durumu denetlenemedi', 'Sitenin güvenlik sertifikasının geçerli olup olmadığı doğrulanamadı. Daha sonra yeniden deneyin.'],
+        '-204': ['Sertifika iptal durumu bilinmiyor', 'Sertifika iptal denetimi tamamlanamadı. Güvenliğiniz için bağlantı açılmadı.'],
+        '-206': ['Sertifika iptal edilmiş', 'Sitenin güvenlik sertifikası iptal edilmiş. Güvenliğiniz için bağlantı açılmadı.'],
+        '-207': ['Güvenlik sertifikası geçersiz', 'Sitenin güvenlik sertifikası geçersiz veya bozuk. Site yöneticinize danışın.'],
+        '-208': ['Sertifika imzası güvensiz', 'Sitenin güvenlik sertifikası artık güvenli kabul edilmeyen bir imzalama yöntemi kullanıyor.'],
+        '-210': ['Sertifika adı benzersiz değil', 'Sitenin güvenlik sertifikası birden fazla adres için çakışan adlar içeriyor.'],
+        '-211': ['Sertifika anahtarı güvensiz', 'Sitenin güvenlik sertifikası güvenli olmayan bir anahtar kullanıyor.'],
+        '-214': ['Sertifika şeffaflığı doğrulanamadı', 'Sitenin sertifikası gerekli güvenlik kayıtlarında bulunamadı.'],
         '-105': ['Site adresi bulunamadı', 'DNS, bu site adresini bulamadı. Adresi kontrol edin veya ağ bağlantınızı sınayın.'],
         '-106': ['İnternet bağlantısı yok', 'Anka Web internete bağlanamıyor. Wi-Fi veya Ethernet bağlantınızı kontrol edin; çevrimdışıysanız Anka Kaçış oyununu oynayabilirsiniz.']
     };
@@ -354,5 +390,6 @@ canvas{display:block;width:100%;height:auto;max-height:300px;border:1px solid va
     }
 })();
 </script>
+<script src="../core/scripts/translations.js"></script>
 </body>
 </html>

@@ -1,144 +1,325 @@
 <!doctype html>
-<html lang="tr">
+<html lang="tr" class="welcome-loading">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
-<title>Hoşgeldin</title>
+<meta name="theme-color" content="#111114" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f2f4f8" media="(prefers-color-scheme: light)">
+<title data-anka-i18n>Hoşgeldin</title>
+<link rel="preload" as="image" href="../icons/dark-logo.png" fetchpriority="high">
+<link rel="preload" as="image" href="../icons/white-logo.png">
+<script>
+(function(){try{var p=localStorage.getItem('set_theme-preset');if(!p){var l=localStorage.getItem('set_dark-mode');p=l==='false'?'light':l==='true'?'dark':'system'}var light=p==='light'||(p==='system'&&window.matchMedia('(prefers-color-scheme: light)').matches);if(light){document.documentElement.classList.add('light-theme')}document.documentElement.dataset.themeMode=p;document.documentElement.dataset.themePreset=light?'light':'dark';document.documentElement.style.colorScheme=light?'light':'dark'}catch(e){}})();
+</script>
 <style>
-:root{font-family:system-ui,"Segoe UI",sans-serif;color-scheme:dark;--bg:#111114;--panel:#1a1a1f;--border:#303038;--text:#f4f4f5;--muted:#a1a1aa;--accent:#ff4757}
+:root{font-family:system-ui,"Segoe UI",sans-serif;color-scheme:dark;--bg:#111114;--panel:#1a1a1f;--border:#303038;--text:#f4f4f5;--muted:#a1a1aa;--accent:#ff4757;--accent-soft:rgba(255,71,87,.09)}
+:root.light-theme{color-scheme:light;--bg:#f2f4f8;--panel:#fff;--border:#d9dde6;--text:#20232b;--muted:#5e6470;--accent:#d92f42;--accent-soft:rgba(217,47,66,.09)}
 *{box-sizing:border-box}
 body{min-width:320px;min-height:100vh;margin:0;padding:clamp(16px,4vw,48px);display:grid;place-items:center;background:radial-gradient(ellipse at 18% 0%,rgba(255,71,87,.13),transparent 46%),var(--bg);color:var(--text)}
-main{width:min(100%,920px);min-height:min(660px,calc(100vh - 32px));display:flex;flex-direction:column;justify-content:space-between;padding:clamp(22px,5vw,56px);border:1px solid var(--border);border-radius:24px;background:var(--panel);box-shadow:0 24px 70px rgba(0,0,0,.32)}
+main{width:min(100%,920px);min-height:min(660px,calc(100vh - 32px));display:flex;flex-direction:column;justify-content:space-between;padding:clamp(22px,5vw,56px);border:1px solid var(--border);border-radius:24px;background:var(--panel);box-shadow:0 24px 70px rgba(0,0,0,.28)}
 header{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:14px;font-weight:650}
 header img{width:44px;height:44px;object-fit:contain}
 .content{max-width:720px;margin:48px 0}
 .eyebrow{color:var(--accent);font-size:12px;font-weight:750;letter-spacing:.1em;text-transform:uppercase}
-h1{margin:12px 0;font-size:clamp(32px,6vw,58px);line-height:1.04;letter-spacing:-.04em}
+h1{margin:12px 0;font-size:clamp(32px,6vw,58px);line-height:1.04;letter-spacing:-.04em;text-wrap:balance}
 .lead{max-width:620px;color:var(--muted);font-size:clamp(15px,2vw,18px);line-height:1.65}
 .feature-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:28px 0 0;padding:0;list-style:none}
-.feature-list li{padding:16px;border:1px solid var(--border);border-radius:14px;background:rgba(255,255,255,.025)}
+.feature-list li{padding:16px;border:1px solid var(--border);border-radius:14px;background:color-mix(in srgb,var(--text) 3%,var(--panel))}
 .feature-list strong{display:block;margin-bottom:5px;font-size:14px}
 .feature-list span{color:var(--muted);font-size:13px;line-height:1.5}
-.guide-card{padding:clamp(20px,4vw,36px);border:1px solid var(--border);border-radius:18px;background:rgba(255,255,255,.025)}
-.guide-progress{height:5px;margin:0 0 24px;overflow:hidden;border-radius:4px;background:#303038}
-.guide-progress span{display:block;width:0;height:100%;border-radius:inherit;background:var(--accent);transition:width .2s ease}
-.guide-card h2{margin:10px 0;font-size:clamp(23px,4vw,34px)}
+.guide-card{padding:clamp(20px,4vw,36px);border:1px solid var(--border);border-radius:18px;background:color-mix(in srgb,var(--text) 3%,var(--panel));contain:content;min-height:300px}
+.guide-progress{height:5px;margin:0 0 20px;overflow:hidden;border-radius:4px;background:var(--border)}
+.guide-progress span{display:block;width:100%;height:100%;border-radius:inherit;background:var(--accent);transform:scaleX(0);transform-origin:left center;transition:transform .28s cubic-bezier(.2,.7,.2,1);will-change:transform}
+.guide-count{color:var(--muted);font-size:12px;letter-spacing:.02em}
+.guide-card h2{margin:10px 0;font-size:clamp(23px,4vw,34px);outline:none}
 .guide-card p{max-width:640px;color:var(--muted);font-size:16px;line-height:1.7}
-.guide-count{color:var(--muted);font-size:12px}
+.guide-tip{margin:16px 0 0;padding:12px 14px;border-left:3px solid var(--accent);border-radius:0 10px 10px 0;background:var(--accent-soft);color:var(--muted);font-size:13px;line-height:1.55}
 .actions{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .action-group{display:flex;gap:10px;flex-wrap:wrap}
-button{min-height:48px;padding:0 20px;border:1px solid var(--border);border-radius:12px;background:transparent;color:var(--text);font:inherit;font-weight:650;cursor:pointer;touch-action:manipulation}
-button:hover{border-color:var(--accent);background:rgba(255,71,87,.09)}
+button{min-height:48px;padding:0 20px;border:1px solid var(--border);border-radius:12px;background:transparent;color:var(--text);font:inherit;font-weight:650;cursor:pointer;touch-action:manipulation;transition:background-color .15s ease,border-color .15s ease}
+button:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft)}
 button:focus-visible{outline:3px solid rgba(255,71,87,.45);outline-offset:2px}
+button:disabled{opacity:.42;cursor:not-allowed}
 button.primary{border-color:var(--accent);background:var(--accent);color:#fff}
-button.primary:hover{filter:brightness(1.08)}
+button.primary:hover:not(:disabled){filter:brightness(1.08)}
+button.ghost{border-color:transparent;color:var(--muted);font-weight:600}
+button.ghost:hover{border-color:var(--border);background:rgba(255,255,255,.04);color:var(--text)}
 [hidden]{display:none!important}
-@media(max-width:640px){body{padding:10px}main{min-height:calc(100vh - 20px);padding:22px;border-radius:17px}.content{margin:32px 0}.feature-list{grid-template-columns:1fr}.actions{align-items:stretch}.action-group{width:100%}.action-group button{flex:1}.actions>.primary{width:100%}}
-@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}
+@media(max-width:640px){body{padding:10px}main{min-height:calc(100vh - 20px);padding:22px;border-radius:17px}.content{margin:32px 0}.feature-list{grid-template-columns:1fr}.guide-card{min-height:0}.actions{align-items:stretch}.action-group{width:100%}.action-group button{flex:1}.actions>.primary{width:100%}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+html.welcome-loading main{visibility:hidden}
+#welcome-splash{position:fixed;inset:0;z-index:10;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 45%,rgba(255,71,87,.16),transparent 42%),var(--bg);opacity:1;transition:opacity .28s ease;cursor:pointer}
+#welcome-splash.is-leaving{opacity:0;pointer-events:none}
+#welcome-splash img{width:clamp(88px,14vw,132px);height:clamp(88px,14vw,132px);object-fit:contain;filter:drop-shadow(0 10px 24px rgba(255,71,87,.22));animation:welcome-mark 1.8s ease-in-out infinite alternate}
+@keyframes welcome-mark{from{transform:translateY(2px) scale(.98);opacity:.84}to{transform:translateY(-2px) scale(1.02);opacity:1}}
 </style>
+<noscript><style>#welcome-splash{display:none!important}html.welcome-loading main{visibility:visible!important}</style></noscript>
 </head>
 <body>
+<div id="welcome-splash" aria-hidden="true"><img id="welcome-splash-logo" src="../icons/dark-logo.png" alt="" fetchpriority="high"></div>
 <main>
-  <header><img src="../icons/white-logo.png" alt=""><span>Anka Web</span></header>
+  <header><img id="welcome-logo" src="../icons/dark-logo.png" alt=""><span>Anka Web</span></header>
+
   <section class="content" id="welcome-screen">
-    <div class="eyebrow">Hoşgeldiniz</div>
-    <h1>Anka Web’e hoş geldiniz.</h1>
-    <p class="lead">Anka Web’i indirdiğiniz için teşekkürler. Hızlı gezinme, dokunmatik kalem araçları, sekme yönetimi ve kişiselleştirilebilir ayarlar tek bir yerde.</p>
+    <div class="eyebrow" data-anka-i18n>Hoşgeldiniz</div>
+    <h1 data-anka-i18n>Anka Web’e hoş geldiniz.</h1>
+    <p class="lead" data-anka-i18n>Anka Web’i tercih ettiğiniz için teşekkürler. Hızlı gezinme, dokunmatik kalem araçları, güçlü sekme yönetimi ve ince ayar yapılabilen görünüm seçenekleri tek bir yerde. Aşağıdaki kısa tur yaklaşık bir dakika sürer ve tüm temel özellikleri adım adım gösterir.</p>
     <ul class="feature-list">
-      <li><strong>Kolay gezinme</strong><span>Adres çubuğu, sekmeler, yer imleri ve indirmeler.</span></li>
-      <li><strong>Kalem ve araçlar</strong><span>Sayfaların üzerine çizin, alan yakalayın ve ders zamanlayıcısını kullanın.</span></li>
-      <li><strong>Görünüm ve erişilebilirlik</strong><span>Tema, yazı boyutu, dokunmatik kullanım ve performans seçenekleri.</span></li>
-      <li><strong>Gizlilik ve kontrol</strong><span>Site izinlerini, güvenlik tercihlerini ve tarama verilerini yönetin.</span></li>
+      <li><strong data-anka-i18n>Kolay gezinme</strong><span data-anka-i18n>Adres çubuğu, sekmeler, yer imleri ve indirmeler tek araç çubuğunda.</span></li>
+      <li><strong data-anka-i18n>Kalem ve ders araçları</strong><span data-anka-i18n>Sayfaların üzerine çizin, alan yakalayın, not alın; kronometre ve geri sayımı kullanın.</span></li>
+      <li><strong data-anka-i18n>Görünüm ve erişilebilirlik</strong><span data-anka-i18n>Tema, yazı boyutu, sayfa ölçeği, dokunmatik hedefler ve animasyon tercihleri.</span></li>
+      <li><strong data-anka-i18n>Gizlilik ve kontrol</strong><span data-anka-i18n>Site izinleri, güvenlik tercihleri ve tarama verileri tamamen sizin denetiminizde.</span></li>
     </ul>
   </section>
+
   <section class="content" id="guide-screen" hidden>
-    <div class="eyebrow">Anka Web turu</div>
-    <h1>Özellikleri tanıyalım.</h1>
+    <div class="eyebrow" data-anka-i18n>Anka Web turu</div>
+    <h1 data-anka-i18n>Özellikleri adım adım tanıyalım.</h1>
     <article class="guide-card" aria-live="polite">
-      <div class="guide-progress" aria-hidden="true"><span id="guide-progress"></span></div>
+      <div class="guide-progress" id="guide-progressbar" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="1" aria-label="Tanıtım ilerlemesi"><span id="guide-progress"></span></div>
       <div class="guide-count" id="guide-count"></div>
-      <h2 id="guide-title"></h2>
-      <p id="guide-description"></p>
+      <h2 id="guide-title" tabindex="-1" data-anka-i18n></h2>
+      <p id="guide-description" data-anka-i18n></p>
+      <p class="guide-tip" id="guide-tip" data-anka-i18n></p>
     </article>
   </section>
+
   <section class="content" id="finish-screen" hidden>
-    <div class="eyebrow">Hazırsınız</div>
-    <h1>İyi gezinmeler!</h1>
-    <p class="lead">Tanıtımı istediğiniz zaman Ayarlar bölümündeki “Tüm özellikleri tanıt” seçeneğinden yeniden açabilirsiniz.</p>
+    <div class="eyebrow" data-anka-i18n>Hazırsınız</div>
+    <h1 data-anka-i18n>İyi gezinmeler!</h1>
+    <p class="lead" data-anka-i18n>Artık temel özellikleri biliyorsunuz. Adres çubuğundan ilk sayfanızı açabilir, sekmeleri düzenleyebilir ve görünümü kendinize göre uyarlayabilirsiniz. Bu tanıtımı dilediğiniz zaman Ayarlar bölümündeki “Tüm özellikleri tanıt” seçeneğinden yeniden başlatabilirsiniz.</p>
   </section>
+
+  <div hidden aria-hidden="true">
+    <span data-anka-i18n>Adres çubuğu ve akıllı arama</span>
+    <span data-anka-i18n>Yazmaya başladığınız anda adres çubuğu geçmişinizden, yer imlerinizden ve arama motorunuzdan öneriler sunar. Bir site adresi, arama sözcüğü ya da doğrudan komut yazabilirsiniz. Adres çubuğunun sağındaki simgeye dokunarak bağlantı durumunu ve o sitenin izinlerini tek bakışta görebilirsiniz.</span>
+    <span data-anka-i18n>Sekmeler, gruplar ve oturumlar</span>
+    <span data-anka-i18n>Yeni sekme açın, sürükleyerek sıralayın ve ilgili sayfaları renkli gruplarda toplayın. Ses çalan sekmeleri tek dokunuşla sessize alın, önemli sekmeleri sabitleyin. Oturum yöneticisiyle sık kullandığınız sekme topluluklarını kaydedip sonra tek tıkla geri yükleyin.</span>
+    <span data-anka-i18n>Yer imleri, geçmiş ve indirmeler</span>
+    <span data-anka-i18n>Araç çubuğundaki yer imleriyle sık ziyaret ettiğiniz sayfalara anında ulaşın, klasörler oluşturarak düzeninizi koruyun. Geçmiş panelinden daha önce görüntülediğiniz sayfalarda arama yapın. İndirilen dosyaların ilerlemesini ve tamamlanma durumunu tek panelden takip edin.</span>
+    <span data-anka-i18n>Kalem, işaretleme ve ders araçları</span>
+    <span data-anka-i18n>Kalem menüsünden çizim aracını, rengini ve kalınlığını seçerek sayfanın üzerine doğrudan not alın. Alan yakalayarak bir bölümü kesip büyütün, önemli yerleri işaretleyin. Kronometre ve geri sayım sayacıyla ders ya da çalışma sürelerinizi düzenli takip edin.</span>
+    <span data-anka-i18n>Bölünmüş ekran ve çoklu görev</span>
+    <span data-anka-i18n>İki sekmeyi yan yana açarak aynı anda okuyun, karşılaştırın veya not çıkarın. Izgara görünümüyle dört sekmeye kadar tek ekranda izleyin. Sekmeleri sürükleyip bırakarak paneller arasında taşıyabilirsiniz.</span>
+    <span data-anka-i18n>Gizlilik, site izinleri ve güvenlik</span>
+    <span data-anka-i18n>Her sitenin kamera, mikrofon, konum ve bildirim izinlerini ayrı ayrı yönetin; verdiğiniz izinleri istediğiniz an geri alın. Bağlantının güvenli olup olmadığını adres çubuğundaki simgeden kontrol edin. Tarama verilerini, çerezleri ve önbelleği ayarlardan seçerek temizleyin.</span>
+    <span data-anka-i18n>Görünüm, erişilebilirlik ve performans</span>
+    <span data-anka-i18n>Açık ve koyu tema arasında geçiş yapın veya sistem temanızı otomatik izleyin. Yazı tipi boyutunu, sayfa ölçeğini ve dokunmatik hedef boyutlarını ihtiyacınıza göre ayarlayın. Animasyonları azaltarak düşük donanımlı cihazlarda daha akıcı bir deneyim elde edebilirsiniz.</span>
+    <span data-anka-i18n>Yardım, kısayollar ve geri bildirim</span>
+    <span data-anka-i18n>Yardım bölümünde tüm klavye kısayollarının listesini ve adım adım açıklamaları bulabilirsiniz. Sorun bildirimi ve öneri formuyla karşılaştığınız aksaklıkları doğrudan iletebilirsiniz. Bu tanıtımı dilediğiniz zaman yeniden başlatabilirsiniz.</span>
+  </div>
+
   <footer class="actions">
-    <div class="action-group" id="guide-actions" hidden>
-      <button id="guide-back" type="button">Geri</button>
-      <button id="guide-next" class="primary" type="button">Devam</button>
-      <button id="guide-finish" class="primary" type="button" hidden>Bitir</button>
-    </div>
     <div class="action-group" id="welcome-actions">
-      <button id="start-guide" type="button">Bana özellikleri tanıt</button>
-      <button id="start-app" class="primary" type="button">Başla</button>
+      <button id="start-guide" type="button" data-anka-i18n>Bana özellikleri tanıt</button>
+      <button id="start-app" class="primary" type="button" data-anka-i18n>Başla</button>
     </div>
-    <button id="finish-app" class="primary" type="button" hidden>Başla</button>
+    <div class="action-group" id="guide-actions" hidden>
+      <button id="guide-back" type="button" data-anka-i18n>Geri</button>
+      <button id="guide-next" class="primary" type="button" data-anka-i18n>Devam</button>
+      <button id="guide-finish" class="primary" type="button" data-anka-i18n hidden>Bitir</button>
+      <button id="guide-skip" class="ghost" type="button" data-anka-i18n>Turu atla</button>
+    </div>
+    <button id="finish-app" class="primary" type="button" data-anka-i18n hidden>Başla</button>
   </footer>
 </main>
 <script>
 (function(){
-  const steps=[
-    ['Sekmeler ve adres çubuğu','Adres çubuğuna site adresi veya arama yazın. Yeni sekme açın, sekmeleri gruplayın, sesi yönetin ve yer imlerinize araç çubuğundan ulaşın.'],
-    ['Kalem ve ders araçları','Kalem menüsünden çizim araçlarını seçin. Ekrandaki içeriği işaretleyin, alan yakalayın, not alın veya kronometre ve geri sayımı kullanın.'],
-    ['Bölünmüş ekran ve oturumlar','Sekmeleri yan yana ya da ızgara görünümünde karşılaştırın. Oturum yöneticisiyle sık kullandığınız sekmeleri birlikte kaydedin.'],
-    ['Ayarlar ve görünüm','Ayarlar bölümünden tema, yazı tipi, ölçek, dokunmatik hedefler, performans ve başlangıç davranışını kişiselleştirin.'],
-    ['Site izinleri ve gizlilik','Adres çubuğundaki site bilgisi panelinden bağlantı durumunu ve site izinlerini inceleyin. Tarama verilerini ve güvenlik tercihlerini ayarlardan yönetin.'],
-    ['Yardım ve indirmeler','Yardım bölümünde kısayolları ve açıklamaları bulun; indirmelerinizi, geçmişinizi ve kayıtlı oturumlarınızı ilgili panellerden yönetin.']
-  ];
-  const welcome=document.getElementById('welcome-screen');
-  const guide=document.getElementById('guide-screen');
-  const finish=document.getElementById('finish-screen');
-  const welcomeActions=document.getElementById('welcome-actions');
-  const guideActions=document.getElementById('guide-actions');
-  const finishApp=document.getElementById('finish-app');
-  const back=document.getElementById('guide-back');
-  const next=document.getElementById('guide-next');
-  const finishGuide=document.getElementById('guide-finish');
-  const title=document.getElementById('guide-title');
-  const description=document.getElementById('guide-description');
-  const count=document.getElementById('guide-count');
-  const progress=document.getElementById('guide-progress');
-  let step=0;
-  function render(){
-    title.textContent=steps[step][0];
-    description.textContent=steps[step][1];
-    count.textContent=(step+1)+' / '+steps.length;
-    progress.style.width=((step+1)/steps.length*100)+'%';
-    back.disabled=step===0;
-    next.hidden=step===steps.length-1;
-    finishGuide.hidden=step!==steps.length-1;
+'use strict';
+var doc=document,root=doc.documentElement,bodyEl=doc.body;
+var splash=doc.getElementById('welcome-splash');
+var logo=doc.getElementById('welcome-logo');
+var splashLogo=doc.getElementById('welcome-splash-logo');
+var lightMedia=window.matchMedia('(prefers-color-scheme: light)');
+var reduceMedia=window.matchMedia('(prefers-reduced-motion: reduce)');
+var LOGO_LIGHT='../icons/white-logo.png',LOGO_DARK='../icons/dark-logo.png';
+
+function readPreset(){
+  try{
+    var stored=localStorage.getItem('set_theme-preset');
+    if(stored)return stored;
+    var legacy=localStorage.getItem('set_dark-mode');
+    if(legacy==='false')return 'light';
+    if(legacy==='true')return 'dark';
+  }catch(e){}
+  return 'system';
+}
+
+function setTheme(preset){
+  preset=preset||'system';
+  var light=preset==='light'||(preset==='system'&&lightMedia.matches);
+  root.classList.toggle('light-theme',light);
+  if(bodyEl)bodyEl.classList.toggle('light-theme',light);
+  root.dataset.themeMode=preset;
+  root.dataset.themePreset=light?'light':'dark';
+  root.style.colorScheme=light?'light':'dark';
+  var src=light?LOGO_LIGHT:LOGO_DARK;
+  if(logo&&logo.getAttribute('src')!==src)logo.setAttribute('src',src);
+  if(splashLogo&&splashLogo.getAttribute('src')!==src)splashLogo.setAttribute('src',src);
+}
+window.setAnkaWelcomeTheme=setTheme;
+setTheme(readPreset());
+
+var splashDone=false;
+function dismissSplash(){
+  if(splashDone)return;
+  splashDone=true;
+  root.classList.remove('welcome-loading');
+  if(!splash)return;
+  if(reduceMedia.matches){splash.remove();return;}
+  splash.classList.add('is-leaving');
+  window.setTimeout(function(){if(splash.parentNode)splash.remove();},300);
+}
+if(splash){
+  splash.addEventListener('pointerdown',dismissSplash,{once:true,passive:true});
+  window.addEventListener('keydown',dismissSplash,{once:true});
+}
+window.addEventListener('load',function(){window.setTimeout(dismissSplash,1100);},{once:true});
+window.setTimeout(dismissSplash,6000);
+
+window.addEventListener('storage',function(e){
+  if(e.key==='set_theme-preset'||e.key==='set_dark-mode')setTheme(readPreset());
+},{passive:true});
+function onSchemeChange(){setTheme(readPreset());}
+if(lightMedia.addEventListener)lightMedia.addEventListener('change',onSchemeChange);
+else if(lightMedia.addListener)lightMedia.addListener(onSchemeChange);
+
+var steps=[
+  {
+    title:'Adres çubuğu ve akıllı arama',
+    desc:'Yazmaya başladığınız anda adres çubuğu geçmişinizden, yer imlerinizden ve arama motorunuzdan öneriler sunar. Bir site adresi, arama sözcüğü ya da doğrudan komut yazabilirsiniz. Adres çubuğunun sağındaki simgeye dokunarak bağlantı durumunu ve o sitenin izinlerini tek bakışta görebilirsiniz.',
+    tip:'İpucu: Ctrl + L adres çubuğuna, Ctrl + K doğrudan aramaya odaklanır.'
+  },
+  {
+    title:'Sekmeler, gruplar ve oturumlar',
+    desc:'Yeni sekme açın, sürükleyerek sıralayın ve ilgili sayfaları renkli gruplarda toplayın. Ses çalan sekmeleri tek dokunuşla sessize alın, önemli sekmeleri sabitleyin. Oturum yöneticisiyle sık kullandığınız sekme topluluklarını kaydedip sonra tek tıkla geri yükleyin.',
+    tip:'İpucu: Ctrl + T yeni sekme açar, Ctrl + Shift + T kapatılan sekmeyi geri getirir.'
+  },
+  {
+    title:'Yer imleri, geçmiş ve indirmeler',
+    desc:'Araç çubuğundaki yer imleriyle sık ziyaret ettiğiniz sayfalara anında ulaşın, klasörler oluşturarak düzeninizi koruyun. Geçmiş panelinden daha önce görüntülediğiniz sayfalarda arama yapın. İndirilen dosyaların ilerlemesini, konumunu ve tamamlanma durumunu tek panelden takip edin.',
+    tip:'İpucu: Ctrl + D sayfayı yer imlerine ekler, Ctrl + H geçmişi açar.'
+  },
+  {
+    title:'Kalem, işaretleme ve ders araçları',
+    desc:'Kalem menüsünden çizim aracını, rengini ve kalınlığını seçerek sayfanın üzerine doğrudan not alın. Alan yakalayarak bir bölümü kesip büyütün, önemli yerleri işaretleyin. Kronometre ve geri sayım sayacıyla ders ya da çalışma sürelerinizi düzenli takip edin.',
+    tip:'İpucu: İşaretlemeler yalnızca ekranda görünür; sayfanın kendisi değişmez.'
+  },
+  {
+    title:'Bölünmüş ekran ve çoklu görev',
+    desc:'İki sekmeyi yan yana açarak aynı anda okuyun, karşılaştırın veya not çıkarın. Izgara görünümüyle dört sekmeye kadar tek ekranda izleyin. Sekmeleri sürükleyip bırakarak paneller arasında taşıyabilirsiniz.',
+    tip:'İpucu: Dar ekranlarda bölünmüş görünüm otomatik olarak alt alta yerleşir.'
+  },
+  {
+    title:'Gizlilik, site izinleri ve güvenlik',
+    desc:'Her sitenin kamera, mikrofon, konum ve bildirim izinlerini ayrı ayrı yönetin; verdiğiniz izinleri istediğiniz an geri alın. Bağlantının güvenli olup olmadığını adres çubuğundaki simgeden kontrol edin. Tarama verilerini, çerezleri ve önbelleği ayarlardan seçerek temizleyin.',
+    tip:'İpucu: Gizli mod, oturum kapandığında geçmişi ve çerezleri cihazda bırakmaz.'
+  },
+  {
+    title:'Görünüm, erişilebilirlik ve performans',
+    desc:'Açık ve koyu tema arasında geçiş yapın veya sistem temanızı otomatik izleyin. Yazı tipi boyutunu, sayfa ölçeğini ve dokunmatik hedef boyutlarını ihtiyacınıza göre ayarlayın. Animasyonları azaltarak düşük donanımlı cihazlarda daha akıcı bir deneyim elde edebilirsiniz.',
+    tip:'İpucu: Tema ve ölçek ayarları cihazda saklanır, sonraki açılışta korunur.'
+  },
+  {
+    title:'Yardım, kısayollar ve geri bildirim',
+    desc:'Yardım bölümünde tüm klavye kısayollarının listesini ve adım adım açıklamaları bulabilirsiniz. Sorun bildirimi ve öneri formuyla karşılaştığınız aksaklıkları doğrudan iletebilirsiniz. Bu tanıtımı dilediğiniz zaman Ayarlar bölümündeki “Tüm özellikleri tanıt” seçeneğinden yeniden başlatabilirsiniz.',
+    tip:'İpucu: Tur sırasında ok tuşlarıyla ileri ve geri gidebilirsiniz.'
   }
-  function showGuide(){
-    welcome.hidden=true;
-    finish.hidden=true;
-    guide.hidden=false;
-    welcomeActions.hidden=true;
-    guideActions.hidden=false;
-    render();
+];
+
+var welcome=doc.getElementById('welcome-screen');
+var guideEl=doc.getElementById('guide-screen');
+var finishEl=doc.getElementById('finish-screen');
+var welcomeActions=doc.getElementById('welcome-actions');
+var guideActions=doc.getElementById('guide-actions');
+var finishAppBtn=doc.getElementById('finish-app');
+var backBtn=doc.getElementById('guide-back');
+var nextBtn=doc.getElementById('guide-next');
+var finishBtn=doc.getElementById('guide-finish');
+var skipBtn=doc.getElementById('guide-skip');
+var titleEl=doc.getElementById('guide-title');
+var descEl=doc.getElementById('guide-description');
+var tipEl=doc.getElementById('guide-tip');
+var countEl=doc.getElementById('guide-count');
+var progressEl=doc.getElementById('guide-progress');
+var progressBar=doc.getElementById('guide-progressbar');
+var step=0,rafId=0,completed=false;
+
+progressBar.setAttribute('aria-valuemax',String(steps.length));
+
+function render(){
+  if(rafId)return;
+  rafId=window.requestAnimationFrame(function(){
+    rafId=0;
+    var s=steps[step];
+    titleEl.textContent=s.title;
+    descEl.textContent=s.desc;
+    tipEl.textContent=s.tip;
+    countEl.textContent=(step+1)+' / '+steps.length;
+    progressEl.style.transform='scaleX('+((step+1)/steps.length)+')';
+    progressBar.setAttribute('aria-valuenow',String(step+1));
+    backBtn.disabled=step===0;
+    nextBtn.hidden=step===steps.length-1;
+    finishBtn.hidden=step!==steps.length-1;
+  });
+}
+
+function showGuide(){
+  welcome.hidden=true;
+  finishEl.hidden=true;
+  guideEl.hidden=false;
+  welcomeActions.hidden=true;
+  finishAppBtn.hidden=true;
+  guideActions.hidden=false;
+  step=0;
+  render();
+  titleEl.focus({preventScroll:true});
+}
+
+function showFinish(){
+  welcome.hidden=true;
+  guideEl.hidden=true;
+  finishEl.hidden=false;
+  welcomeActions.hidden=true;
+  guideActions.hidden=true;
+  finishAppBtn.hidden=false;
+  finishAppBtn.focus({preventScroll:true});
+}
+
+function startApp(){
+  if(completed)return;
+  completed=true;
+  try{window.dispatchEvent(new CustomEvent('anka-welcome-complete'));}catch(e){}
+  try{console.log('anka-welcome-complete');}catch(e){}
+}
+
+doc.getElementById('start-guide').addEventListener('click',showGuide);
+doc.getElementById('start-app').addEventListener('click',startApp);
+finishAppBtn.addEventListener('click',startApp);
+finishBtn.addEventListener('click',showFinish);
+skipBtn.addEventListener('click',showFinish);
+
+backBtn.addEventListener('click',function(){
+  if(step>0){step--;render();}
+});
+
+nextBtn.addEventListener('click',function(){
+  if(step<steps.length-1){step++;render();}
+});
+
+doc.addEventListener('keydown',function(e){
+  if(guideEl.hidden)return;
+  if(e.key==='ArrowRight'){
+    if(step<steps.length-1){step++;render();e.preventDefault();}
+  }else if(e.key==='ArrowLeft'){
+    if(step>0){step--;render();e.preventDefault();}
   }
-  function showFinish(){
-    welcome.hidden=true;
-    guide.hidden=true;
-    finish.hidden=false;
-    welcomeActions.hidden=true;
-    guideActions.hidden=true;
-    finishApp.hidden=false;
-    document.getElementById('finish-app').focus();
-  }
-  function startApp(){console.log('anka-welcome-complete')}
-  document.getElementById('start-guide').addEventListener('click',showGuide);
-  document.getElementById('start-app').addEventListener('click',startApp);
-  back.addEventListener('click',function(){if(step>0){step--;render()}});
-  next.addEventListener('click',function(){if(step<steps.length-1){step++;render()}});
-  finishGuide.addEventListener('click',showFinish);
-  finishApp.addEventListener('click',startApp);
-  if(new URLSearchParams(location.search).get('tour')==='1')showGuide();
+});
+
+if(new URLSearchParams(location.search).get('tour')==='1')showGuide();
 })();
 </script>
+<script src="../core/scripts/translations.js" defer></script>
 </body>
 </html>

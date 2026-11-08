@@ -5,8 +5,8 @@
     window.__ankaSettingsLoaded = true;
     const ANKA_I18N = window.AnkaI18n;
 
-    const THEME_IDS = ['system', 'dark', 'light', 'catppuccin', 'cyberpunk', 'dracula', 'nord', 'oled', 'emerald'];
-    const THEME_CLASSES = ['light-theme', 'theme-catppuccin', 'theme-cyberpunk', 'theme-dracula', 'theme-nord', 'theme-oled', 'theme-emerald'];
+    const THEME_IDS = ['system', 'dark', 'light', 'catppuccin', 'cyberpunk', 'dracula', 'nord', 'oled', 'emerald', 'sunset', 'forest', 'rose', 'slate'];
+    const THEME_CLASSES = ['light-theme', 'theme-catppuccin', 'theme-cyberpunk', 'theme-dracula', 'theme-nord', 'theme-oled', 'theme-emerald', 'theme-sunset', 'theme-forest', 'theme-rose', 'theme-slate'];
     const lightMQ = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : { matches: false };
     const reducedMQ = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
     const LOW_END = (navigator.hardwareConcurrency || 4) <= 2 || (navigator.deviceMemory || 4) <= 2 || reducedMQ.matches;
@@ -54,7 +54,7 @@
 #settings-overlay.visible{opacity:1}
 html.reduce-effects #settings-panel,html.reduce-effects #settings-overlay{--sp-transition-duration:0s}
 html.reduce-effects #settings-panel *{transition:none!important;animation:none!important}
-html[data-density="compact"] #settings-panel{--sp-density:1}
+html[data-density="compact"] #settings-panel{--sp-density:.82}
 html[data-density="comfortable"] #settings-panel{--sp-density:1.15}
 .settings-layout{display:flex;height:100%;width:100%}
 .settings-sidebar{width:224px;flex-shrink:0;background:var(--bg-primary,#121214);padding:16px 10px 12px;border-right:1px solid var(--border-color,#27272a);display:flex;flex-direction:column;gap:2px;overflow-y:auto;scrollbar-width:thin;overflow-x:hidden;contain:layout style}
@@ -97,7 +97,7 @@ html.smooth .settings-content{scroll-behavior:smooth}
 .settings-body{padding:14px 26px 26px;min-height:0}
 .sp-group{margin-bottom:18px;border:1px solid var(--border-color,#27272a);border-radius:12px;background:var(--bg-primary,#121214);transition:border-color .15s ease;overflow:hidden;contain:layout style}
 .sp-group:hover{border-color:var(--border-hover,#52525b)}
-.sp-group-header{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;user-select:none;background:var(--bg-primary,#121214);transition:background-color .15s ease;font-size:13px;font-weight:600;color:var(--text-color,#f4f4f5)}
+.sp-group-header{display:flex;align-items:center;gap:10px;padding:calc(12px * var(--sp-density,1)) calc(16px * var(--sp-density,1));cursor:pointer;user-select:none;background:var(--bg-primary,#121214);transition:background-color .15s ease;font-size:13px;font-weight:600;color:var(--text-color,#f4f4f5)}
 .sp-group-header:hover{background:var(--bg-tertiary,#27272a)}
 .sp-group-header .gp-icon{width:18px;height:18px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--accent,#ff4757)}
 .sp-group-header .gp-icon svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -109,7 +109,7 @@ html.smooth .settings-content{scroll-behavior:smooth}
 .sp-group-body{max-height:4000px;overflow:hidden;transition:max-height .28s var(--sp-transition-curve);contain:layout style}
 .sp-group.collapsed .sp-group-body{max-height:0}
 html.reduce-effects .sp-group-body{transition:none;contain:none;content-visibility:auto}
-.sp-item{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-top:1px solid var(--border-color,#27272a);gap:16px;transition:background-color .15s ease;position:relative}
+.sp-item{display:flex;align-items:center;justify-content:space-between;padding:calc(12px * var(--sp-density,1)) calc(16px * var(--sp-density,1));border-top:1px solid var(--border-color,#27272a);gap:calc(16px * var(--sp-density,1));transition:background-color .15s ease;position:relative}
 .sp-item:first-child{border-top:none}
 .sp-item:hover{background:rgba(255,255,255,.02)}
 .sp-item.changed{background:rgba(255,71,87,.04)}
@@ -128,11 +128,12 @@ html.reduce-effects .sp-group-body{transition:none;contain:none;content-visibili
 .sp-toggle input:checked+.sp-slider{background-color:var(--accent,#ff4757)}
 .sp-toggle input:checked+.sp-slider::before{transform:translateX(16px)}
 .sp-toggle input:disabled+.sp-slider{cursor:not-allowed;opacity:.5}
-.sp-select,.sp-text{background:var(--bg-tertiary,#27272a);color:var(--text-color,#f4f4f5);border:1px solid var(--border-color,#27272a);padding:6px 10px;border-radius:7px;font-size:12px;outline:none;flex-shrink:0;transition:border-color .15s ease,box-shadow .15s ease}
-.sp-select:focus,.sp-text:focus{border-color:var(--accent,#ff4757);box-shadow:0 0 0 2px rgba(255,71,87,.14)}
+.sp-select,.sp-text,.sp-css-editor{background:var(--bg-tertiary,#27272a);color:var(--text-color,#f4f4f5);border:1px solid var(--border-color,#27272a);padding:6px 10px;border-radius:7px;font-size:12px;outline:none;flex-shrink:0;transition:border-color .15s ease,box-shadow .15s ease}
+.sp-select:focus,.sp-text:focus,.sp-css-editor:focus{border-color:var(--accent,#ff4757);box-shadow:0 0 0 2px rgba(255,71,87,.14)}
 .sp-select{min-width:140px;cursor:pointer}
 .sp-text{width:200px;max-width:100%}
-.sp-select:disabled,.sp-text:disabled{cursor:not-allowed;opacity:.5}
+.sp-css-editor{width:min(440px,54vw);min-height:130px;resize:vertical;font:11px/1.5 ui-monospace,Consolas,monospace}
+.sp-select:disabled,.sp-text:disabled,.sp-css-editor:disabled{cursor:not-allowed;opacity:.5}
 .sp-range{display:flex;align-items:center;gap:8px;width:min(220px,50vw)}
 .sp-range input[type=range]{flex:1;width:100%;accent-color:var(--accent,#ff4757);cursor:pointer;touch-action:pan-y}
 .sp-range output{min-width:40px;color:var(--accent,#ff4757);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
@@ -166,11 +167,16 @@ html.reduce-effects .sp-group-body{transition:none;contain:none;content-visibili
 .school-row{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:10px 0}
 .school-input{width:min(100%,400px);min-width:0}
 .school-warning{color:#fbbf24!important}
+.school-help{margin:8px 0;color:var(--text-secondary,#a1a1aa);font-size:11.5px;line-height:1.55}
+.school-steps{display:grid;gap:8px;margin:10px 0 14px;padding-left:22px;color:var(--text-secondary,#a1a1aa);font-size:11.5px;line-height:1.5}
+.school-steps li::marker{color:var(--accent,#ff4757);font-weight:700}
 .school-users{display:grid;gap:6px;margin:10px 0}
 .school-user{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;background:var(--bg-tertiary,#27272a);border-radius:8px;font-size:12.5px}
 .school-user strong{overflow-wrap:anywhere;font-weight:600}
+.school-user-actions{display:flex;gap:6px;flex-shrink:0}
 .school-user-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
 .school-user-form .school-input{width:100%}
+.school-user-form .sp-btn{justify-self:start}
 .about-hero{display:flex;align-items:center;gap:18px;padding:22px;background:linear-gradient(135deg,var(--bg-primary,#121214),var(--bg-tertiary,#27272a));border:1px solid var(--border-color,#27272a);border-radius:12px;margin-bottom:16px}
 .about-logo{width:64px;height:64px;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(255,71,87,.35));flex-shrink:0}
 .about-hero-info{min-width:0;flex:1}
@@ -193,9 +199,11 @@ html.reduce-effects .sp-group-body{transition:none;contain:none;content-visibili
 .sp-toast.visible{opacity:1;transform:translateX(-50%) translateY(0)}
 .sp-toast.error{border-color:#f28b82;color:#ffd7e0}
 .sp-toast.success{border-color:#81c995;color:#d1fae5}
-#fps-display{position:fixed;top:50px;left:20px;z-index:999999;gap:12px;background:rgba(0,0,0,.85);color:#fff;padding:6px 12px;border-radius:8px;display:none;font-family:monospace;font-size:12px;pointer-events:none;border:1px solid var(--border-color,#27272a)}
-#fps-display[data-position="right"]{left:auto;right:20px}
+#fps-display{position:fixed!important;inset:auto auto 10px 10px!important;display:none;box-sizing:border-box;width:max-content!important;height:auto!important;min-width:0!important;min-height:0!important;max-width:calc(100vw - 20px)!important;max-height:48px!important;overflow:hidden;contain:layout paint style;z-index:999999;align-items:center;gap:7px;padding:4px 8px;border:1px solid var(--border-color,#27272a);border-radius:8px;background:var(--fps-background,rgba(0,0,0,.7));color:#fff;font:600 11px/1.2 ui-monospace,Consolas,monospace;white-space:nowrap;pointer-events:none;box-shadow:0 3px 12px rgba(0,0,0,.18)}
+#fps-display[data-position="right"]{inset:auto 10px 10px auto!important}
 #fps-display span{color:#fff}
+@media (max-width:600px){#fps-display{font-size:10px;padding:3px 6px;gap:5px}}
+@media (prefers-reduced-motion:reduce){html.smooth *{scroll-behavior:auto!important}}
 #anka-fallback-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:1000000;padding:10px 18px;border-radius:8px;background:#27272a;color:#f4f4f5;font:13px 'Segoe UI',system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.4)}
 #anka-fallback-toast.error{background:#7f1d1d}
 #anka-confirm-overlay{display:none;position:fixed;inset:0;z-index:100010;background:rgba(0,0,0,.75);align-items:center;justify-content:center;backdrop-filter:blur(3px);opacity:0;transition:opacity .18s ease}
@@ -219,6 +227,10 @@ html.reduce-effects .sp-group-body{transition:none;contain:none;content-visibili
 .pack-bar-fill{height:100%;background:var(--accent,#ff4757);transition:width .2s ease;border-radius:3px;width:0}
 .pack-bar-fill.done{background:#81c995}
 .pack-bar-fill.error{background:#f28b82}
+.pack-row{flex-wrap:wrap}
+.pack-row .sp-btn{min-height:40px;padding:8px 12px;white-space:normal}
+.pack-complete-note{flex:1 0 100%;color:var(--text-secondary,#a1a1aa);font-size:11px;line-height:1.45}
+.about-actions a.sp-btn{text-decoration:none;min-height:40px}
 @media (max-width:680px){
   #settings-panel{width:calc(100vw - 12px);height:calc(100dvh - 12px);max-width:none;max-height:none;border-radius:12px}
   .settings-layout{flex-direction:column}
@@ -238,7 +250,7 @@ html.reduce-effects .sp-group-body{transition:none;contain:none;content-visibili
   .settings-body{padding:10px 12px 20px}
   .sp-item{flex-direction:column;align-items:flex-start;gap:8px;padding:11px 13px}
   .sp-item-ctl{width:100%;justify-content:flex-start;flex-wrap:wrap}
-  .sp-select,.sp-text{width:100%}
+  .sp-select,.sp-text,.sp-css-editor{width:100%}
   .sp-range{width:100%}
   .school-user-form{grid-template-columns:1fr}
   .about-hero{flex-direction:column;text-align:center;padding:16px}
@@ -276,10 +288,12 @@ html.reduce-effects .sp-group-body{transition:none;contain:none;content-visibili
     { val: 'zh', name: '中文' },
     { val: 'hi', name: 'हिन्दी' }
 ], default: 'tr' },
-                        { id: 'notifications', label: 'Bildirimler', desc: 'Uygulama içi anlık bildirimlere izin ver', type: 'toggle', default: true },
+                        { id: 'notifications', label: 'Uygulama İçi Bildirimler', desc: 'Kapalıyken başarı, bilgi ve hata toast bildirimlerini gösterme', type: 'toggle', default: true },
                         { id: 'auto-save', label: 'Otomatik Kayıt', desc: 'Çalışma alanını, ayarları ve çizimleri otomatik kaydet', type: 'toggle', default: true },
                         { id: 'start-fullscreen', label: 'Tam Ekran Başlat', desc: 'Uygulama açıldığında otomatik tam ekrana geç', type: 'toggle', default: false },
                         { id: 'show-welcome-on-start', label: 'İlk Açılış Tanıtımı', desc: 'Hoşgeldin ekranını yalnızca ilk uygulama açılışında göster', type: 'toggle', default: true },
+                        { id: 'profile-isolation', label: 'Kullanıcı Verilerini Ayır', desc: 'Her kullanıcı profilinde ayarları, geçmişi, site verilerini ve oturumları ayrı sakla', type: 'toggle', default: true },
+                        { id: 'restore-session', label: 'Çökme Sonrası Oturumu Geri Yükle', desc: 'Açık sekmelerin adreslerini bu cihazda sakla; Anka Web düzgün kapanmazsa pencereleri ve sekmeleri geri yükleme seçeneği göster. Gizli sekmeler kaydedilmez.', type: 'toggle', default: false },
                         { id: 'startup-page', label: 'Başlangıç Sayfası', desc: 'Tarayıcı açıldığında yüklenecek sayfayı seç', type: 'select', options: [{ val: 'home', name: 'Hız Çubuğu (Ana Sayfa)' }, { val: 'blank', name: 'Boş Sayfa' }, { val: 'custom', name: 'Özel adres' }], default: 'home' },
                         { id: 'startup-custom-url', label: 'Özel Başlangıç Adresi', desc: 'Başlangıç sayfasında "Özel adres" seçiliyken kullanılır; yalnızca HTTP ve HTTPS adresleri desteklenir', type: 'text', placeholder: 'https://ornek.com', default: '' },
                         { id: 'system-pages-mode', label: 'Sistem Sayfaları', desc: 'Ayarlar, yardım, indirilenler ve geçmiş açılma biçimi', type: 'select', options: [{ val: 'panel', name: 'Ortadaki panelde' }, { val: 'tab', name: 'Yeni sekmede' }], default: 'panel' },
@@ -293,6 +307,7 @@ html.reduce-effects .sp-group-body{transition:none;contain:none;content-visibili
                     items: [
                         { id: 'max-tabs', label: 'Maksimum Sekme Sayısı', desc: 'Aynı anda açık tutulabilecek sekme sayısı (1–30)', type: 'number', min: 1, max: 30, placeholder: '10', default: '10' },
                         { id: 'tab-memory', label: 'Sekme Bellek Göstergesi', desc: 'Sekmelerin kullandığı yaklaşık belleği göster', type: 'toggle', default: false },
+                        { id: 'vertical-tabs', label: 'Sekmeleri Dikey Göster', desc: 'Sekme listesini sol menüde göster; yatay sekme çubuğunu gizle', type: 'toggle', default: false },
                         { id: 'confirm-close-tabs', label: 'Sekme Kapatma Onayı', desc: 'Birden fazla sekme açıkken kapatma onayı iste', type: 'toggle', default: false },
                         { id: 'auto-suspend-tabs', label: 'Sekmeleri Otomatik Askıya Al', desc: '10 dakika kullanılmayan sekmeleri bellekten boşalt', type: 'toggle', default: false }
                     ]
@@ -341,6 +356,36 @@ id: 'gorunum-dil-paketleri',
                 
             ]
         },
+        hizliMenu: {
+            title: 'Hızlı Menü',
+            description: 'Profil düğmesinin yanındaki hızlı erişim menüsünü düzenle',
+            icon: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
+            groups: [
+                {
+                    id: 'hizli-menu-eylemler',
+                    title: 'Düğme ve Eylemler',
+                    icon: '<path d="M12 5v14M5 12h14"/>',
+                    items: [
+                        { id: 'quick-menu-button', label: 'Hızlı Erişim Düğmesi', desc: 'Profil düğmesinin sağındaki üç noktalı hızlı erişim düğmesini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-new-tab', label: 'Yeni Sekme', desc: 'Hızlı menüde Yeni Sekme eylemini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-copy-page-url', label: 'Sayfa Bağlantısını Kopyala', desc: 'Bir web sayfası açıkken hızlı menüde adresini panoya kopyalama seçeneğini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-site-shortcut', label: 'Site Kısayolu Oluştur', desc: 'Açık web sitesi için masaüstü ve Başlat menüsü kısayolu oluşturma seçeneğini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-downloads', label: 'İndirilenler', desc: 'Hızlı menüde İndirilenler eylemini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-bookmarks', label: 'Yer İmleri', desc: 'Hızlı menüde Yer İmleri eylemini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-history', label: 'Geçmiş', desc: 'Hızlı menüde Geçmiş eylemini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-settings', label: 'Ayarlar', desc: 'Hızlı menüde Ayarlar eylemini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-help', label: 'Yardım', desc: 'Hızlı menüde Yardım eylemini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-groups', label: 'Sekme Grupları', desc: 'Hızlı menüde gruplardaki sekmeleri görüntüle', type: 'toggle', default: true },
+                        { id: 'quick-menu-window-name', label: 'Pencereye Ad Ver', desc: 'Hızlı menüden bu pencerenin başlığını değiştir', type: 'toggle', default: true },
+                        { id: 'sidebar-help-button', label: 'Sol Menüde Yardım', desc: 'Yardım düğmesini sol menüde göster; kapalıyken yalnızca hızlı menüde görünür', type: 'toggle', default: false },
+                        { id: 'quick-menu-paint', label: 'Çizim Araçları', desc: 'Hızlı menüde çizim araçlarını açma eylemini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-keyboard', label: 'Ekran Klavyesi', desc: 'Hızlı menüde ekran klavyesini açma eylemini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-lesson-tools', label: 'Ders Araçları', desc: 'Hızlı menüde ders araçlarını açma eylemini göster', type: 'toggle', default: true },
+                        { id: 'quick-menu-ai', label: 'AI Oturumu', desc: 'Hızlı menüde AI oturumu açma eylemini göster', type: 'toggle', default: true }
+                    ]
+                }
+            ]
+        },
         gorunum: {
             title: 'Görünüm',
             description: 'Tema, renkler, tipografi ve efektler',
@@ -360,8 +405,13 @@ id: 'gorunum-dil-paketleri',
                             { val: 'dracula', name: 'Dracula Pro' },
                             { val: 'nord', name: 'Nord Frost' },
                             { val: 'oled', name: 'OLED Saf Siyah' },
-                            { val: 'emerald', name: 'Emerald Forest' }
+                            { val: 'emerald', name: 'Emerald Forest' },
+                            { val: 'sunset', name: 'Gün Batımı' },
+                            { val: 'forest', name: 'Orman' },
+                            { val: 'rose', name: 'Gül' },
+                            { val: 'slate', name: 'Arduvaz' }
                         ], default: 'system' },
+                        { id: 'custom-theme-css', label: 'Tema Paketleri · Özel CSS', desc: 'Yalnızca arayüz görünümünü özelleştirir. Harici URL, içe aktarma ve kod çalıştırma kuralları kabul edilmez; en fazla 32 KB.', type: 'css', default: '' },
                         { id: 'auto-theme', label: 'Otomatik Tema (Saat Bazlı)', desc: 'Belirlenen saatlerde otomatik açık/koyu temaya geç', type: 'toggle', default: false },
                         { id: 'auto-theme-dark-start', label: 'Koyu Tema Başlangıcı', desc: 'Otomatik temada koyu temaya geçilecek saat (0–23)', type: 'number', min: 0, max: 23, placeholder: '19', default: '19' },
                         { id: 'auto-theme-light-start', label: 'Açık Tema Başlangıcı', desc: 'Otomatik temada açık temaya geçilecek saat (0–23)', type: 'number', min: 0, max: 23, placeholder: '7', default: '7' }
@@ -396,15 +446,16 @@ id: 'gorunum-dil-paketleri',
                             { val: 'serif', name: 'Serif' },
                             { val: 'mono', name: 'Monospace' }
                         ], default: 'system' },
-                        { id: 'font-scale', label: 'Yazı Boyutu Ölçeği', desc: 'Tarayıcı arayüzündeki yazıları ölçekle; web sayfası yakınlaştırmasını etkilemez', type: 'range', min: 100, max: 130, step: 5, default: '100' },
-                        { id: 'ui-scale', label: 'Arayüz Ölçeği', desc: 'Tarayıcı arayüzünü ve kontrolleri ölçekle', type: 'range', min: 100, max: 125, step: 5, default: '100' },
+                        { id: 'font-scale', label: 'Yazı Boyutu Ölçeği', desc: 'Arayüz yazılarını %80–150 arasında ayarla; web sayfalarının yakınlaştırması değişmez', type: 'range', min: 80, max: 150, step: 5, default: '100' },
+                        { id: 'ui-scale', label: 'Arayüz Ölçeği', desc: 'Pencere içindeki araç çubuklarını ve kontrolleri %85–125 arasında ölçekle; ekran düzeni yeniden akışını korur', type: 'range', min: 85, max: 125, step: 5, default: '100' },
                         { id: 'logo-size', label: 'Anka Web Logo Boyutu', desc: 'Yan menü ve ana sayfadaki logonun boyutunu ayarla', type: 'range', min: 36, max: 56, step: 4, default: '44' },
                         { id: 'icon-style', label: 'Simge Görünümü', desc: 'Araç ve kalem simgelerini arka plansız beyaz tek renkli veya özgün emoji biçiminde göster', type: 'select', options: [{ val: 'monochrome', name: 'Arka plansız, beyaz (Varsayılan)' }, { val: 'emoji', name: 'Özgün emoji renkleri' }], default: 'monochrome' },
                         { id: 'panel-density', label: 'Panel Yoğunluğu', desc: 'Ayarlar panelindeki öğeler arası boşluk', type: 'select', options: [
                             { val: 'compact', name: 'Sıkışık' },
                             { val: 'normal', name: 'Normal (Varsayılan)' },
                             { val: 'comfortable', name: 'Ferah' }
-                        ], default: 'normal' }
+                        ], default: 'normal' },
+                        { id: 'reset-display-settings', label: 'Görünüm Ölçeklerini Sıfırla', desc: 'Yazı boyutunu ve arayüz ölçeğini varsayılan değerlerine döndür', type: 'button', btnText: 'Ölçekleri Sıfırla', action: 'resetDisplaySettings' }
                     ]
                 },
                 {
@@ -415,6 +466,8 @@ id: 'gorunum-dil-paketleri',
                         { id: 'ui-animations', label: 'Arayüz Animasyonları', desc: 'Pencere geçişleri, menüler ve bu paneldeki tüm animasyonlar', type: 'toggle', default: true },
                         { id: 'smooth-scrolling', label: 'Akıcı Kaydırma', desc: 'Sayfa geçişlerinde yumuşak kaydırma', type: 'toggle', default: true },
                         { id: 'touch-mode', label: 'Dokunmatik Tahta Modu', desc: 'Dokunmatik ekranlar için butonları ve hedefleri büyüt', type: 'toggle', default: false },
+                        { id: 'night-light', label: 'Gece Işığı', desc: 'Arayüz renklerine sıcak ton ekleyerek akşam kullanımını rahatlat', type: 'toggle', default: false },
+                        { id: 'night-light-strength', label: 'Gece Işığı Yoğunluğu', desc: 'Gece Işığı sıcak ton seviyesini ayarla', type: 'range', min: 10, max: 50, step: 5, default: '25' },
                         { id: 'reduce-transparency', label: 'Saydamlığı Azalt', desc: 'Bulanık arka planları devre dışı bırakarak performansı artır', type: 'toggle', default: false }
                     ]
                 },
@@ -425,7 +478,7 @@ id: 'gorunum-dil-paketleri',
                     items: [
                         { id: 'sidebar-side', label: 'Sol Menü Konumu', desc: 'Araç menüsünü pencerenin soluna veya sağına taşı', type: 'select', options: [{ val: 'left', name: 'Sol' }, { val: 'right', name: 'Sağ' }], default: 'left' },
                         { id: 'side-panel-side', label: 'Yan Panel Konumu', desc: 'Yer imi, geçmiş ve sabitlenmiş yan panelleri ana içeriğin solunda veya sağında göster', type: 'select', options: [{ val: 'left', name: 'Sol' }, { val: 'right', name: 'Sağ' }], default: 'right' },
-                        { id: 'movable-menus', label: 'Menüleri Taşı', desc: 'Ayarlar, yardım ve araç panellerini başlıklarından sürükleyerek taşı; varsayılan olarak kapalıdır', type: 'toggle', default: false },
+                        { id: 'movable-menus', label: 'Menüleri Taşı', desc: 'Ayarlar, yardım ve araç panellerini başlıklarından sürükleyerek taşı; çizim menüsü her zaman taşınabilir', type: 'toggle', default: false },
                         { id: 'save-menu-positions', label: 'Menü Konumlarını Kaydet', desc: 'Taşıdığınız menülerin konumlarını bu cihazda sakla ve sonraki açılışta geri yükle', type: 'toggle', default: true },
                         { id: 'bookmarks-bar', label: 'Yer İmleri Çubuğu', desc: 'Çubuğu otomatik göster, sürekli açık tut veya gizle', type: 'select', options: [{ val: 'auto', name: 'Otomatik' }, { val: 'always', name: 'Her zaman' }, { val: 'never', name: 'Gizle' }], default: 'auto' },
                         { id: 'show-home-btn', label: 'Ana Sayfa Düğmesi', desc: 'Gezinme araçlarında ana sayfa düğmesini göster', type: 'toggle', default: true },
@@ -482,8 +535,8 @@ id: 'gorunum-dil-paketleri',
                         { id: 'do-not-track', label: 'Takip Etme İsteği', desc: 'Göz atma trafiğinizi web sitelerinden gizleyin', type: 'toggle', default: true },
                         { id: 'block-third-party-cookies', label: 'Üçüncü Taraf Çerezlerini Engelle', desc: 'Siteler arası izlemeyi önlemek için üçüncü taraf çerezlerini reddet', type: 'toggle', default: true },
                         { id: 'fingerprint-protection', label: 'Parmak İzi Koruması', desc: 'Canvas, WebGL ve font parmak izlerini rastgeleleştir', type: 'toggle', default: false },
-                        { id: 'password-manager', label: 'Anka Web Parola Yöneticisi', desc: 'Parolaları işletim sisteminin güvenli deposunda şifreli sakla ve uyumlu giriş formlarını doldur', type: 'toggle', default: true },
-                        { id: 'password-manager-open', label: 'Kayıtlı Parolaları Yönet', desc: 'Kayıtlı site hesaplarını görüntüle ve sil', type: 'button', btnText: 'Parolaları Yönet', action: 'openPasswordManager' }
+                        { id: 'password-manager', label: 'Anka Web Parola Yöneticisi', desc: 'Parolaları işletim sisteminin şifrelemesiyle bu cihazda sakla. Yerel sistem kimlik doğrulaması hazır olmadığından otomatik doldurma güvenli biçimde kapalıdır.', type: 'toggle', default: false },
+                        { id: 'password-manager-open', label: 'Kayıtlı Parolaları Yönet', desc: 'Kayıtları incele, sil ve yeni parola girerken yerel güvenlik denetimini gör. Parola verileri hiçbir denetim için ağa gönderilmez.', type: 'button', btnText: 'Parolaları Yönet', action: 'openPasswordManager' }
                     ]
                 },
                 {
@@ -512,14 +565,19 @@ id: 'gorunum-dil-paketleri',
                         { id: 'hardware-acceleration-override', label: 'WebGL Uyumluluk Modu', desc: 'GPU engel listesini yok sayar; yeniden başlatma gerekir', type: 'toggle', default: false },
                         { id: 'preload-pages', label: 'Sayfa Ön Yükleme', desc: 'Sık ziyaret edilen sayfaları önceden yükle', type: 'toggle', default: true },
                         { id: 'memory-saver', label: 'Bellek Tasarrufu', desc: 'Kullanılmayan sekmeleri askıya alarak bellekten tasarruf et', type: 'toggle', default: false },
+                        { id: 'background-tab-throttling', label: 'Arka Plan Sekme Tasarrufu', desc: 'Chromium’un arka plandaki sekmelerde zamanlayıcı ve çizim hızını düşürerek CPU ve pil kullanımını azaltmasını sağlar', type: 'toggle', default: true },
                         { id: 'smart-tab-manager', label: 'Yerel Akıllı Sekme Yöneticisi', desc: 'Ağ kullanmadan yerel kurallarla boşta sekmeleri ve etkin sekme sayısını yönetir; üretken yapay zeka modeli değildir', type: 'toggle', default: false },
                         { id: 'disk-backed-tab-saver', label: 'Sekme Kurtarmayı Diske Kaydet', desc: 'Bellek baskısında boş sekmeleri kapatıp URL ve gruplarını diskte saklar. Windows sayfa dosyası veya Linux swap ayarını değiştirmez; form içerikleri korunmaz.', type: 'toggle', default: false },
                         { id: 'max-live-tabs', label: 'Canlı Sekme Sınırı', desc: 'Arka planda aynı anda çalışabilecek sekme sayısı', type: 'number', min: 1, max: 30, placeholder: '10', default: '10' },
                         { id: 'tab-sleep-minutes', label: 'Boşta Sekmeyi Uyut (dakika)', desc: 'Etkin olmayan sekmelerin uykuya alınma süresi; 0 ile kapatılır', type: 'number', min: 0, max: 1440, placeholder: '20', default: '20' },
                         { id: 'low-end-mode', label: 'Düşük Donanım Modu', desc: 'Görsel efektleri azaltıp düşük bellek ve işlemci kullanımını tercih et', type: 'toggle', default: false },
-                        { id: 'fps-meter', label: 'FPS Göstergesi', desc: 'Anlık kare hızını performans göstergesinde göster', type: 'toggle', default: false },
+                        { id: 'fps-meter', label: 'FPS Göstergesi', desc: 'Anlık kare hızını ekranın köşesinde küçük bir etiket olarak göster', type: 'toggle', default: false },
+                        { id: 'fps-limit', label: 'FPS Sınırlayıcı', desc: 'Web sayfalarının animasyon kare hızını sınırlar; arayüz ve video oynatımını etkilemez', type: 'select', options: [{ val: '0', name: 'Kapalı (ekran yenilemesine göre)' }, { val: '30', name: '30 FPS' }, { val: '45', name: '45 FPS' }, { val: '60', name: '60 FPS' }, { val: '90', name: '90 FPS' }, { val: '120', name: '120 FPS' }], default: '0' },
                         { id: 'system-monitor', label: 'Sistem Performans Göstergesi', desc: 'FPS yanında işletim sisteminin yaklaşık toplam CPU kullanımını göster', type: 'toggle', default: false },
-                        { id: 'monitor-position', label: 'Performans Göstergesi Konumu', desc: 'FPS ve CPU değerlerini sol veya sağ üstte göster', type: 'select', options: [{ val: 'left', name: 'Sol' }, { val: 'right', name: 'Sağ' }], default: 'left' },
+                        { id: 'monitor-position', label: 'Performans Göstergesi Konumu', desc: 'FPS ve CPU değerlerini ekranın sol veya sağ alt köşesinde göster', type: 'select', options: [{ val: 'left', name: 'Sol' }, { val: 'right', name: 'Sağ' }], default: 'left' },
+                        { id: 'monitor-background', label: 'Gösterge Arka Planı', desc: 'Küçük performans etiketinin arka plan rengini seç', type: 'select', options: [{ val: 'black', name: 'Siyah' }, { val: 'graphite', name: 'Grafit' }, { val: 'accent', name: 'Vurgu rengi' }, { val: 'light', name: 'Açık' }], default: 'black' },
+                        { id: 'monitor-opacity', label: 'Gösterge Arka Plan Saydamlığı', desc: 'Etiket kutusunun arka plan opaklığını ayarla', type: 'range', min: 10, max: 100, step: 5, default: '70' },
+                        { id: 'monitor-scale', label: 'Gösterge Boyutu', desc: 'FPS/CPU etiketinin metin ve boşluk ölçeğini ayarla', type: 'range', min: 80, max: 150, step: 5, default: '100' },
                         { id: 'game-mode', label: 'Oyuncu Modu', desc: 'Oyun için koyu tema ve daha düşük arayüz yükü uygula; kapatınca önceki tercihlerini geri yükle', type: 'toggle', default: false }
                     ]
                 }
@@ -546,8 +604,6 @@ id: 'gorunum-dil-paketleri',
                     title: 'Geliştirici Araçları',
                     icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>',
                     items: [
-                        { id: 'devtools-toggle', label: 'DevTools Aç/Kapat', desc: 'Geliştirici araçları penceresini açar veya kapatır', type: 'button', btnText: 'Aç / Kapat', action: 'toggleDevTools' },
-                        { id: 'devtools-detached', label: 'DevTools Ayrı Pencerede Aç', desc: 'DevTools\'u ayrı bir pencerede açar', type: 'button', btnText: 'Ayrı Aç', action: 'openDetachedDevTools' },
                         { id: 'reload-page', label: 'Sayfayı Yenile', desc: 'Geçerli sekmeyi normal şekilde yeniler', type: 'button', btnText: 'Yenile', action: 'reloadCurrentPage' },
                         { id: 'hard-reload-page', label: 'Önbelleği Atla ve Yenile', desc: 'Önbelleği temizleyip sayfayı sert şekilde yeniler', type: 'button', btnText: 'Sert Yenile', action: 'hardReloadCurrentPage' },
                         { id: 'clear-console', label: 'Konsolu Temizle', desc: 'Renderer konsolundaki tüm çıktıları temizler', type: 'button', btnText: 'Konsolu Temizle', action: 'clearConsoleOutput' },
@@ -560,8 +616,8 @@ id: 'gorunum-dil-paketleri',
                     title: 'Veri Yönetimi',
                     icon: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
                     items: [
-                        { id: 'export-settings-btn', label: 'Ayarları Dosyaya Kaydet', desc: 'Tüm tercihleri seçtiğiniz konuma JSON dosyası olarak kaydet', type: 'button', btnText: 'Dosyaya Kaydet', action: 'exportSettingsToFile' },
-                        { id: 'import-settings-btn', label: 'Dosyadan Ayarları Yükle', desc: 'Daha önce kaydettiğiniz ayar dosyasını yükle', type: 'button', btnText: 'Dosyadan Yükle', action: 'importSettingsFromFile' },
+                        { id: 'export-settings-btn', label: 'Ayar Dosyası Oluştur', desc: 'Ayarları ve yalnızca Okul Modu açık/kapalı durumunu işletim sistemi güvenli deposuyla şifrelenmiş .ankaconfig dosyasına kaydet; parola ve okul hesapları dışarı aktarılmaz', type: 'button', btnText: 'Ayar Dosyasını Kaydet', action: 'exportSettingsToFile' },
+                        { id: 'import-settings-btn', label: 'Ayar Dosyasını Yükle', desc: 'Bu cihazda güvenli biçimde şifrelenmiş .ankaconfig dosyasındaki ayarları parolasız yükle', type: 'button', btnText: 'Ayar Dosyasını Aç', action: 'importSettingsFromFile' },
                         { id: 'clear-i18n-cache', label: 'Çeviri Önbelleğini Temizle', desc: 'Otomatik çevirileri yeniden indirmek için önbelleği siler', type: 'button', btnText: 'Önbelleği Temizle', action: 'clearI18nCache' },
                         { id: 'clear-temp-data-btn', label: 'Anka Web Geçici Dosyalarını Temizle', desc: 'Önbellek, oturum ve AppData/Roaming altındaki tüm Anka Web verilerini siler. Uygulama kapatılır, temizlenir ve otomatik yeniden başlatılır.', type: 'button', btnText: 'Temizle ve Yeniden Başlat', action: 'clearTempDataAndRestart' }
                     ]
@@ -601,9 +657,13 @@ id: 'gorunum-dil-paketleri',
     let dismissLock = () => {};
     let searchQuery = '';
     let autoThemeTimer = 0;
+    let suppressThemeBroadcast = false;
     let activeConfirm = null;
     let translationBanner = null;
     let translationInFlight = false;
+    let settingsHydrationStarted = false;
+    let settingsHydrationFinished = false;
+    const settingsEditedDuringHydration = new Set();
 
     const domCache = {
         panel: null,
@@ -647,6 +707,7 @@ id: 'gorunum-dil-paketleri',
             for (const s of g.items) {
                 if (s.label) texts.push(s.label);
                 if (s.desc) texts.push(s.desc);
+                if (s.placeholder) texts.push(s.placeholder);
                 if (s.options) for (const o of s.options) if (o.name) texts.push(o.name);
                 if (s.btnText) texts.push(s.btnText);
             }
@@ -720,6 +781,7 @@ id: 'gorunum-dil-paketleri',
     }
 
     function panelToast(message, type) {
+        if (lsGet('set_notifications') === 'false') return;
         let el = document.getElementById('sp-toast');
         if (!el) {
             el = document.createElement('div');
@@ -796,9 +858,21 @@ id: 'gorunum-dil-paketleri',
     function notifyMain(id, val) {
         const api = window.electronAPI;
         const i = ipc();
-        if (api && api.sendSettingUpdate) api.sendSettingUpdate({ id, val });
-        else if (i) i.send('settings-update', { id, val });
-        if (i) i.send('save-app-setting', { id, val });
+        if (i && typeof i.invoke === 'function') {
+            i.invoke('save-app-setting:commit', { id, val }).then((result) => {
+                if (!result || !result.ok) throw new Error(result && result.error ? result.error : 'Ayar kaydedilemedi.');
+            }).catch((err) => {
+                console.error('Ayar kalıcı olarak kaydedilemedi:', id, err);
+                toast('Ayar kaydedilemedi. Depolama alanını ve dosya izinlerini kontrol edin.', 'error');
+            });
+        } else if (i) {
+            i.send('save-app-setting', { id, val });
+        } else if (api && api.sendSettingUpdate) {
+            api.sendSettingUpdate({ id, val });
+        } else {
+            console.error('Ayar kaydedilemedi: IPC bağlantısı kullanılamıyor.', id);
+            toast('Ayar kaydedilemedi: uygulama bağlantısı kullanılamıyor.', 'error');
+        }
     }
 
     function getChannel() { return typeof themeChannel !== 'undefined' && themeChannel ? themeChannel : null; }
@@ -823,6 +897,19 @@ id: 'gorunum-dil-paketleri',
         return mode;
     }
 
+    function applyCustomThemeCss(value) {
+        const css = String(value || '');
+        let style = document.getElementById('anka-custom-theme-css');
+        if (!style) {
+            style = document.createElement('style');
+            style.id = 'anka-custom-theme-css';
+            document.head.appendChild(style);
+        }
+        style.textContent = css.length <= 32768 &&
+            !/@import|url\s*\(|expression\s*\(|-moz-binding|behavior\s*:|javascript\s*:/i.test(css)
+            ? css : '';
+    }
+
     function applyTheme(mode, force) {
         mode = THEME_IDS.includes(mode) ? mode : 'system';
         const theme = resolveTheme(mode);
@@ -841,11 +928,12 @@ id: 'gorunum-dil-paketleri',
         root.dataset.themeMode = mode;
         root.style.colorScheme = theme === 'light' ? 'light' : 'dark';
         const channel = getChannel();
-        if (channel) channel.postMessage({ id: 'theme-preset', val: theme });
+        if (channel && !suppressThemeBroadcast && settingsHydrationFinished) channel.postMessage({ id: 'theme-preset', mode, val: theme });
         const i = ipc();
-        if (i) i.send('set-theme-source', mode === 'system' ? 'system' : theme === 'light' ? 'light' : 'dark');
+        if (i && settingsHydrationFinished) i.send('set-theme-source', mode === 'system' ? 'system' : theme === 'light' ? 'light' : 'dark');
         if (typeof syncOpenNewTabThemes === 'function') syncOpenNewTabThemes();
         applyCustomAccent();
+        applyCustomThemeCss(lsGet('set_custom-theme-css') || '');
     }
 
     function applyCustomAccent() {
@@ -886,22 +974,25 @@ id: 'gorunum-dil-paketleri',
     }
 
     function applyFontScale(value) {
-        const scale = Math.max(100, Math.min(130, Number(value) || 100)) / 100;
+        const scale = Math.max(80, Math.min(150, Number(value) || 100)) / 100;
         const root = document.documentElement;
+        const uiScale = Number(root.dataset.uiScale || 100) / 100;
         root.dataset.fontScale = String(Math.round(scale * 100));
         root.style.setProperty('--anka-font-scale', String(scale));
-        root.style.fontSize = 16 * scale + 'px';
+        root.style.fontSize = 16 * scale * uiScale + 'px';
         const base = Math.max(13, Math.min(15, window.innerWidth * 0.009 + 9));
-        if (document.body) document.body.style.fontSize = (base * scale) + 'px';
+        if (document.body) document.body.style.fontSize = (base * scale * uiScale) + 'px';
     }
 
     function applyUiScale(value) {
-        const scale = Math.max(100, Math.min(125, Number(value) || 100)) / 100;
+        const scale = Math.max(85, Math.min(125, Number(value) || 100)) / 100;
         const root = document.documentElement;
         root.dataset.uiScale = String(Math.round(scale * 100));
         root.style.setProperty('--anka-ui-scale', String(scale));
-        const container = document.querySelector('.main-container');
-        if (container) container.style.zoom = String(scale);
+        const fontScale = Number(root.dataset.fontScale || 100) / 100;
+        root.style.fontSize = 16 * fontScale * scale + 'px';
+        const base = Math.max(13, Math.min(15, window.innerWidth * 0.009 + 9));
+        if (document.body) document.body.style.fontSize = (base * fontScale * scale) + 'px';
     }
 
     function applyIconGlyphs() {
@@ -970,7 +1061,9 @@ id: 'gorunum-dil-paketleri',
             uiScale: String(getVal(findSetting('ui-scale'))),
             fontScale: String(getVal(findSetting('font-scale'))),
             touchMode: getVal(findSetting('touch-mode')) === true,
-            uiAnimations: getVal(findSetting('ui-animations')) === true
+            uiAnimations: getVal(findSetting('ui-animations')) === true,
+            nightLight: lsGet('set_night-light') === 'true',
+            nightLightStrength: String(lsGet('set_night-light-strength') || '25')
         };
     }
 
@@ -982,9 +1075,14 @@ id: 'gorunum-dil-paketleri',
             if (!data) return;
             if (data.id === 'theme-preset') {
                 const mode = getStoredMode();
-                const incoming = String(data.val);
-                if (THEME_IDS.includes(incoming) && incoming !== 'system' && resolveTheme(mode) !== incoming) saveSetting('theme-preset', incoming, true);
-                else applyTheme(mode);
+                const incomingMode = THEME_IDS.includes(data.mode) ? data.mode : mode;
+                suppressThemeBroadcast = true;
+                try {
+                if (incomingMode !== mode) refreshControl('theme-preset', findSetting('theme-preset'));
+                applyTheme(incomingMode, true);
+                } finally {
+                    suppressThemeBroadcast = false;
+                }
             } else if (data.id === 'theme-settings-request') {
                 channel.postMessage({ id: 'theme-settings-snapshot', settings: themeSnapshot() });
             }
@@ -1020,13 +1118,36 @@ id: 'gorunum-dil-paketleri',
             el.append(fps, cpu);
             document.body.appendChild(el);
         }
+        if (el) {
+            el.style.setProperty('position', 'fixed', 'important');
+            el.style.setProperty('inset', 'auto auto 10px 10px', 'important');
+            el.style.setProperty('box-sizing', 'border-box');
+            el.style.setProperty('width', 'max-content', 'important');
+            el.style.setProperty('height', 'auto', 'important');
+            el.style.setProperty('min-width', '0', 'important');
+            el.style.setProperty('min-height', '0', 'important');
+            el.style.setProperty('max-width', 'calc(100vw - 20px)', 'important');
+            el.style.setProperty('max-height', '48px', 'important');
+            el.style.setProperty('overflow', 'hidden');
+            el.style.setProperty('white-space', 'nowrap');
+            el.style.setProperty('contain', 'layout paint style');
+            el.style.setProperty('z-index', '2147483647', 'important');
+            el.style.setProperty('isolation', 'isolate');
+            el.setAttribute('role', 'status');
+            el.setAttribute('aria-live', 'off');
+            if (!el.parentElement || el.parentElement !== document.body) document.body.appendChild(el);
+        }
+        fpsEl = el;
         return el;
     }
 
     function updateFPS(now) {
         fpsFrameCount++;
         if (now - fpsLastTime >= 1000) {
-            if (!fpsEl || !fpsEl.isConnected) fpsEl = document.getElementById('fps-display');
+            if (!fpsEl || !fpsEl.isConnected) {
+                fpsEl = ensureFps();
+                if (fpsEl) syncPerformanceMonitor();
+            }
             const fpsValue = fpsEl && fpsEl.querySelector('#fps-value');
             if (fpsValue) fpsValue.textContent = 'FPS: ' + fpsFrameCount;
             fpsFrameCount = 0;
@@ -1048,7 +1169,27 @@ id: 'gorunum-dil-paketleri',
 
     function updateMonitorPosition() {
         const el = ensureFps();
-        if (el) el.dataset.position = lsGet('set_monitor-position') === 'right' ? 'right' : 'left';
+        if (!el) return;
+        const position = lsGet('set_monitor-position') === 'right' ? 'right' : 'left';
+        el.dataset.position = position;
+        el.style.setProperty('inset', position === 'right' ? 'auto 10px 10px auto' : 'auto auto 10px 10px', 'important');
+        const backgrounds = {
+            black: [0, 0, 0],
+            graphite: [38, 42, 51],
+            accent: [255, 71, 87],
+            light: [244, 246, 251]
+        };
+        const color = backgrounds[lsGet('set_monitor-background')] || backgrounds.black;
+        const opacity = Math.max(10, Math.min(100, Number(lsGet('set_monitor-opacity')) || 70)) / 100;
+        const scale = Math.max(80, Math.min(150, Number(lsGet('set_monitor-scale')) || 100)) / 100;
+        el.style.setProperty('--fps-background', 'rgba(' + color.join(',') + ',' + opacity + ')');
+        el.style.setProperty('font-size', (11 * scale) + 'px');
+        el.style.setProperty('padding', (4 * scale) + 'px ' + (8 * scale) + 'px');
+        el.style.setProperty('gap', (7 * scale) + 'px');
+        el.style.setProperty('color', lsGet('set_monitor-background') === 'light' ? '#17171b' : '#fff');
+        el.querySelectorAll('span').forEach((span) => {
+            span.style.color = lsGet('set_monitor-background') === 'light' ? '#17171b' : '#fff';
+        });
     }
 
     function syncPerformanceMonitor() {
@@ -1056,7 +1197,7 @@ id: 'gorunum-dil-paketleri',
         const cpu = lsGet('set_system-monitor') === 'true';
         const el = ensureFps();
         if (!el) return;
-        el.style.display = fps || cpu ? 'flex' : 'none';
+        el.style.setProperty('display', fps || cpu ? 'flex' : 'none', 'important');
         const fpsValue = el.querySelector('#fps-value');
         const cpuValue = el.querySelector('#cpu-value');
         if (fpsValue) fpsValue.hidden = !fps;
@@ -1077,6 +1218,12 @@ id: 'gorunum-dil-paketleri',
             clearInterval(cpuRefreshTimer);
             cpuRefreshTimer = 0;
         }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', syncPerformanceMonitor, { once: true });
+    } else {
+        requestAnimationFrame(syncPerformanceMonitor);
     }
 
     function setupMovableMenus() {
@@ -1101,6 +1248,7 @@ id: 'gorunum-dil-paketleri',
             }
         };
         const isMovable = () => lsGet('set_movable-menus') === 'true';
+        const isPanelMovable = (panel) => panel && (panel.id === 'paint-menu' || isMovable());
         const shouldSave = () => lsGet('set_save-menu-positions') !== 'false';
         const resetPanel = (panel) => {
             if (!panel) return;
@@ -1118,7 +1266,7 @@ id: 'gorunum-dil-paketleri',
             delete panel.dataset.ankaPositionRestored;
         };
         const restore = (panel) => {
-            if (!panel || !isMovable() || !shouldSave() || panel.dataset.ankaPositionRestored === 'true') return;
+            if (!isPanelMovable(panel) || !shouldSave() || panel.dataset.ankaPositionRestored === 'true') return;
             panel.dataset.ankaPositionRestored = 'true';
             const position = readPositions()[panel.id];
             if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return;
@@ -1133,7 +1281,7 @@ id: 'gorunum-dil-paketleri',
         const refreshPanels = () => {
             for (const [, panel] of getPanels(document)) {
                 if (!panel) continue;
-                if (!isMovable()) resetPanel(panel);
+                if (!isPanelMovable(panel)) resetPanel(panel);
                 else if (shouldSave()) {
                     delete panel.dataset.ankaPositionRestored;
                     restore(panel);
@@ -1163,6 +1311,7 @@ id: 'gorunum-dil-paketleri',
         document.addEventListener('pointerdown', (event) => {
             const target = event.target;
             if (!target || !target.closest) return;
+            if (target.closest('#paint-handle')) return;
             const movable = isMovable();
             const legacyHandle = target.closest('#paint-handle,#kb-handle');
             if (!movable) {
@@ -1224,14 +1373,18 @@ id: 'gorunum-dil-paketleri',
 
     function updateMenuPositionControls() {
         const row = document.querySelector('.sp-item[data-id="save-menu-positions"]');
-        if (row) row.style.display = lsGet('set_movable-menus') === 'true' ? '' : 'none';
+        if (row) row.style.display = '';
     }
 
     function applySetting(id, val) {
         const boolVal = val === true || val === 'true';
         const root = document.documentElement;
-        if (id === 'fps-meter' || id === 'system-monitor' || id === 'monitor-position') {
+        if (id === 'fps-meter' || id === 'system-monitor' || id === 'monitor-position' || id === 'monitor-background' || id === 'monitor-opacity' || id === 'monitor-scale') {
             syncPerformanceMonitor();
+        } else if (id === 'fps-limit') {
+            window.dispatchEvent(new CustomEvent('anka-fps-limit-change', {
+                detail: { fps: [0, 30, 45, 60, 90, 120].includes(Number(val)) ? Number(val) : 0 }
+            }));
         } else if (id === 'start-fullscreen') {
             if (window.electronAPI && window.electronAPI.setFullscreen) window.electronAPI.setFullscreen(boolVal);
             else if (ipc()) ipc().send('set-fullscreen', boolVal);
@@ -1248,6 +1401,8 @@ id: 'gorunum-dil-paketleri',
             applyTheme(THEME_IDS.includes(String(val)) ? String(val) : 'system');
         } else if (id === 'custom-accent' || id === 'accent-quick') {
             applyCustomAccent();
+        } else if (id === 'custom-theme-css') {
+            applyCustomThemeCss(val);
         } else if (id === 'font-family') {
             applyFontFamily();
         } else if (id === 'icon-style') {
@@ -1259,6 +1414,7 @@ id: 'gorunum-dil-paketleri',
         } else if (id === 'language') {
             const lang = String(val || 'tr');
             if (ANKA_I18N) ANKA_I18N.setLang(lang);
+            if (typeof syncOpenNewTabThemes === 'function') syncOpenNewTabThemes();
             if (panelOpen) renderTab(currentTab);
         } else if (id === 'smooth-scrolling') {
             root.style.scrollBehavior = boolVal ? 'smooth' : 'auto';
@@ -1298,8 +1454,23 @@ id: 'gorunum-dil-paketleri',
             if (typeof window.__ankaApplyLimits === 'function') window.__ankaApplyLimits();
         } else if (id === 'compact-tabs') {
             root.classList.toggle('compact-tabs', boolVal);
+        } else if (id === 'vertical-tabs') {
+            root.dataset.verticalTabs = boolVal ? 'on' : 'off';
+            if (typeof closeTabDropdown === 'function') closeTabDropdown();
+            if (typeof window.applyChromeLayout === 'function') window.applyChromeLayout();
+        } else if (id === 'experimental-features') {
+            root.dataset.experimental = boolVal ? 'on' : 'off';
         } else if (id === 'notifications') {
             root.dataset.notifications = boolVal ? 'on' : 'off';
+        } else if (id === 'quick-menu-button') {
+            const quickMenuButton = document.getElementById('quick-actions-btn');
+            if (quickMenuButton) quickMenuButton.hidden = !boolVal;
+            if (!boolVal && typeof window.closeQuickActions === 'function') window.closeQuickActions();
+        } else if (id === 'sidebar-help-button') {
+            const helpButton = document.getElementById('btn-help');
+            if (helpButton) helpButton.hidden = !boolVal;
+        } else if (id === 'quick-menu-help' || id === 'quick-menu-groups' || id === 'quick-menu-window-name' || id === 'quick-menu-copy-page-url' || id === 'quick-menu-site-shortcut') {
+            if (typeof window.refreshQuickActionsMenu === 'function') window.refreshQuickActionsMenu();
         } else if (id === 'search-suggestions') {
             root.dataset.searchSuggestions = boolVal ? 'on' : 'off';
         } else if (id === 'school-mode') {
@@ -1313,9 +1484,16 @@ id: 'gorunum-dil-paketleri',
             root.classList.toggle('perf-lite', reduce || !!(window.ANKA_ENV && window.ANKA_ENV.lowEnd));
         } else if (id === 'reduce-transparency') {
             applyReduceTransparency();
+        } else if (id === 'night-light' || id === 'night-light-strength') {
+            const enabled = lsGet('set_night-light') === 'true';
+            const strength = Math.max(10, Math.min(50, Number(lsGet('set_night-light-strength')) || 25));
+            root.classList.toggle('night-light', enabled);
+            root.style.setProperty('--anka-night-light-strength', String(strength / 100));
+        } else if (id === 'profile-isolation') {
+            window.ANKA_PROFILE_ISOLATION = boolVal;
         }
 
-        if ((id === 'font-scale' || id === 'ui-scale' || id === 'logo-size' || id === 'touch-mode' || id === 'ui-animations') && typeof syncOpenNewTabThemes === 'function') {
+        if ((id === 'font-scale' || id === 'ui-scale' || id === 'logo-size' || id === 'touch-mode' || id === 'ui-animations' || id === 'night-light' || id === 'night-light-strength') && typeof syncOpenNewTabThemes === 'function') {
             syncOpenNewTabThemes();
         }
     }
@@ -1347,12 +1525,18 @@ id: 'gorunum-dil-paketleri',
             if (s && s.type === 'select' && !s.options.some((o) => o.val === out)) return false;
         }
         const changed = lsGet('set_' + id) !== out;
-        lsSet('set_' + id, out);
+        if (!lsSet('set_' + id, out)) {
+            toast('Ayar yerel depolamaya yazılamadı.', 'error');
+            return false;
+        }
+        if (id === 'theme-preset') lsSet('set_theme-preset-selected', 'true');
+        if (settingsHydrationStarted && !settingsHydrationFinished) settingsEditedDuringHydration.add(id);
         applySetting(id, out);
         if (s) refreshControl(id, s);
-        if (changed || force) {
-            const persisted = isToggle && id === 'game-mode' ? lsGet('set_game-mode') === 'true' : out === 'true';
-            notifyMain(id, isToggle ? persisted : out);
+        const persisted = isToggle && id === 'game-mode' ? lsGet('set_game-mode') === 'true' : out === 'true';
+        notifyMain(id, isToggle ? persisted : out);
+        if (changed && (id === 'restore-session' || id === 'disk-backed-tab-saver')) {
+            window.dispatchEvent(new Event('anka:session-storage-setting-changed'));
         }
         refreshChangedIndicators();
         return true;
@@ -1384,8 +1568,10 @@ id: 'gorunum-dil-paketleri',
 
     function restoreProfileSnapshot(name, ids) {
         const key = 'anka_' + name + '_profile_snapshot';
+        const stored = lsGet(key);
+        if (stored === null) return;
         let values = null;
-        try { values = JSON.parse(lsGet(key) || 'null'); } catch (e) {}
+        try { values = JSON.parse(stored); } catch (e) {}
         lsRemove(key);
         for (const id of ids) {
             const setting = findSetting(id);
@@ -1596,9 +1782,11 @@ id: 'gorunum-dil-paketleri',
     const texts = collectAllSettingsTexts();
     const prog = ANKA_I18N ? ANKA_I18N.getPackProgress(texts, lang) : { done: 0, total: texts.length, percent: 0 };
     const isFull = prog.percent === 100;
-    const statusClass = isFull ? 'ok' : (prog.done > 0 ? 'info' : 'no');
-    const statusText = isFull ? 'İndirildi' : (prog.done > 0 ? prog.done + '/' + prog.total : 'Hazır değil');
-    return `<div class="pack-row" data-pack-lang="${lang}"><span class="pack-status sp-status ${statusClass}" id="pack-status-${lang}">${statusText}</span><div class="pack-bar"><div class="pack-bar-fill${isFull ? ' done' : ''}" id="pack-fill-${lang}" style="width:${prog.percent}%"></div></div><button type="button" class="sp-btn${isFull ? ' secondary' : ''}" data-action="download-pack" data-lang="${lang}" id="pack-btn-${lang}">${isFull ? 'Yeniden İndir' : 'İndir'}</button></div>`;
+    const needsRestart = isFull && restartRequiredPacks.has(lang);
+    const isQueued = packCurrentLang === lang || packQueue.indexOf(lang) !== -1;
+    const statusClass = isFull ? 'ok' : (isQueued || prog.done > 0 ? 'info' : 'no');
+    const statusText = isQueued ? 'İndirme devam ediyor' : (isFull ? 'İndirildi' : (prog.done > 0 ? prog.done + '/' + prog.total : 'Hazır değil'));
+    return `<div class="pack-row" data-pack-lang="${lang}"><span class="pack-status sp-status ${statusClass}" id="pack-status-${lang}">${statusText}</span><div class="pack-bar"><div class="pack-bar-fill${isFull ? ' done' : ''}" id="pack-fill-${lang}" style="width:${prog.percent}%"></div></div><button type="button" class="sp-btn${isFull && !needsRestart ? ' secondary' : ''}" data-action="${needsRestart ? 'restart-app' : 'download-pack'}" data-lang="${lang}" id="pack-btn-${lang}"${isQueued ? ' disabled' : ''}>${isQueued ? 'İndiriliyor…' : (needsRestart ? 'Uygulamayı Yeniden Başlat' : (isFull ? 'Yeniden İndir' : 'İndir'))}</button>${needsRestart ? '<span class="pack-complete-note">Paket indirildi. Uygulamayı yeniden başlatmak için yukarıdaki düğmeye tıklayın.</span>' : ''}</div>`;
 }
         if (s.type === 'toggle') {
             return `<label class="sp-toggle"><input type="checkbox" data-id="${s.id}"${v ? ' checked' : ''}${dis}><span class="sp-slider"></span></label>`;
@@ -1612,14 +1800,17 @@ id: 'gorunum-dil-paketleri',
             return `<div class="sp-range"><input type="range" data-id="${s.id}" min="${s.min}" max="${s.max}" step="${s.step}" value="${esc(v)}" aria-label="${esc(t(s.label))}"${dis}><output id="value-${s.id}">${esc(v)}%</output></div>`;
         }
         if (s.type === 'text') {
-            return `<input class="sp-text" type="text" data-id="${s.id}" value="${esc(v || '')}" placeholder="${esc(s.placeholder || '')}"${dis}>`;
+            return `<input class="sp-text" type="text" data-id="${s.id}" value="${esc(v || '')}" placeholder="${esc(t(s.placeholder || ''))}"${dis}>`;
+        }
+        if (s.type === 'css') {
+            return `<textarea class="sp-css-editor" data-id="${s.id}" rows="8" maxlength="32768" spellcheck="false" placeholder=":root { --accent: #7c5cff; }"${dis}>${esc(v || '')}</textarea>`;
         }
         if (s.type === 'number') {
-            return `<input class="sp-text" type="number" data-id="${s.id}" min="${s.min}" max="${s.max}" value="${esc(v || '')}" placeholder="${esc(s.placeholder || '')}"${dis}>`;
+            return `<input class="sp-text" type="number" data-id="${s.id}" min="${s.min}" max="${s.max}" value="${esc(v || '')}" placeholder="${esc(t(s.placeholder || ''))}"${dis}>`;
         }
         if (s.type === 'color') {
             const safeVal = /^#[0-9a-f]{6}$/i.test(v || '') ? v : '#ff4757';
-            return `<div class="sp-color-wrap"><input type="color" class="sp-color" data-id="${s.id}" value="${safeVal}"><button type="button" class="sp-color-reset" data-reset-id="${s.id}" title="Tema varsayılanına dön">Sıfırla</button></div>`;
+            return `<div class="sp-color-wrap"><input type="color" class="sp-color" data-id="${s.id}" value="${safeVal}"><button type="button" class="sp-color-reset" data-reset-id="${s.id}" title="${esc(t('Tema varsayılanına dön'))}">${esc(t('Sıfırla'))}</button></div>`;
         }
         if (s.type === 'button') {
             const isDanger = s.action === 'clearTempDataAndRestart';
@@ -1766,6 +1957,14 @@ id: 'gorunum-dil-paketleri',
                 return;
             }
             saveSetting(id, v);
+        } else if (s.type === 'css') {
+            const v = tgt.value;
+            if (v.length > 32768 || /@import|url\s*\(|expression\s*\(|-moz-binding|behavior\s*:|javascript\s*:/i.test(v)) {
+                panelToast('CSS en fazla 32 KB olabilir; harici kaynak veya çalıştırılabilir CSS kullanılamaz.', 'error');
+                tgt.value = String(getVal(s) || '');
+                return;
+            }
+            saveSetting(id, v);
         } else if (s.type === 'number') {
             let num = parseInt(tgt.value, 10);
             if (isNaN(num)) num = parseInt(getDefault(s), 10);
@@ -1893,10 +2092,11 @@ id: 'gorunum-dil-paketleri',
                 html += `<div class="settings-nav-item${key === 'genel' ? ' active' : ''}" data-tab="${key}"><span class="nav-icon"><svg viewBox="0 0 24 24">${cat.icon || ''}</svg></span><span class="nav-label">${esc(t(cat.title))}</span><span class="nav-count" style="display:${count > 0 ? '' : 'none'}">${count}</span></div>`;
             }
             html += `<div class="settings-nav-item" data-tab="okul"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg></span><span class="nav-label">${esc(t('Okul Modu'))}</span></div>`;
-            html += `<div class="settings-nav-item" data-tab="hakkinda"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span><span class="nav-label">${esc(t('Hakkında'))}</span></div>`;
             html += '<div class="settings-nav-spacer"></div><div class="settings-nav-divider"></div>';
             html += `<div class="settings-nav-item danger" id="reset-settings-btn"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></span><span class="nav-label">${esc(t('Ayarları Sıfırla'))}</span></div>`;
             html += `<div class="settings-nav-item danger-strong" id="reset-all-data-btn"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></span><span class="nav-label">${esc(t('Her Şeyi Sıfırla'))}</span></div>`;
+            html += '<div class="settings-nav-divider"></div>';
+            html += `<div class="settings-nav-item" data-tab="hakkinda"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span><span class="nav-label">${esc(t('Hakkında'))}</span></div>`;
             return html;
         })();
         document.body.insertAdjacentHTML('beforeend', `
@@ -1948,23 +2148,30 @@ id: 'gorunum-dil-paketleri',
     }
 
     async function loadSchoolConfig() {
-        const i = ipc();
-        if (!i) throw new Error('Okul Modu yalnızca Anka Web uygulamasında kullanılabilir.');
-        return i.invoke('school-mode:get-config');
+        const api = ipc();
+        if (!api) throw new Error(t('Okul Modu yalnızca Anka Web uygulamasında kullanılabilir.'));
+        return api.invoke('school-mode:get-config');
     }
 
     function schoolToggle(labelText, description, checked) {
         const row = document.createElement('div');
         row.className = 'school-row';
         const info = document.createElement('div');
-        info.innerHTML = '<div class="sp-item-label"></div><div class="sp-item-desc"></div>';
-        info.children[0].textContent = labelText;
-        info.children[1].textContent = description;
+        const label = document.createElement('div');
+        label.className = 'sp-item-label';
+        label.textContent = labelText;
+        const detail = document.createElement('div');
+        detail.className = 'sp-item-desc';
+        detail.textContent = description;
+        info.append(label, detail);
         const toggle = document.createElement('label');
         toggle.className = 'sp-toggle';
-        toggle.innerHTML = '<input type="checkbox"><span class="sp-slider"></span>';
-        const input = toggle.querySelector('input');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
         input.checked = !!checked;
+        const slider = document.createElement('span');
+        slider.className = 'sp-slider';
+        toggle.append(input, slider);
         row.append(info, toggle);
         return { row, input };
     }
@@ -1975,13 +2182,17 @@ id: 'gorunum-dil-paketleri',
         input.type = type;
         input.placeholder = placeholder;
         input.value = value;
-        input.autocomplete = type === 'password' ? 'new-password' : 'url';
+        input.autocomplete = type === 'password' ? 'new-password' : type === 'url' ? 'url' : 'off';
         return input;
     }
 
     function validSchoolUrl(value) {
-        try { const u = new URL(value); return u.protocol === 'http:' || u.protocol === 'https:'; }
-        catch (e) { return false; }
+        try {
+            const url = new URL(value);
+            return url.protocol === 'http:' || url.protocol === 'https:';
+        } catch (error) {
+            return false;
+        }
     }
 
     async function renderSchoolSettings(body) {
@@ -1991,129 +2202,300 @@ id: 'gorunum-dil-paketleri',
         const loading = document.createElement('div');
         loading.className = 'sp-empty';
         loading.textContent = t('Okul ayarları yükleniyor...');
-        group.appendChild(loading);
-        body.appendChild(group);
+        group.append(loading);
+        body.append(group);
         let config;
-        try { config = await loadSchoolConfig(); }
-        catch (err) { loading.textContent = err.message; return; }
+        try {
+            config = await loadSchoolConfig();
+        } catch (error) {
+            loading.textContent = error.message || t('Okul ayarları yüklenemedi.');
+            return;
+        }
         if (!body.isConnected || currentTab !== 'okul') return;
         group.replaceChildren();
-        const modeCard = document.createElement('section');
-        modeCard.className = 'school-card';
-        const mode = schoolToggle(t('Okul Modu'), t('Açıldığında yeni sekmeler ve uygulama başlangıcı seçilen okul sitesine gider.'), config.enabled);
-        const policyNote = document.createElement('p');
-        policyNote.style.marginTop = '8px';
-        policyNote.textContent = t('Açıkken yönetilen ayarlar') + ': ' + Object.keys(SCHOOL_POLICY).map((id) => (findSetting(id) && findSetting(id).label) || id).join(', ') + '.';
-        modeCard.append(mode.row, policyNote);
-        group.appendChild(modeCard);
+
+        const overview = document.createElement('section');
+        overview.className = 'school-card';
+        const overviewTitle = document.createElement('h3');
+        overviewTitle.textContent = t('Bu bilgisayardaki Okul Modu');
+        const overviewDescription = document.createElement('p');
+        overviewDescription.textContent = t('Okul Modu yeni sekmeleri okul başlangıç adresine yönlendirir ve okul profili tarafından belirlenen güvenlik ayarlarını bu bilgisayarda uygular. Bu ayarlar yalnızca yerel bilgisayarı etkiler.');
+        const mode = schoolToggle(t('Okul Modu'), t('Yeni sekmeler okul başlangıç sayfasını kullanır.'), config.enabled);
+        const modeNote = document.createElement('p');
+        modeNote.className = 'school-help';
+        modeNote.textContent = t('Etkinleştirildiğinde yönetilen ayarlar: ') +
+            Object.keys(SCHOOL_POLICY).map((id) => (findSetting(id) && findSetting(id).label) || id).join(', ') + '.';
+        overview.append(overviewTitle, overviewDescription, mode.row, modeNote);
+        group.append(overview);
+
         const urlCard = document.createElement('section');
         urlCard.className = 'school-card';
         const urlTitle = document.createElement('h3');
-        urlTitle.textContent = t('Başlangıç Sitesi');
+        urlTitle.textContent = t('Okul başlangıç sayfası');
         const urlDescription = document.createElement('p');
-        urlDescription.textContent = t('Varsayılan EBA adresini değiştirebilirsiniz.');
+        urlDescription.textContent = t('Yeni sekmelerde açılacak güvenilir okul sitesinin adresini girin. Örnek: https://www.eba.gov.tr/');
         const urlInput = schoolTextInput('url', 'https://www.eba.gov.tr/', config.startUrl);
+        urlInput.setAttribute('aria-label', t('Okul başlangıç adresi'));
         urlCard.append(urlTitle, urlDescription, urlInput);
-        group.appendChild(urlCard);
+        group.append(urlCard);
+
         const lockCard = document.createElement('section');
         lockCard.className = 'school-card';
-        const lock = schoolToggle(t('Ayarları Parola ile Kilitle'), t('Okul ayarlarına her girişte parola istenir.'), config.lockSettings);
+        const lock = schoolToggle(t('Ayarlar parolası'), t('Ayarlar panelini açarken parola iste.'), config.lockSettings);
         const lockDescription = document.createElement('p');
         lockDescription.className = 'school-warning';
-        lockDescription.style.marginTop = '8px';
-        lockDescription.textContent = t('Parola geri alınamaz. Unutursanız kullanıcı verilerini sıfırlamanız gerekir.');
-        const settingsPassword = schoolTextInput('password', config.hasSettingsPassword ? t('Yeni parola (değiştirmek için)') : t('Ayar parolası'));
+        lockDescription.textContent = t('Bu parola unutulursa kurtarılamaz. Okul yönetici parolasından farklı bir parola kullanın.');
+        const settingsPassword = schoolTextInput('password', config.hasSettingsPassword ? t('Yeni parola (değiştirmek için)') : t('Ayarlar parolası'));
+        settingsPassword.autocomplete = 'new-password';
         lockCard.append(lock.row, lockDescription, settingsPassword);
-        group.appendChild(lockCard);
+        group.append(lockCard);
+
         const usersCard = document.createElement('section');
         usersCard.className = 'school-card';
-        const login = schoolToggle(t('Girişte Kullanıcı Seçimi'), t('Kapalıyken uygulama giriş ekranı göstermez.'), config.userLoginEnabled);
-        usersCard.appendChild(login.row);
+        const usersTitle = document.createElement('h3');
+        usersTitle.textContent = t('Bu bilgisayardaki kullanıcılar');
+        const login = schoolToggle(t('Açılışta kullanıcı seçimi'), t('Etkinleştirildiğinde Anka Web açılırken kullanıcı seçimi gösterilir.'), config.userLoginEnabled);
+        const loginHelp = document.createElement('p');
+        loginHelp.className = 'school-help';
+        loginHelp.textContent = t('Önce kullanıcı ekleyin. İsteğe bağlı kullanıcı parolaları bu bilgisayarda korunur; bu özellik bilgisayar hesabı veya Windows/Linux oturum parolası istemez.');
         const userList = document.createElement('div');
         userList.className = 'school-users';
         const userForm = document.createElement('div');
         userForm.className = 'school-user-form';
         const usernameInput = schoolTextInput('text', t('Kullanıcı adı'));
-        const displayNameInput = schoolTextInput('text', t('Görünen ad'));
-        const userPasswordInput = schoolTextInput('password', t('Parola (opsiyonel)'));
+        usernameInput.autocomplete = 'username';
+        const displayNameInput = schoolTextInput('text', t('Ekranda görünecek ad'));
+        const userPasswordInput = schoolTextInput('password', t('İsteğe bağlı kullanıcı parolası'));
         const addUser = document.createElement('button');
         addUser.type = 'button';
         addUser.className = 'sp-btn';
-        addUser.textContent = t('Kullanıcı Ekle');
+        addUser.textContent = t('Kullanıcı ekle');
         userForm.append(usernameInput, displayNameInput, userPasswordInput, addUser);
-        usersCard.append(userList, userForm);
-        group.appendChild(usersCard);
+        usersCard.append(usersTitle, login.row, loginHelp, userList, userForm);
+        group.append(usersCard);
+
         const status = document.createElement('div');
         status.className = 'school-card';
-        status.style.fontSize = '11.5px';
-        status.style.color = 'var(--text-secondary,#a1a1aa)';
-        group.appendChild(status);
+        status.setAttribute('role', 'status');
         const renderUsers = () => {
-            const frag = document.createDocumentFragment();
+            const rows = document.createDocumentFragment();
             for (const user of config.users || []) {
                 const row = document.createElement('div');
                 row.className = 'school-user';
                 const name = document.createElement('strong');
-                name.textContent = `${user.displayName} (@${user.username})`;
+                name.textContent = user.displayName + ' (@' + user.username + ')';
                 const remove = document.createElement('button');
                 remove.type = 'button';
                 remove.className = 'sp-btn secondary';
-                remove.style.padding = '4px 10px';
-                remove.style.fontSize = '11px';
                 remove.textContent = t('Kaldır');
                 remove.addEventListener('click', async () => {
+                    if (!await confirmBox(t('Bu kullanıcı bu bilgisayardan kaldırılsın mı?'), { title: t('Kullanıcıyı kaldır'), danger: true })) return;
                     try {
                         const result = await ipc().invoke('school-mode:remove-user', user.id);
-                        if (!result.ok) { status.textContent = result.error; return; }
+                        if (!result.ok) throw new Error(result.error || t('Kullanıcı kaldırılamadı.'));
                         config.users = result.config.users;
+                        config.userLoginEnabled = result.config.userLoginEnabled;
+                        login.input.checked = !!config.userLoginEnabled;
                         status.textContent = t('Kullanıcı kaldırıldı.');
                         renderUsers();
-                    } catch (err) { status.textContent = t('Kullanıcı kaldırılamadı.'); }
+                    } catch (error) {
+                        status.textContent = error.message || t('Kullanıcı kaldırılamadı.');
+                    }
                 });
                 row.append(name, remove);
-                frag.appendChild(row);
+                rows.append(row);
             }
-            userList.replaceChildren(frag);
+            if (!config.users || !config.users.length) {
+                const empty = document.createElement('p');
+                empty.className = 'school-help';
+                empty.textContent = t('Henüz kullanıcı eklenmedi.');
+                rows.append(empty);
+            }
+            userList.replaceChildren(rows);
         };
         renderUsers();
         addUser.addEventListener('click', async () => {
+            addUser.disabled = true;
             try {
-                const result = await ipc().invoke('school-mode:save-user', { username: usernameInput.value, displayName: displayNameInput.value, password: userPasswordInput.value });
-                if (!result.ok) { status.textContent = result.error; return; }
+                const result = await ipc().invoke('school-mode:save-user', {
+                    username: usernameInput.value,
+                    displayName: displayNameInput.value,
+                    password: userPasswordInput.value
+                });
+                if (!result.ok) throw new Error(result.error || t('Kullanıcı eklenemedi.'));
                 config.users = result.users;
-                usernameInput.value = ''; displayNameInput.value = ''; userPasswordInput.value = '';
-                status.textContent = t('Kullanıcı eklendi.'); renderUsers();
-            } catch (err) { status.textContent = t('Kullanıcı eklenemedi.'); }
+                usernameInput.value = '';
+                displayNameInput.value = '';
+                userPasswordInput.value = '';
+                status.textContent = t('Kullanıcı eklendi.');
+                renderUsers();
+            } catch (error) {
+                status.textContent = error.message || t('Kullanıcı eklenemedi.');
+            } finally {
+                addUser.disabled = false;
+            }
         });
+        group.append(status);
+
+        const sharingCard = document.createElement('section');
+        sharingCard.className = 'school-card';
+        const sharingTitle = document.createElement('h3');
+        sharingTitle.textContent = t('Okul ağı ve bilgisayar eşleştirme');
+        const sharingDescription = document.createElement('p');
+        sharingDescription.textContent = t('Ayrı yönetim panelinden bilgisayarları eşleştirin, istekleri onaylayın veya reddedin, seçili cihazları kaldırın ve okul ayarlarını tekli ya da toplu gönderin.');
+        const steps = document.createElement('ol');
+        steps.className = 'school-steps';
+        [
+            t('Yönetici bilgisayarında paneli açıp güçlü yönetici parolası oluşturun.'),
+            t('Panelde yerel ağ sunucusunu başlatın. Gösterilen IP adresi, bağlantı noktası ve SHA-256 parmak izini not edin.'),
+            t('Yeni eşleştirme daveti üretin. Diğer bilgisayarda “Şifreli davet dosyasını içe aktar” seçeneğini kullanın veya bilgileri elle girin.'),
+            t('Her bilgisayardan gelen isteği yönetim panelinde ayrıca onaylayın. Sonra hedef bilgisayarları seçerek politika gönderin.'),
+            t('Hedef bilgisayarda kullanıcı politikayı görüp kabul etmelidir. Herhangi bir ekran, sekme veya geçmiş bilgisi paylaşılmaz.')
+        ].forEach((text) => {
+            const item = document.createElement('li');
+            item.textContent = text;
+            steps.append(item);
+        });
+        const openPanel = document.createElement('button');
+        openPanel.type = 'button';
+        openPanel.className = 'sp-btn';
+        openPanel.textContent = t('Yönetim panelini aç');
+        const panelStatus = document.createElement('p');
+        panelStatus.className = 'school-help';
+        openPanel.addEventListener('click', async () => {
+            openPanel.disabled = true;
+            try {
+                const api = ipc();
+                if (!api || typeof api.invoke !== 'function') throw new Error(t('Yönetim paneli bu ortamda açılamıyor.'));
+                const result = await api.invoke('school-management:open-panel');
+                if (!result || !result.ok) throw new Error(t('Yönetim paneli açılamadı.'));
+                panelStatus.textContent = t('Panel ayrı pencerede açıldı. Bilgisayar istekleri, hedef seçimi ve toplu ayarlar panelde bulunur.');
+            } catch (error) {
+                panelStatus.textContent = error.message || t('Yönetim paneli açılamadı.');
+            } finally {
+                openPanel.disabled = false;
+            }
+        });
+        sharingCard.append(sharingTitle, sharingDescription, steps, openPanel, panelStatus);
+        group.append(sharingCard);
+
+        const requestsCard = document.createElement('section');
+        requestsCard.className = 'school-card';
+        const requestsTitle = document.createElement('h3');
+        requestsTitle.textContent = t('Bekleyen bilgisayar istekleri');
+        const requestsHelp = document.createElement('p');
+        requestsHelp.className = 'school-help';
+        requestsHelp.textContent = t('İstekleri görmek için yönetici parolanızı doğrulayın. Onaylamadığınız hiçbir bilgisayar eşleşmez.');
+        const requestsPassword = schoolTextInput('password', t('Yönetici parolası'));
+        requestsPassword.autocomplete = 'current-password';
+        const loadRequests = document.createElement('button');
+        loadRequests.type = 'button';
+        loadRequests.className = 'sp-btn secondary';
+        loadRequests.textContent = t('İstekleri yenile');
+        const requestList = document.createElement('div');
+        requestList.className = 'school-users';
+        const requestStatus = document.createElement('p');
+        requestStatus.className = 'school-help';
+        const renderRequests = (requests) => {
+            const rows = document.createDocumentFragment();
+            if (!requests.length) {
+                const empty = document.createElement('p');
+                empty.className = 'school-help';
+                empty.textContent = t('Bekleyen istek yok.');
+                rows.append(empty);
+            }
+            for (const request of requests) {
+                const row = document.createElement('div');
+                row.className = 'school-user';
+                const name = document.createElement('strong');
+                name.textContent = request.name + ' · ' + new Date(request.createdAt).toLocaleString();
+                const actions = document.createElement('div');
+                actions.className = 'school-user-actions';
+                for (const [action, label] of [['approve', t('Onayla')], ['deny', t('Reddet')]]) {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = action === 'approve' ? 'sp-btn' : 'sp-btn secondary';
+                    button.textContent = label;
+                    button.addEventListener('click', async () => {
+                        button.disabled = true;
+                        try {
+                            const result = await ipc().invoke('school-management:' + action, requestsPassword.value, request.id);
+                            if (!result.ok) throw new Error(result.error || t('İstek işlenemedi.'));
+                            requestStatus.textContent = action === 'approve' ? t('Bilgisayar eşleştirildi.') : t('Bağlantı isteği reddedildi.');
+                            loadRequests.click();
+                        } catch (error) {
+                            requestStatus.textContent = error.message || t('İstek işlenemedi.');
+                        } finally {
+                            button.disabled = false;
+                        }
+                    });
+                    actions.append(button);
+                }
+                row.append(name, actions);
+                rows.append(row);
+            }
+            requestList.replaceChildren(rows);
+        };
+        loadRequests.addEventListener('click', async () => {
+            loadRequests.disabled = true;
+            try {
+                const result = await ipc().invoke('school-management:state', requestsPassword.value);
+                if (!result.ok) throw new Error(result.error || t('Yönetici doğrulanamadı.'));
+                renderRequests(result.state.pending || []);
+                requestStatus.textContent = t('İstek listesi güncellendi.');
+            } catch (error) {
+                requestStatus.textContent = error.message === 'invalid-password' ? t('Yönetici parolası doğru değil.') : error.message || t('İstekler alınamadı.');
+                renderRequests([]);
+            } finally {
+                loadRequests.disabled = false;
+            }
+        });
+        requestsCard.append(requestsTitle, requestsHelp, requestsPassword, loadRequests, requestList, requestStatus);
+        group.append(requestsCard);
+
         const save = document.createElement('button');
         save.type = 'button';
         save.className = 'sp-btn';
-        save.textContent = t('Okul Ayarlarını Kaydet');
+        save.textContent = t('Okul ayarlarını kaydet');
         save.addEventListener('click', async () => {
-            if (!validSchoolUrl(urlInput.value.trim())) { status.textContent = t('Geçerli bir http(s) adresi girin.'); return; }
-            if (lock.input.checked && !config.hasSettingsPassword && !settingsPassword.value) { status.textContent = t('Ayar kilidi için parola belirleyin.'); return; }
-            if (lock.input.checked && !config.lockSettings && !await confirmBox(t('Bu parola unutulursa kurtarılamaz. Devam edilsin mi?'), { title: t('Ayar kilidini etkinleştir') })) return;
+            if (!validSchoolUrl(urlInput.value.trim())) {
+                status.textContent = t('Geçerli bir http veya https adresi girin.');
+                urlInput.focus();
+                return;
+            }
+            if (lock.input.checked && !config.hasSettingsPassword && !settingsPassword.value) {
+                status.textContent = t('Ayar kilidi için bir parola belirleyin.');
+                settingsPassword.focus();
+                return;
+            }
+            if (lock.input.checked && !config.lockSettings &&
+                !await confirmBox(t('Bu parola unutulursa kurtarılamaz. Devam edilsin mi?'), { title: t('Ayar kilidini etkinleştir') })) return;
             save.disabled = true;
             try {
                 const result = await ipc().invoke('school-mode:save-config', {
-                    enabled: mode.input.checked, startUrl: urlInput.value.trim(),
-                    lockSettings: lock.input.checked, settingsPassword: settingsPassword.value,
+                    enabled: mode.input.checked,
+                    startUrl: urlInput.value.trim(),
+                    lockSettings: lock.input.checked,
+                    settingsPassword: settingsPassword.value,
                     userLoginEnabled: login.input.checked
                 });
                 settingsPassword.value = '';
-                if (!result.ok) { status.textContent = result.error; return; }
+                if (!result.ok) throw new Error(result.error || t('Okul ayarları kaydedilemedi.'));
                 config = result.config;
                 syncSchool(!!config.enabled);
-                if (typeof window.applySchoolChrome === 'function') window.applySchoolChrome();
                 saveSetting('school-url', config.startUrl, true);
-                status.textContent = t('Okul ayarları kaydedildi.');
-            } catch (err) { status.textContent = t('Kaydedilemedi.'); }
-            finally { save.disabled = false; }
+                if (typeof window.applySchoolChrome === 'function') window.applySchoolChrome();
+                status.textContent = t('Okul ayarları bu bilgisayara kaydedildi.');
+            } catch (error) {
+                status.textContent = error.message || t('Okul ayarları kaydedilemedi.');
+            } finally {
+                save.disabled = false;
+            }
         });
-        const saveCard = document.createElement('div');
+        const saveCard = document.createElement('section');
         saveCard.className = 'school-card';
-        saveCard.appendChild(save);
-        group.appendChild(saveCard);
+        saveCard.append(save);
+        group.append(saveCard);
     }
 
     function getDetailedSystemInfo() {
@@ -2403,6 +2785,22 @@ id: 'gorunum-dil-paketleri',
         });
         actionsRow.append(checkBtn, defaultBtn, copyBtn);
         updateGroup.appendChild(actionsRow);
+        const legalRow = document.createElement('div');
+        legalRow.className = 'about-actions';
+        const privacyLink = document.createElement('a');
+        privacyLink.className = 'sp-btn secondary';
+        privacyLink.href = 'https://wraitgame.surge.sh/#gizlilik';
+        privacyLink.target = '_blank';
+        privacyLink.rel = 'noopener noreferrer';
+        privacyLink.textContent = t('Gizlilik Politikası');
+        const termsLink = document.createElement('a');
+        termsLink.className = 'sp-btn secondary';
+        termsLink.href = 'https://wraitgame.surge.sh/#hizmet';
+        termsLink.target = '_blank';
+        termsLink.rel = 'noopener noreferrer';
+        termsLink.textContent = t('Hizmet Şartları');
+        legalRow.append(privacyLink, termsLink);
+        updateGroup.appendChild(legalRow);
         const envNote = document.createElement('div');
         envNote.className = 'about-env-note';
         envNote.id = 'about-env-note';
@@ -2682,18 +3080,42 @@ id: 'gorunum-dil-paketleri',
                 if (s.type === 'language-pack') continue;
                 add(s.label);
                 add(s.desc);
+                add(s.placeholder);
                 if (s.btnText) add(s.btnText);
                 if (s.options) for (const o of s.options) add(o.name);
             }
+        }
+    }
+    for (const element of document.querySelectorAll('[data-anka-i18n],[data-anka-i18n-attrs]')) {
+        if (element.hasAttribute('data-anka-i18n')) add(element.getAttribute('data-anka-i18n-source') || element.textContent.trim());
+        for (const attribute of (element.getAttribute('data-anka-i18n-attrs') || '').split(',')) {
+            const name = attribute.trim();
+            if (name) add(element.getAttribute('data-anka-i18n-source-' + name) || element.getAttribute(name));
         }
     }
     collectAllSettingsTexts._cache = out;
     return out;
 }
 
+const PACK_QUEUE_KEY = 'anka_i18n_pack_queue';
+const validPackLanguage = (lang) => typeof lang === 'string' && /^[a-z]{2}$/.test(lang) && lang !== 'tr';
+const restartRequiredPacks = new Set();
 let packQueue = [];
+try {
+    const savedQueue = JSON.parse(lsGet(PACK_QUEUE_KEY) || '[]');
+    if (Array.isArray(savedQueue)) packQueue = Array.from(new Set(savedQueue.filter(validPackLanguage))).slice(0, 13);
+} catch (err) {
+    console.error('Dil paketi indirme kuyruğu okunamadı:', err);
+}
 let packRunning = false;
 let packCurrentLang = null;
+
+function persistPackQueue() {
+    const queue = packCurrentLang ? [packCurrentLang, ...packQueue] : packQueue;
+    if (!lsSet(PACK_QUEUE_KEY, JSON.stringify(queue))) {
+        console.error('Dil paketi indirme kuyruğu kaydedilemedi.');
+    }
+}
 
 async function processPackQueue() {
     if (packRunning) return;
@@ -2703,20 +3125,30 @@ async function processPackQueue() {
     while (packQueue.length > 0) {
         const lang = packQueue.shift();
         packCurrentLang = lang;
-        await downloadLanguagePack(lang);
+        persistPackQueue();
+        const completed = await downloadLanguagePack(lang);
+        packCurrentLang = null;
+        if (!completed) {
+            packQueue.unshift(lang);
+            persistPackQueue();
+            break;
+        }
+        persistPackQueue();
     }
     packRunning = false;
     packCurrentLang = null;
+    persistPackQueue();
 }
 
 async function downloadLanguagePack(lang) {
-    if (!ANKA_I18N || !domCache.body) return;
+    if (!ANKA_I18N) return false;
     const texts = collectAllSettingsTexts();
     const statusEl = document.getElementById('pack-status-' + lang);
     const fillEl = document.getElementById('pack-fill-' + lang);
     const btnEl = document.getElementById('pack-btn-' + lang);
-    if (statusEl) { statusEl.textContent = '0/' + texts.length; statusEl.className = 'pack-status sp-status info'; }
-    if (fillEl) { fillEl.style.width = '0%'; fillEl.className = 'pack-bar-fill'; }
+    const initialProgress = ANKA_I18N.getPackProgress(texts, lang);
+    if (statusEl) { statusEl.textContent = initialProgress.done + '/' + initialProgress.total; statusEl.className = 'pack-status sp-status info'; }
+    if (fillEl) { fillEl.style.width = initialProgress.percent + '%'; fillEl.className = 'pack-bar-fill'; }
     if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'İndiriliyor…'; }
     try {
         const result = await ANKA_I18N.downloadPack(texts, lang, (done, total) => {
@@ -2724,35 +3156,47 @@ async function downloadLanguagePack(lang) {
             if (fillEl) fillEl.style.width = pct + '%';
             if (statusEl) statusEl.textContent = done + '/' + total;
         });
+        restartRequiredPacks.add(lang);
         if (statusEl) { statusEl.textContent = 'İndirildi'; statusEl.className = 'pack-status sp-status ok'; }
         if (fillEl) { fillEl.style.width = '100%'; fillEl.className = 'pack-bar-fill done'; }
-        if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Yeniden İndir'; btnEl.className = 'sp-btn secondary'; }
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.textContent = 'Uygulamayı Yeniden Başlat';
+            btnEl.className = 'sp-btn';
+            btnEl.dataset.action = 'restart-app';
+            const note = document.createElement('span');
+            note.className = 'pack-complete-note';
+            note.textContent = 'Paket indirildi. Uygulamayı yeniden başlatmak için yukarıdaki düğmeye tıklayın.';
+            btnEl.parentElement.appendChild(note);
+        }
         panelToast(lang.toUpperCase() + ' paketi indirildi (' + result.fetched + ' yeni, ' + result.fromCache + ' önbellek)', 'success');
         if (ANKA_I18N.getLang() === lang) renderTab(currentTab);
+        return true;
     } catch (e) {
         if (statusEl) { statusEl.textContent = 'Hata'; statusEl.className = 'pack-status sp-status no'; }
         if (fillEl) fillEl.className = 'pack-bar-fill error';
         if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Tekrar Dene'; }
         panelToast('Paket indirilemedi: ' + (e && e.message ? e.message : 'bilinmeyen hata'), 'error');
+        return false;
     }
 }
 
-    function collectExportData() {
-        const data = { __meta: { app: 'Anka Web', exportedAt: new Date().toISOString(), version: 3 } };
-        try {
-            for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
-                if (!key) continue;
-                if (key.startsWith('set_')) {
-                    const id = key.slice(4);
-                    if (id === 'school-mode' || id === 'school-url' || isLocked(id)) continue;
-                    if (!findSetting(id)) continue;
-                    data[key] = localStorage.getItem(key);
-                } else if (key === 'okul_modu') {
-                    data[key] = localStorage.getItem(key);
-                }
-            }
-        } catch (e) {}
+    async function collectExportData() {
+        const api = ipc();
+        if (!api) throw new Error('Ayar dosyası oluşturma desteklenmiyor.');
+        const schoolConfig = await api.invoke('school-mode:get-config');
+        if (!schoolConfig || typeof schoolConfig.enabled !== 'boolean') throw new Error('Okul Modu durumu alınamadı.');
+        const data = {
+            __meta: { app: 'Anka Web', exportedAt: new Date().toISOString(), version: 4 },
+            schoolModeEnabled: schoolConfig.enabled
+        };
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || !key.startsWith('set_')) continue;
+            const id = key.slice(4);
+            if (id === 'school-mode' || id === 'school-url' || !findSetting(id)) continue;
+            data[key] = localStorage.getItem(key);
+        }
         return data;
     }
 
@@ -2766,37 +3210,27 @@ async function downloadLanguagePack(lang) {
     }
 
     async function exportSettingsToFile() {
-        const data = collectExportData();
-        const json = JSON.stringify(data, null, 2);
-        const filename = 'ankaweb-ayarlar-' + new Date().toISOString().slice(0, 10) + '.json';
-        if (typeof window.showSaveFilePicker === 'function') {
-            try {
-                const handle = await window.showSaveFilePicker({
-                    suggestedName: filename,
-                    types: [{ description: 'JSON dosyası', accept: { 'application/json': ['.json'] } }]
-                });
-                const writable = await handle.createWritable();
-                await writable.write(json);
-                await writable.close();
-                panelToast(t('Ayarlar dosyaya kaydedildi'), 'success');
-                return;
-            } catch (e) {
-                if (e && e.name === 'AbortError') return;
-            }
+        const api = ipc();
+        if (!api) {
+            panelToast('Ayar dosyası oluşturma desteklenmiyor.', 'error');
+            return;
         }
         try {
-            const blob = new Blob([json], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-            panelToast(t('Ayarlar indirildi'), 'success');
-        } catch (e) {
-            panelToast(t('Dosya oluşturulamadı'), 'error');
+            const result = await api.invoke('settings:export-config', await collectExportData());
+            if (result && result.cancelled) return;
+            if (!result || !result.ok) {
+                const message = result && result.error === 'config-too-large'
+                    ? 'Ayar dosyası çok büyük.'
+                    : result && result.error === 'secure-storage-unavailable'
+                        ? 'Bu cihazda güvenli sistem şifrelemesi kullanılamıyor; ayarlar korunmasız kaydedilmeyecek.'
+                        : 'Ayar dosyası oluşturulamadı.';
+                panelToast(message, 'error');
+                return;
+            }
+            panelToast('Ayar dosyası güvenli biçimde kaydedildi. Bu dosya aynı cihaz ve kullanıcı hesabında açılabilir.', 'success');
+        } catch (err) {
+            console.error('Settings export failed:', err);
+            panelToast('Ayar dosyası oluşturulamadı: ' + (err && err.message ? err.message : 'Bilinmeyen hata'), 'error');
         }
     }
 
@@ -2811,51 +3245,44 @@ async function downloadLanguagePack(lang) {
                 if (!s || isLocked(id) || s.type === 'button' || s.type === 'button-status') continue;
                 const v = coerceImported(s, data[key]);
                 if (v !== null) { saveSetting(id, v); applied++; }
-            } else if (key === 'okul_modu' && (data[key] === 'true' || data[key] === 'false')) {
-                lsSet(key, data[key]);
-                applied++;
             }
         }
-        return applied;
+        return { applied, schoolModeEnabled: typeof data.schoolModeEnabled === 'boolean' ? data.schoolModeEnabled : null };
     }
 
     async function importSettingsFromFile() {
-        if (typeof window.showOpenFilePicker === 'function') {
-            try {
-                const [handle] = await window.showOpenFilePicker({
-                    types: [{ description: 'JSON dosyası', accept: { 'application/json': ['.json'] } }],
-                    multiple: false
-                });
-                const file = await handle.getFile();
-                const text = await file.text();
-                const data = JSON.parse(text);
-                const count = applyImportedData(data);
-                panelToast(count + ' ' + t('ayar yüklendi, yeniden başlatılıyor…'), 'success');
-                setTimeout(() => location.reload(), 1000);
-                return;
-            } catch (e) {
-                if (e && e.name === 'AbortError') return;
-            }
+        const api = ipc();
+        if (!api) {
+            panelToast('Ayar dosyası yükleme desteklenmiyor.', 'error');
+            return;
         }
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.json,application/json';
-        input.onchange = (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onerror = () => panelToast(t('Dosya okunamadı'), 'error');
-            reader.onload = (event) => {
-                try {
-                    const data = JSON.parse(event.target.result);
-                    const count = applyImportedData(data);
-                    panelToast(count + ' ' + t('ayar yüklendi, yeniden başlatılıyor…'), 'success');
-                    setTimeout(() => location.reload(), 1000);
-                } catch (err) { panelToast(t('Geçersiz ayar dosyası'), 'error'); }
-            };
-            reader.readAsText(file);
-        };
-        input.click();
+        try {
+            const result = await api.invoke('settings:import-config');
+            if (result && result.cancelled) return;
+            if (!result || !result.ok) {
+                const message = result && result.error === 'secure-storage-unavailable'
+                    ? 'Bu cihazda ayar dosyasını açmak için gereken güvenli sistem şifrelemesi kullanılamıyor.'
+                    : result && result.error === 'wrong-device'
+                        ? 'Bu ayar dosyası farklı bir cihazda veya kullanıcı hesabında oluşturulmuş.'
+                        : result && result.error === 'legacy-password-config'
+                            ? 'Bu eski ayar dosyası parola korumalı biçimde oluşturulmuş; parola girmeden yüklenemez.'
+                            : result && result.error === 'config-too-large'
+                                ? 'Ayar dosyası çok büyük.'
+                                : 'Ayar dosyası okunamadı veya bozuk.';
+                panelToast(message, 'error');
+                return;
+            }
+            if (typeof result.data.schoolModeEnabled === 'boolean') {
+                const schoolResult = await api.invoke('school-mode:set-enabled', result.data.schoolModeEnabled);
+                if (!schoolResult || !schoolResult.ok) throw new Error(schoolResult && schoolResult.error || 'Okul Modu durumu geri yüklenemedi.');
+            }
+            const imported = applyImportedData(result.data);
+            panelToast(imported.applied + ' ' + t('ayar yüklendi, yeniden başlatılıyor…'), 'success');
+            setTimeout(() => location.reload(), 1000);
+        } catch (err) {
+            console.error('Settings import failed:', err);
+            panelToast('Ayar dosyası yüklenemedi: ' + (err && err.message ? err.message : 'Bilinmeyen hata'), 'error');
+        }
     }
 
     async function clearI18nCache() {
@@ -2930,15 +3357,15 @@ async function downloadLanguagePack(lang) {
     }
 
     function toggleDevTools() {
-        const i = ipc();
-        if (!i) { panelToast(t('Bu işlem yalnızca uygulamada kullanılabilir'), 'error'); return; }
-        try { i.send('devtools-toggle'); } catch (e) {}
+        const api = window.ankaBrowserApi;
+        if (!api || typeof api.toggleDevTools !== 'function') { panelToast(t('DevTools bu sekmede kullanılamıyor'), 'error'); return; }
+        api.toggleDevTools();
     }
 
     function openDetachedDevTools() {
-        const i = ipc();
-        if (!i) { panelToast(t('Bu işlem yalnızca uygulamada kullanılabilir'), 'error'); return; }
-        try { i.send('devtools-detached'); } catch (e) {}
+        const api = window.ankaBrowserApi;
+        if (!api || typeof api.openDevToolsDetached !== 'function') { panelToast(t('DevTools bu sekmede kullanılamıyor'), 'error'); return; }
+        api.openDevToolsDetached();
     }
 
     function reloadCurrentPage() {
@@ -3199,6 +3626,21 @@ async function downloadLanguagePack(lang) {
     }
 
     async function executeSettingAction(action, btnEl) {
+        if (action === 'restart-app') {
+            const api = ipc();
+            if (!api || typeof api.invoke !== 'function') {
+                panelToast('Uygulama yeniden başlatılamadı.', 'error');
+                return;
+            }
+            try {
+                const result = await api.invoke('anka:restart');
+                if (!result || !result.ok) panelToast('Uygulama yeniden başlatılamadı.', 'error');
+            } catch (err) {
+                console.error('Application restart failed:', err);
+                panelToast('Uygulama yeniden başlatılamadı.', 'error');
+            }
+            return;
+        }
         if (action === 'download-pack') {
     const lang = btnEl && btnEl.dataset ? btnEl.dataset.lang : '';
     if (!lang || !ANKA_I18N) return;
@@ -3237,6 +3679,10 @@ async function downloadLanguagePack(lang) {
             exportSettingsToFile();
         } else if (action === 'importSettingsFromFile') {
             importSettingsFromFile();
+        } else if (action === 'resetDisplaySettings') {
+            saveSetting('font-scale', '100');
+            saveSetting('ui-scale', '100');
+            panelToast('Yazı ve arayüz ölçekleri varsayılana döndürüldü.', 'success');
         } else if (action === 'clearI18nCache') {
             clearI18nCache();
         } else if (action === 'clearTempDataAndRestart') {
@@ -3268,6 +3714,7 @@ async function downloadLanguagePack(lang) {
     function resetSettings() {
         for (const id of Object.keys(settingIndex)) lsRemove('set_' + id);
         lsRemove('set_dark-mode');
+        lsRemove('set_theme-preset-selected');
         lsRemove('set_custom-accent');
         lsRemove('set_font-family');
         lsRemove('set_panel-density');
@@ -3425,20 +3872,40 @@ async function downloadLanguagePack(lang) {
 
     async function hydrateStoredSettings() {
         const i = ipc();
+        settingsHydrationStarted = true;
         if (i) {
             try {
                 const state = await i.invoke('load-app-state');
                 const settings = state && state.settings ? state.settings : {};
+                const localTheme = lsGet('set_theme-preset');
+                const hasLocalTheme = THEME_IDS.includes(localTheme);
+                const keepLocalTheme = hasLocalTheme &&
+                    (lsGet('set_theme-preset-selected') === 'true' ||
+                     localTheme !== 'system' ||
+                     !THEME_IDS.includes(String(settings['theme-preset'])) ||
+                     settings['theme-preset'] === 'system');
                 for (const id of Object.keys(settings)) {
                     if (id === 'theme-preset' && !THEME_IDS.includes(String(settings[id]))) continue;
-                    lsSet('set_' + id, settings[id]);
+                    if (id === 'theme-preset' && keepLocalTheme) continue;
+                    if (settingsEditedDuringHydration.has(id)) continue;
+                    if (!lsSet('set_' + id, settings[id])) {
+                        throw new Error('Yerel depolama alanı ayarları yüklemek için yeterli değil.');
+                    }
                 }
-            } catch (e) {}
+                if (keepLocalTheme && settings['theme-preset'] !== localTheme) notifyMain('theme-preset', localTheme);
+                if (keepLocalTheme && lsGet('set_theme-preset-selected') !== 'true') lsSet('set_theme-preset-selected', 'true');
+            } catch (err) {
+                console.error('Kaydedilmiş ayarlar yüklenemedi:', err);
+                toast('Kaydedilmiş ayarlar yüklenemedi.', 'error');
+            }
             try {
                 const i18nCache = await i.invoke('i18n-load-cache');
                 if (i18nCache && ANKA_I18N) ANKA_I18N.hydrateCacheFromMain(i18nCache);
-            } catch (e) {}
+            } catch (err) {
+                console.error('Dil önbelleği yüklenemedi:', err);
+            }
         }
+        settingsHydrationFinished = true;
         ensureThemeStored();
         if (lsGet('set_touch-mode-migrated') !== 'true') {
             lsSet('set_touch-mode-migrated', 'true');
@@ -3455,11 +3922,11 @@ async function downloadLanguagePack(lang) {
         }
     }
 
-    ensureThemeStored();
     bindThemeChannel();
     setupMovableMenus();
     applyTheme(getStoredMode());
     applyCustomAccent();
+    applyCustomThemeCss(lsGet('set_custom-theme-css') || '');
     applyFontScale(getVal(findSetting('font-scale')));
     applyUiScale(getVal(findSetting('ui-scale')));
     applyIconStyle(getVal(findSetting('icon-style')));
@@ -3475,6 +3942,36 @@ async function downloadLanguagePack(lang) {
     else if (lightMQ.addListener) lightMQ.addListener(onSystemTheme);
 
     window.addEventListener('storage', onStorage);
+    const policyIpc = ipc();
+    if (policyIpc && typeof policyIpc.on === 'function') {
+        policyIpc.on('school-management:policy-applied', (_event, policy) => {
+            if (!policy || typeof policy.schoolModeEnabled !== 'boolean' ||
+                typeof policy.strictMode !== 'boolean' || !Number.isInteger(policy.maxTabs) ||
+                policy.maxTabs < 1 || policy.maxTabs > 30) return;
+            let startUrl;
+            try {
+                startUrl = new URL(policy.startUrl);
+                if (startUrl.protocol !== 'https:' && startUrl.protocol !== 'http:') return;
+            } catch (error) {
+                return;
+            }
+            const settings = {
+                'safe-search': policy.strictMode ? 'strict' : 'moderate',
+                'https-only': 'true',
+                'ad-block': 'true',
+                'track-protect': 'true',
+                'max-tabs': String(policy.maxTabs),
+                'max-live-tabs': String(policy.maxTabs),
+                'school-mode': policy.schoolModeEnabled ? 'true' : 'false',
+                'school-url': startUrl.href,
+                ...(policy.settings || {})
+            };
+            for (const [id, value] of Object.entries(settings)) saveSetting(id, value, true);
+            if (typeof window.showToast === 'function') {
+                window.showToast('Onayladığınız okul politikası uygulandı.', 'success');
+            }
+        });
+    }
 
     Object.assign(window, {
         toggleSettings,
@@ -3489,5 +3986,9 @@ async function downloadLanguagePack(lang) {
     });
     window.__toggleSettings = toggleSettings;
 
-    hydrateStoredSettings();
+    window.__ankaSettingsReady = hydrateStoredSettings()
+        .catch((err) => console.error('Kaydedilmiş ayarlar yüklenemedi:', err));
+    window.__ankaSettingsReady
+        .then(() => processPackQueue())
+        .catch((err) => console.error('Dil paketi önbelleği yüklenemedi:', err));
 })();

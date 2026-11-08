@@ -7,3 +7,20 @@ Terminal=false
 Type=Application
 Categories=Network;WebBrowser;
 StartupNotify=true
+Actions=NewTab;NewWindow;IncognitoTab;IncognitoWindow;
+
+[Desktop Action NewTab]
+Name=Yeni Sekme
+Exec=/usr/bin/anka-web --new-tab
+
+[Desktop Action NewWindow]
+Name=Yeni Pencere
+Exec=/usr/bin/anka-web --new-window
+
+[Desktop Action IncognitoTab]
+Name=Yeni Gizli Sekme
+Exec=/usr/bin/anka-web --new-incognito-tab
+
+[Desktop Action IncognitoWindow]
+Name=Yeni Gizli Pencere
+Exec=/usr/bin/anka-web --new-incognito-window

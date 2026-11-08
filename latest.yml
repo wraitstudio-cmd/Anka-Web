@@ -1,7 +1,7 @@
-version: 1.5.3
-url_exe: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.3/Anka_Web_1.5.3.exe
-url_msi: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.3/Anka_Web_1.5.3_x64.msi
-url_deb: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.3/Anka_Web_1.5.3_amd64.deb
-url_rpm: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.3/Anka_Web_1.5.3_x86_64.rpm
-url_appimage: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.3/Anka_Web_1.5.3_x86_64.AppImage
-url_targz: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.3/Anka_Web_1.5.3_x64.tar.gz
+version: 1.5.4
+url_exe: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.4/Anka_Web_1.5.4.exe
+url_msi: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.4/Anka_Web_1.5.4_x64.msi
+url_deb: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.4/Anka_Web_1.5.4_amd64.deb
+url_rpm: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.4/Anka_Web_1.5.4_x86_64.rpm
+url_appimage: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.4/Anka_Web_1.5.4_x86_64.AppImage
+url_targz: https://github.com/wraitstudio-cmd/Anka-Web/releases/download/v1.5.4/Anka_Web_1.5.4_x64.tar.gz

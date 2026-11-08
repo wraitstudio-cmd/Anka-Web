@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark light">
+<title>Anka Web - Okul Yönetimi</title>
+<link rel="stylesheet" href="school-management.css">
+</head>
+<body>
+<main class="app-shell">
+  <header class="topbar">
+    <div class="brand">
+      <img src="../icons/dark-logo.png" alt="">
+      <div>
+        <p class="eyebrow">ANKA WEB</p>
+        <h1>Okul Yönetimi</h1>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span id="connection-state" class="status-pill">Bağlantı denetleniyor</span>
+      <button id="refresh" class="button button-quiet" type="button">Yenile</button>
+    </div>
+  </header>
+
+  <section class="intro">
+    <div>
+      <p class="eyebrow">YEREL AĞ YÖNETİMİ</p>
+      <h2>Cihazları ve okul ayarlarını tek yerden yönetin</h2>
+      <p>Bu panel yalnızca eşleştirdiğiniz bilgisayarlara seçtiğiniz tarayıcı ayarlarını gönderir. Cihaz ekranı, açık sekmeler ve geçmiş hiçbir zaman yöneticiye gösterilmez.</p>
+    </div>
+    <div class="intro-mark" aria-hidden="true">A</div>
+  </section>
+
+  <section class="card getting-started">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">İLK KURULUM</p>
+        <h2>İlk kez mi kullanıyorsunuz?</h2>
+      </div>
+      <span class="count-pill">1–2–3</span>
+    </div>
+    <ol class="setup-steps">
+      <li><strong>Yönetici parolası oluşturun.</strong><span>En az 14 karakter; büyük/küçük harf, sayı ve simge kullanın. Parolayı unutmayın; kurtarma seçeneği yoktur.</span></li>
+      <li><strong>Yönetici sunucusunu başlatın.</strong><span>Sunucu kartındaki düğmeye basın. Bu bilgisayar yönetici olur; diğer bilgisayarlar aynı okul ağına bağlı olmalıdır.</span></li>
+      <li><strong>Şifreli davet dosyasını dışa aktarın.</strong><span>Aşağıdaki eşleştirme kartında rastgele parola üretin ve davet dosyasını kaydedin. Dosyayı diğer bilgisayara kopyalayın; parolayı farklı ve güvenli bir kanaldan iletin. Dosya ve kod 5 dakika sonra geçersiz olur.</span></li>
+      <li><strong>Diğer bilgisayarda dosyayı içe aktarın.</strong><span>Dosya parolasını girip daveti açın, sonra “Bağlantı isteği gönder” düğmesine basın. Yönetici bu isteği ayrıca onaylamalıdır.</span></li>
+      <li><strong>Ayarları seçip gönderin.</strong><span>Hedef bilgisayarları seçin. Her bilgisayardaki kullanıcı politikayı ayrıca kabul etmeden ayarlar değişmez.</span></li>
+    </ol>
+  </section>
+
+  <section id="access-card" class="card access-card">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">YÖNETİCİ ERİŞİMİ</p>
+        <h2 id="access-title">Yönetici parolası</h2>
+      </div>
+      <span class="security-mark" aria-hidden="true">●</span>
+    </div>
+    <p id="access-description" class="muted"></p>
+    <form id="access-form" class="inline-form">
+      <label class="field grow">
+        <span id="password-label">Yönetici parolası</span>
+        <input id="admin-password" type="password" autocomplete="current-password" minlength="14" maxlength="128" required>
+      </label>
+      <label id="password-confirm-field" class="field grow" hidden>
+        <span>Parolayı tekrar girin</span>
+        <input id="admin-password-confirm" type="password" autocomplete="new-password" minlength="14" maxlength="128">
+      </label>
+      <button id="access-submit" class="button button-primary" type="submit">Kilidi aç</button>
+    </form>
+    <p id="access-message" class="form-message" role="status"></p>
+  </section>
+
+  <div id="management-content" hidden>
+    <section class="grid-two">
+      <article class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">SUNUCU</p>
+            <h2>Yönetici bağlantı noktası</h2>
+          </div>
+          <span id="server-pill" class="status-pill">Kapalı</span>
+        </div>
+        <p class="muted">Yönetici sunucusu yalnızca yerel ağda HTTPS üzerinden çalışır. Bilgisayarınızın güvenlik duvarı Anka Web için izin isterse, yalnızca özel ağlarda izin verin.</p>
+        <div class="data-row"><span>Bağlantı noktası</span><div class="address-list"><strong id="server-port">—</strong><button id="copy-port" class="button button-quiet" type="button" disabled>Kopyala</button></div></div>
+        <div class="data-row"><span>Yerel IP adresleri</span><div id="server-addresses" class="address-list">—</div></div>
+        <div class="field-actions">
+          <button id="server-toggle" class="button button-primary" type="button">Sunucuyu başlat</button>
+        </div>
+        <p class="hint">Diğer bilgisayarlar aynı okul ağına bağlı olmalı. Listelenen IP adresi, bağlantı noktası ve güvenlik parmak izini yalnızca güvenilir kanaldan paylaşın.</p>
+      </article>
+
+      <article class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">EŞLEŞTİRME</p>
+            <h2>Güvenli bağlantı kodu</h2>
+          </div>
+          <span class="security-mark" aria-hidden="true">⌁</span>
+        </div>
+        <p class="muted">Kod beş dakika geçerlidir ve bir bilgisayar tarafından kullanılınca iptal olur. Bağlantı isteğini yine de bu panelden ayrıca onaylamanız gerekir.</p>
+        <div class="code-box">
+          <span id="pairing-code">Henüz kod oluşturulmadı</span>
+          <button id="copy-code" class="button button-quiet" type="button" disabled>Kodu kopyala</button>
+        </div>
+        <div class="data-row"><span>Kodun son kullanma zamanı</span><strong id="code-expiry">—</strong></div>
+        <div class="data-row fingerprint-row"><span>SHA-256 parmak izi</span><div class="address-list"><strong id="fingerprint">Henüz üretilmedi</strong><button id="copy-fingerprint" class="button button-quiet" type="button" disabled>Kopyala</button></div></div>
+        <button id="new-code" class="button button-secondary" type="button">Yeni kod üret</button>
+        <p class="hint">Diğer cihazda görünen SHA-256 parmak izini bu değerle karakter karakter karşılaştırın. Eşleşmiyorsa bağlantıyı sürdürmeyin.</p>
+        <div class="invite-export">
+          <h3>Dosyayla güvenli eşleştirme</h3>
+          <p class="hint">Bu bilgisayardan davet dosyası oluşturulur. IP, port, parmak izi ve tek kullanımlık kod AES-256-GCM ile şifrelenir. Alıcı bilgisayarda dosya içe aktarılır; bağlantı için yönetici onayı gerekir.</p>
+          <label class="field"><span>Diğer bilgisayarların ulaşacağı IP</span><select id="invite-host" class="panel-select"></select></label>
+          <div class="policy-grid">
+            <label class="field"><span>Davet dosyası parolası (14+ karakter)</span><input id="invite-export-password" type="password" minlength="14" maxlength="128" autocomplete="new-password"></label>
+            <label class="field"><span>Parolayı tekrar girin</span><input id="invite-export-confirm" type="password" minlength="14" maxlength="128" autocomplete="new-password"></label>
+          </div>
+          <div class="field-actions invite-actions">
+            <button id="generate-invite-password" class="button button-quiet" type="button">Güçlü parola üret</button>
+            <button id="toggle-invite-password" class="button button-quiet" type="button">Parolayı göster</button>
+            <button id="copy-invite-password" class="button button-quiet" type="button" disabled>Parolayı kopyala</button>
+            <button id="export-invite" class="button button-primary" type="button" disabled>Davet dosyasını dışa aktar</button>
+          </div>
+          <span id="invite-export-message" class="form-message" role="status"></span>
+        </div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ONAY BEKLEYENLER</p>
+          <h2>Bilgisayar bağlantı istekleri</h2>
+        </div>
+        <span id="pending-count" class="count-pill">0</span>
+      </div>
+      <div id="pending-list" class="stack-list"></div>
+      <p id="pending-empty" class="empty-state">Bekleyen bağlantı isteği yok.</p>
+    </section>
+
+    <section class="card">
+      <div class="section-heading device-heading">
+        <div>
+          <p class="eyebrow">EŞLEŞTİRİLMİŞ CİHAZLAR</p>
+          <h2>Bilgisayarlar</h2>
+        </div>
+        <div class="device-target-actions">
+          <label class="select-all"><input id="select-all" type="checkbox" checked><span>Tüm bilgisayarlara politika gönder</span></label>
+          <button id="select-visible" class="button button-quiet" type="button">Tümünü seç</button>
+          <button id="clear-selection" class="button button-quiet" type="button">Seçimi temizle</button>
+          <button id="revoke-selected" class="button button-danger" type="button" disabled>Seçilenleri kaldır</button>
+        </div>
+      </div>
+      <p class="muted">Politika göndermek için tüm bilgisayarları seçin veya yalnızca hedef bilgisayarları işaretleyin.</p>
+      <div id="device-list" class="device-list"></div>
+      <p id="device-empty" class="empty-state">Henüz eşleştirilmiş bilgisayar yok. Önce güvenli bağlantı kodu üretin.</p>
+    </section>
+
+    <section class="card">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">OKUL POLİTİKASI</p>
+          <h2>Tarayıcı ayarlarını gönder</h2>
+        </div>
+        <span class="security-mark" aria-hidden="true">✓</span>
+      </div>
+      <p class="muted">Seçilen bilgisayarlar politikayı alabilir; her bilgisayarda kullanıcı ayrıca onaylamadan hiçbir ayar uygulanmaz.</p>
+      <form id="policy-form">
+        <div class="policy-grid">
+          <label class="field">
+            <span>Okul modu</span>
+            <span class="check-control"><input id="policy-school" type="checkbox"><span>Etkinleştir</span></span>
+          </label>
+          <label class="field">
+            <span>Güvenli arama</span>
+            <select id="policy-safe-search" class="panel-select">
+              <option value="strict">Sıkı filtre</option>
+              <option value="moderate">Orta filtre</option>
+              <option value="off">Kapalı</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Okul başlangıç adresi</span>
+            <input id="policy-url" type="url" value="https://www.eba.gov.tr/" required>
+          </label>
+          <label class="field">
+            <span>En fazla sekme</span>
+            <input id="policy-tabs" type="number" min="1" max="30" value="12" required>
+          </label>
+        </div>
+        <div id="policy-settings" class="policy-settings"></div>
+        <div class="field-actions">
+          <button class="button button-primary" type="submit">Seçilen bilgisayarlara gönder</button>
+          <span id="policy-message" class="form-message" role="status"></span>
+        </div>
+      </form>
+    </section>
+
+  </div>
+
+  <section class="card">
+    <details>
+        <summary>Bu bilgisayarı başka bir yöneticiye bağla</summary>
+        <p class="muted">Yönetici bilgisayarındaki panelden alınan IP, bağlantı noktası, 12 haneli kod ve SHA-256 parmak izini girin. Yönetici bu bilgisayarı ayrıca onaylamalıdır.</p>
+        <div class="invite-import">
+          <label class="field"><span>Şifreli dosya parolası</span><input id="invite-import-password" type="password" minlength="14" maxlength="128" autocomplete="off"></label>
+          <button id="import-invite" class="button button-secondary" type="button">Şifreli davet dosyasını içe aktar</button>
+          <p class="hint">Davet dosyası başka bir kanaldan geldiyse, parolasını dosyayı gönderen kişiden ayrı ve güvenli bir kanaldan alın.</p>
+        </div>
+        <form id="join-form" class="join-grid">
+          <label class="field"><span>Yönetici IP adresi</span><input id="join-host" inputmode="decimal" required></label>
+          <label class="field"><span>Bağlantı noktası</span><input id="join-port" type="number" min="1" max="65535" required></label>
+          <label class="field"><span>12 haneli kod</span><input id="join-code" inputmode="numeric" minlength="12" maxlength="12" required></label>
+          <label class="field"><span>SHA-256 parmak izi</span><input id="join-fingerprint" autocomplete="off" required></label>
+          <label class="field full-width"><span>Bu bilgisayarın adı</span><input id="join-name" maxlength="64" autocomplete="off"></label>
+          <button class="button button-secondary full-width" type="submit">Bağlantı isteği gönder</button>
+        </form>
+        <div class="field-actions">
+          <button id="check-policy" class="button button-quiet" type="button">Politikayı kontrol et</button>
+          <button id="disconnect" class="button button-danger" type="button">Yöneticiden ayrıl</button>
+          <span id="client-message" class="form-message" role="status"></span>
+        </div>
+    </details>
+  </section>
+
+  <footer>
+    <span>Yerel ağ bağlantısı · Kullanıcı onaylı ayarlar · Özel içerik paylaşımı yok</span>
+    <button id="lock-panel" class="text-button" type="button" hidden>Paneli kilitle</button>
+  </footer>
+</main>
+<script src="school-management-ui.js"></script>
+</body>
+</html>

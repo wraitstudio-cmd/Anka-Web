@@ -2,6 +2,9 @@ const AI_TAB_ID = 'tab-ai-assistant';
 let activeTabId = null;
 let closedTabsStack = [];
 let lastMemoryPressureCheck = 0;
+let ankaLoadPollTimer = 0;
+let ankaLoadTrackingView = null;
+let ankaFpsLimit = 0;
 
 const ankaTabs = new Map();
 let ankaTabSeq = 0;
@@ -52,6 +55,15 @@ function ankaBridgeApi() {
 function ankaRegisterIpc() {
     const api = ankaBridgeApi();
     if (!api) return;
+    api.on('webview-favicon-updated', (webContentsId, favicons) => {
+        if (!Number.isInteger(webContentsId) || !Array.isArray(favicons)) return;
+        const entry = Array.from(ankaTabs.values()).find((tab) => {
+            if (!tab.vw || typeof tab.vw.getWebContentsId !== 'function') return false;
+            try { return tab.vw.getWebContentsId() === webContentsId; }
+            catch (err) { return false; }
+        });
+        if (entry) ankaSetTabFavicon(entry, entry.vw, favicons);
+    });
     api.on('open-download-sandbox', (filePath) => {
         if (typeof filePath !== 'string' || !filePath) return;
         if (!/^([a-z]:[\\/]|\\\\|\/)/i.test(filePath)) return;
@@ -282,7 +294,10 @@ function getSetting(id, def) {
 function setSetting(id, value) {
     try {
         localStorage.setItem('set_' + id, String(value));
-    } catch (err) {}
+    } catch (err) {
+        console.error('DevTools açılamadı:', err);
+        showNotification('DevTools açılamadı. Bu sekme için desteklenmiyor olabilir.');
+    }
 }
 
 function getMaxTabs() {
@@ -525,17 +540,167 @@ function ankaResolveTarget(value) {
     return target;
 }
 
-function getFaviconUrl(url, incognito) {
+function getFaviconUrl(url) {
     const logo = window.ankaGetLogo ? window.ankaGetLogo() : ANKA_LOGO;
     try {
-        if (incognito || getSetting('favicon-service', 'true') === 'false') return logo;
         if (!url || ankaIsNewTabUrl(url) || /^file:/i.test(url)) return logo;
         const parsed = new URL(url);
-        if (ankaIsPrivateHost(parsed.hostname)) return logo;
-        return 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(parsed.hostname) + '&sz=64';
+        return parsed.origin + '/favicon.ico';
     } catch (err) {
         return logo;
     }
+}
+
+function ankaRefreshFaviconUrl(url, st) {
+    return typeof url === 'string' ? url : '';
+}
+
+function ankaLoadNativeFavicon(st, vw, icon, failedUrl) {
+    if (!st || !vw || !icon || !/^https?:/i.test(failedUrl)) return false;
+    const bridge = ankaBridgeApi();
+    if (!bridge || typeof bridge.invoke !== 'function' || typeof vw.getWebContentsId !== 'function') return false;
+    let webContentsId;
+    let expectedUrl;
+    try {
+        webContentsId = vw.getWebContentsId();
+        expectedUrl = vw.getURL();
+    } catch (err) {
+        return false;
+    }
+    if (!Number.isInteger(webContentsId) || webContentsId <= 0) return false;
+    const generation = st.faviconGeneration || 0;
+    const requestKey = generation + '|' + expectedUrl + '|' + failedUrl;
+    if (st.faviconNativeRequestKey === requestKey) return false;
+    st.faviconNativeRequestKey = requestKey;
+    const fallback = () => {
+        if (st.vw !== vw || (st.faviconGeneration || 0) !== generation ||
+            icon.src !== failedUrl) return;
+        icon.dataset.ankaFallback = 'true';
+        icon.src = ANKA_LOGO;
+    };
+    bridge.invoke('site-favicon:load', { webContentsId, url: failedUrl }).then((result) => {
+        if (!result || !result.ok || typeof result.dataUrl !== 'string' ||
+            !/^data:image\/[a-z0-9+.-]+[;,]/.test(result.dataUrl) ||
+            st.vw !== vw || (st.faviconGeneration || 0) !== generation ||
+            vw.getURL() !== expectedUrl || icon.src !== failedUrl) {
+            fallback();
+            return;
+        }
+        icon.__ankaFaviconCandidates = [result.dataUrl];
+        icon.__ankaFaviconIndex = 0;
+        icon.dataset.ankaFallback = 'false';
+        icon.dataset.ankaOriginalSrc = result.dataUrl;
+        icon.src = result.dataUrl;
+    }).catch((err) => {
+        console.error('Site simgesi renderer üzerinden yüklenemedi:', err);
+        fallback();
+    });
+    return true;
+}
+
+function ankaSetTabFavicon(st, vw, candidates) {
+    if (!st || !st.icon || !vw || !vw.isConnected || !Array.isArray(candidates)) return;
+    let currentOrigin = '';
+    try {
+        const currentUrl = new URL(vw.getURL());
+        if (currentUrl.protocol !== 'https:' && currentUrl.protocol !== 'http:') return;
+        currentOrigin = currentUrl.origin;
+    } catch (err) { return; }
+    if (st.url) {
+        try {
+            if (new URL(st.url).origin !== currentOrigin) return;
+        } catch (err) {}
+    }
+    const favicons = candidates.filter((candidate) => {
+        if (typeof candidate !== 'string' || candidate.length > 32768) return false;
+        if (/^data:image\/(?:png|gif|jpe?g|webp|avif|bmp|x-icon|vnd\.microsoft\.icon|svg\+xml);/i.test(candidate)) return true;
+        try {
+            const parsed = new URL(candidate, vw.getURL());
+            return (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+                (parsed.origin === currentOrigin || !ankaIsPrivateHost(parsed.hostname));
+        } catch (err) {
+            return false;
+        }
+    }).map((favicon) => {
+        if (/^data:image\//i.test(favicon)) return favicon;
+        try { return new URL(favicon, vw.getURL()).href; } catch (err) { return ''; }
+    }).filter(Boolean);
+    const fallback = currentOrigin + '/favicon.ico';
+    const ordered = Array.from(new Set(favicons.concat(fallback)));
+    if (ordered.length) {
+        st.faviconGeneration = (st.faviconGeneration || 0) + 1;
+        st.icon.__ankaFaviconCandidates = ordered;
+        st.icon.__ankaFaviconIndex = 0;
+        st.icon.dataset.ankaFallback = 'false';
+        st.icon.dataset.ankaOriginalSrc = ordered[0];
+        st.icon.dataset.ankaRetry = 'false';
+        st.icon.src = ordered[0];
+    }
+    if (ordered.length) {
+        st.faviconGeneration = (st.faviconGeneration || 0) + 1;
+        st.icon.__ankaFaviconCandidates = ordered;
+        st.icon.__ankaFaviconIndex = 0;
+        st.icon.dataset.ankaFallback = 'false';
+        st.icon.dataset.ankaOriginalSrc = ordered[0];
+        st.icon.dataset.ankaRetry = 'false';
+        st.icon.src = ordered[0];
+        ankaFetchFaviconData(st, vw, ordered);
+    }
+}
+
+function ankaFetchFaviconData(st, vw, urls) {
+    if (!st || !vw || typeof vw.executeJavaScript !== 'function' || !Array.isArray(urls) || !urls.length) return;
+    const gen = st.faviconGeneration || 0;
+    const urlsJson = JSON.stringify(urls.slice(0, 6));
+    const script = `(async () => {
+        const candidates = ${urlsJson};
+        for (const url of candidates) {
+            try {
+                const res = await fetch(url, { credentials: 'omit' });
+                if (!res.ok) continue;
+                const blob = await res.blob();
+                if (!blob.size || blob.size > 262144) continue;
+                if (!/^image\\//i.test(blob.type || '')) continue;
+                const reader = new FileReader();
+                const dataUrl = await new Promise((resolve) => {
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => resolve(null);
+                    reader.readAsDataURL(blob);
+                });
+                if (dataUrl && typeof dataUrl === 'string' && /^data:image\\//i.test(dataUrl)) return dataUrl;
+            } catch (e) {}
+        }
+        return null;
+    })()`;
+    vw.executeJavaScript(script).then((dataUrl) => {
+        if (!dataUrl || typeof dataUrl !== 'string' || !/^data:image\//i.test(dataUrl)) return;
+        if ((st.faviconGeneration || 0) !== gen) return;
+        if (st.vw !== vw || !st.icon || !st.icon.isConnected) return;
+        st.icon.__ankaFaviconCandidates = [dataUrl];
+        st.icon.__ankaFaviconIndex = 0;
+        st.icon.dataset.ankaFallback = 'false';
+        st.icon.dataset.ankaOriginalSrc = dataUrl;
+        st.icon.dataset.ankaRetry = 'false';
+        st.icon.src = dataUrl;
+    }).catch(() => {});
+}
+
+
+function ankaRefreshTabFavicon(st, vw) {
+    if (!st || !vw || typeof vw.executeJavaScript !== 'function') return;
+    let expectedUrl = '';
+    try { expectedUrl = vw.getURL(); } catch (err) { return; }
+    const requestId = st.faviconReadId = (st.faviconReadId || 0) + 1;
+    vw.executeJavaScript(`(() => Array.from(document.querySelectorAll('link[rel~="icon"],link[rel="shortcut icon"]'))
+        .map((link) => link.href)
+        .filter((href) => typeof href === 'string' && href.length <= 32768))()`)
+        .then((favicons) => {
+            let currentUrl = '';
+            try { currentUrl = vw.getURL(); } catch (err) { return; }
+            if (requestId !== st.faviconReadId || currentUrl !== expectedUrl) return;
+            ankaSetTabFavicon(st, vw, favicons);
+        })
+        .catch((err) => console.error('Site simgesi okunamadı:', err));
 }
 
 function ankaBlockView(vw, message) {
@@ -666,8 +831,8 @@ function ankaBridgeScript(nonce) {
             if (/^[a-z]$/.test(k)) return k;
             return /^Key[A-Z]$/.test(e.code || '') ? e.code[3].toLowerCase() : '';
         };
-        const P = 'twlrfudhpseo';
-        const S = 'tnasmodbricyegk';
+        const P = 'twlrfudhpseoj';
+        const S = 'tnasmodbricyegkj';
         addEventListener('pointerdown', () => send('dismiss', ''), true);
         addEventListener('contextmenu', (e) => send('ctx', e.clientX + ',' + e.clientY), true);
         addEventListener('click', (e) => {
@@ -839,7 +1004,7 @@ function ankaPromptSavePassword(vw, encoded) {
 }
 
 function ankaSetupPasswordManager(vw) {
-    if (!vw || getSetting('password-manager', 'true') !== 'true') return;
+    if (!vw || getSetting('password-manager', 'false') !== 'true') return;
     if (String(vw.getAttribute('partition') || '').startsWith('ankaprivate-')) return;
     let origin;
     try {
@@ -847,93 +1012,154 @@ function ankaSetupPasswordManager(vw) {
         if (url.protocol !== 'https:') return;
         origin = url.origin;
     } catch (err) { return; }
-    const ipc = ankaBridgeApi();
-    if (!ipc || !ipc.invoke) return;
-    ipc.invoke('password-manager:get-for-origin', origin).then((result) => {
-        if (!result || !result.ok || !Array.isArray(result.entries) || !result.entries.length ||
-            !vw.isConnected) return;
-        try { if (new URL(vw.getURL()).origin !== origin) return; } catch (err) { return; }
-        const entries = JSON.stringify(result.entries);
-        const prefix = JSON.stringify('anka:' + vw.__ankaNonce + ':password-save:');
-        const source = `(() => {
-            if (window.__ankaPasswordManagerInstalled) return;
-            window.__ankaPasswordManagerInstalled = true;
-            const entries = ${entries};
-            const setValue = (field, value) => {
-                if (!field || field.disabled || field.value) return;
-                const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value');
-                if (setter && setter.set) setter.set.call(field, value);
-                else field.value = value;
-                field.dispatchEvent(new Event('input', { bubbles: true }));
-                field.dispatchEvent(new Event('change', { bubbles: true }));
-            };
-            const fill = (entry) => {
-                const password = document.querySelector('input[type="password"]:not([disabled])');
-                if (!password) return;
-                const form = password.form || password.parentElement;
-                const username = (form || document).querySelector('input[autocomplete="username"],input[type="email"],input[type="text"]:not([autocomplete="off"])');
-                setValue(username, entry.username);
-                setValue(password, entry.password);
-                password.focus();
-            };
-            const installFill = () => {
-                if (!document.querySelector('input[type="password"]')) return false;
-                if (entries.length === 1) fill(entries[0]);
-                else {
-                    const host = document.createElement('div');
-                    host.style.cssText = 'position:fixed;z-index:2147483647;top:12px;right:12px';
-                    const shadow = host.attachShadow({ mode: 'closed' });
-                    const button = document.createElement('button');
-                    button.textContent = 'Anka Web: giriş bilgileri';
-                    button.style.cssText = 'font:13px system-ui;padding:9px 12px;color:#fff;background:#24242b;border:1px solid #ff4757;border-radius:8px;cursor:pointer;box-shadow:0 2px 12px #0008';
-                    button.addEventListener('click', () => {
-                        const menu = document.createElement('div');
-                        menu.style.cssText = 'display:grid;gap:4px;padding:6px;margin-top:5px;background:#24242b;border:1px solid #555;border-radius:8px';
-                        entries.forEach((entry) => {
-                            const option = document.createElement('button');
-                            option.textContent = entry.username;
-                            option.style.cssText = button.style.cssText;
-                            option.addEventListener('click', () => { fill(entry); host.remove(); });
-                            menu.appendChild(option);
-                        });
-                        shadow.replaceChildren(button, menu);
-                    });
-                    shadow.appendChild(button);
-                    document.documentElement.appendChild(host);
-                }
-                return true;
-            };
-            installFill();
-            const observer = new MutationObserver(() => {
-                if (document.querySelector('input[type="password"]')) {
-                    observer.disconnect();
-                    installFill();
-                }
-            });
-            observer.observe(document.documentElement, { childList: true, subtree: true });
-            document.addEventListener('submit', (event) => {
-                const form = event.target;
-                if (!(form instanceof HTMLFormElement)) return;
-                const password = form.querySelector('input[type="password"]');
-                if (!password || !password.value) return;
-                const username = form.querySelector('input[autocomplete="username"],input[type="email"],input[type="text"]:not([autocomplete="off"])');
-                const data = { origin: location.origin, username: username ? username.value.trim() : '', password: password.value };
-                if (!data.username) return;
-                console.info(${prefix} + encodeURIComponent(JSON.stringify(data)));
-            }, true);
-        })();`;
-        vw.executeJavaScript(source).catch(() => {});
-    }).catch((err) => {
-        console.error('Password manager lookup failed:', err);
-    });
+    if (!vw.__ankaNonce) vw.__ankaNonce = ankaNonce();
+    const prefix = JSON.stringify('anka:' + vw.__ankaNonce + ':password-save:');
+    const source = `(() => {
+        if (window.__ankaPasswordSavePromptInstalled) return;
+        window.__ankaPasswordSavePromptInstalled = true;
+        document.addEventListener('submit', (event) => {
+            const form = event.target;
+            if (!(form instanceof HTMLFormElement)) return;
+            const password = form.querySelector('input[type="password"]');
+            if (!password || !password.value) return;
+            const username = form.querySelector('input[autocomplete="username"],input[type="email"],input[type="text"]:not([autocomplete="off"])');
+            const data = { origin: location.origin, username: username ? username.value.trim() : '', password: password.value };
+            if (!data.username) return;
+            console.info(${prefix} + encodeURIComponent(JSON.stringify(data)));
+        }, true);
+    })();`;
+    vw.executeJavaScript(source).catch((err) => console.error('Parola kaydetme formu izlenemedi:', err));
 }
+
+function ankaApplyFpsLimitToView(vw, requestedFps) {
+    if (!vw || typeof vw.executeJavaScript !== 'function') return;
+    const fps = [30, 45, 60, 90, 120].includes(Number(requestedFps)) ? Number(requestedFps) : 0;
+    const source = `(() => {
+        const requested = ${fps};
+        let state = window.__ankaFpsLimiter;
+        if (state) {
+            if (requested > 0) {
+                state.target = requested;
+                return;
+            }
+            if (window.requestAnimationFrame === state.request) window.requestAnimationFrame = state.nativeRequest;
+            if (window.cancelAnimationFrame === state.cancel) window.cancelAnimationFrame = state.nativeCancel;
+            if (state.frame) state.nativeCancel(state.frame);
+            const pending = Array.from(state.queue.values());
+            state.queue.clear();
+            delete window.__ankaFpsLimiter;
+            if (pending.length) state.nativeRequest((time) => pending.forEach((callback) => {
+                try { callback(time); }
+                catch (error) { setTimeout(() => { throw error; }, 0); }
+            }));
+            return;
+        }
+        if (!requested) return;
+        const nativeRequest = window.requestAnimationFrame.bind(window);
+        const nativeCancel = window.cancelAnimationFrame.bind(window);
+        state = {
+            nativeRequest,
+            nativeCancel,
+            target: requested,
+            last: null,
+            queue: new Map(),
+            next: 1,
+            frame: 0,
+            request: null,
+            cancel: null
+        };
+        const schedule = () => {
+            if (!state.frame && state.queue.size) state.frame = nativeRequest(tick);
+        };
+        const tick = (time) => {
+            state.frame = 0;
+            const interval = 1000 / state.target;
+            if (state.last !== null && time - state.last + 0.25 < interval) {
+                schedule();
+                return;
+            }
+            state.last = time;
+            const callbacks = Array.from(state.queue.entries());
+            state.queue.clear();
+            callbacks.forEach(([, callback]) => {
+                try { callback(time); }
+                catch (error) { setTimeout(() => { throw error; }, 0); }
+            });
+            schedule();
+        };
+        state.request = (callback) => {
+            if (typeof callback !== 'function') throw new TypeError('Animation frame callback must be a function');
+            const id = state.next++;
+            state.queue.set(id, callback);
+            schedule();
+            return id;
+        };
+        state.cancel = (id) => {
+            state.queue.delete(id);
+            if (!state.queue.size && state.frame) {
+                nativeCancel(state.frame);
+                state.frame = 0;
+            }
+        };
+        window.__ankaFpsLimiter = state;
+        window.requestAnimationFrame = state.request;
+        window.cancelAnimationFrame = state.cancel;
+    })();`;
+    vw.executeJavaScript(source).catch((err) => console.error('Sekme FPS sınırı uygulanamadı:', err));
+}
+
+window.__ankaApplyFpsLimit = function (fps) {
+    ankaFpsLimit = [0, 30, 45, 60, 90, 120].includes(Number(fps)) ? Number(fps) : 0;
+    ankaTabs.forEach((st) => {
+        if (st.vw) ankaApplyFpsLimitToView(st.vw, ankaFpsLimit);
+    });
+};
+
+window.addEventListener('anka-fps-limit-change', (event) => {
+    const fps = event && event.detail ? event.detail.fps : 0;
+    window.__ankaApplyFpsLimit(fps);
+});
 
 window.openPasswordManager = function () {
     let panel = document.getElementById('anka-password-manager');
     if (!panel) {
         const style = document.createElement('style');
         style.id = 'anka-password-manager-style';
-        style.textContent = '#anka-password-manager{position:fixed;inset:0;z-index:10000010;display:grid;place-items:center;padding:16px;background:#0009;font:14px system-ui;color:var(--text-color,#f4f4f5)}#anka-password-manager[hidden]{display:none}#anka-password-manager .apm-card{width:min(560px,100%);max-height:90vh;overflow:auto;padding:20px;background:var(--panel,#1e1e25);border:1px solid var(--border,#333);border-radius:14px;box-shadow:var(--shadow-pop,0 16px 48px #0008)}#anka-password-manager .apm-head,#anka-password-manager .apm-row{display:flex;align-items:center;justify-content:space-between;gap:10px}#anka-password-manager .apm-row{padding:10px 0;border-bottom:1px solid var(--border,#333)}#anka-password-manager .apm-row span{min-width:0;overflow-wrap:anywhere}#anka-password-manager button{min-height:40px;padding:7px 12px;border:1px solid var(--border,#444);border-radius:8px;color:inherit;background:var(--bg-tertiary,#292930);cursor:pointer}#anka-password-manager .apm-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}#anka-password-manager input{min-width:0;min-height:42px;padding:8px;border:1px solid var(--border,#444);border-radius:8px;color:inherit;background:var(--input-bg,#111)}#anka-password-manager .apm-fields input:first-child{grid-column:1/-1}#anka-password-manager .apm-status{min-height:22px;color:var(--text-secondary,#aaa)}@media(max-width:520px){#anka-password-manager .apm-fields{grid-template-columns:1fr}#anka-password-manager .apm-fields input:first-child{grid-column:auto}}';
+        style.textContent = `
+            #anka-password-manager{position:fixed;inset:0;z-index:2147482000;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.7);font:14px system-ui;color:var(--text-color,#f4f4f5)}
+            #anka-password-manager[hidden]{display:none}
+            #anka-password-manager .apm-card{width:min(680px,100%);max-height:92vh;overflow:auto;padding:22px;background:var(--bg-secondary,#1e1e25);border:1px solid var(--border-color,#333);border-radius:16px;box-shadow:0 20px 60px #0009}
+            #anka-password-manager .apm-head,#anka-password-manager .apm-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+            #anka-password-manager .apm-head h2{margin:0;font-size:19px}
+            #anka-password-manager .apm-intro{color:var(--text-secondary,#aaa);line-height:1.55}
+            #anka-password-manager .apm-security{padding:10px 12px;border:1px solid var(--border-color,#333);border-radius:10px;background:var(--bg-primary,#121214);font-size:12px;line-height:1.5}
+            #anka-password-manager .apm-status{min-height:22px;margin:10px 0;color:var(--text-secondary,#aaa)}
+            #anka-password-manager .apm-list{max-height:210px;overflow:auto;margin:8px 0;padding:0 4px}
+            #anka-password-manager .apm-row{padding:10px 4px;border-bottom:1px solid var(--border-color,#333)}
+            #anka-password-manager .apm-row span{min-width:0;overflow-wrap:anywhere}
+            #anka-password-manager .apm-row small{display:block;margin-top:3px;color:var(--text-secondary,#aaa)}
+            #anka-password-manager button{min-height:40px;padding:7px 12px;border:1px solid var(--border-color,#444);border-radius:9px;color:inherit;background:var(--bg-tertiary,#292930);cursor:pointer}
+            #anka-password-manager button:hover{border-color:var(--accent,#ff4757)}
+            #anka-password-manager button:disabled{opacity:.55;cursor:wait}
+            #anka-password-manager input{min-width:0;min-height:42px;padding:8px 11px;border:1px solid var(--border-color,#444);border-radius:9px;color:inherit;background:var(--input-bg,#111)}
+            #anka-password-manager .apm-filter{display:flex;align-items:center;gap:8px}
+            #anka-password-manager .apm-filter input{flex:1}
+            #anka-password-manager .apm-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border-color,#333)}
+            #anka-password-manager .apm-fields>input:first-child{grid-column:1/-1}
+            #anka-password-manager .apm-secret{display:flex;gap:8px;grid-column:1/-1}
+            #anka-password-manager .apm-secret input{flex:1}
+            #anka-password-manager .apm-strength{grid-column:1/-1;display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 10px;font-size:12px;color:var(--text-secondary,#aaa)}
+            #anka-password-manager .apm-strength progress{grid-column:1/-1;width:100%;height:7px;accent-color:var(--apm-strength-color,#ef4444)}
+            #anka-password-manager .apm-check-result{grid-column:1/-1;line-height:1.45}
+            #anka-password-manager .apm-generator{grid-column:1/-1;display:flex;align-items:center;gap:10px}
+            #anka-password-manager .apm-sets{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:6px 12px;padding:10px 0;border-top:1px solid var(--border-color,#333)}
+            #anka-password-manager .apm-sets label{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}
+            #anka-password-manager .apm-sets input{width:16px;height:16px;accent-color:var(--accent,#ff4757);margin:0}
+            #anka-password-manager .apm-generator input{flex:1;min-height:0;padding:0;accent-color:var(--accent,#ff4757)}
+            #anka-password-manager .apm-generator output{min-width:28px;text-align:right;font-variant-numeric:tabular-nums}
+            #anka-password-manager .apm-submit{grid-column:1/-1;background:var(--accent,#ff4757);color:#fff;font-weight:700}
+            @media(max-width:560px){#anka-password-manager .apm-card{padding:16px}#anka-password-manager .apm-fields{grid-template-columns:1fr}#anka-password-manager .apm-fields>input:first-child,#anka-password-manager .apm-secret,#anka-password-manager .apm-strength,#anka-password-manager .apm-generator,#anka-password-manager .apm-submit{grid-column:auto}}
+        `;
         document.head.appendChild(style);
         panel = document.createElement('section');
         panel.id = 'anka-password-manager';
@@ -941,18 +1167,163 @@ window.openPasswordManager = function () {
         panel.setAttribute('role', 'dialog');
         panel.setAttribute('aria-modal', 'true');
         panel.setAttribute('aria-label', 'Anka Web Parola Yöneticisi');
-        panel.innerHTML = '<div class="apm-card"><div class="apm-head"><h2>Anka Web Parola Yöneticisi</h2><button type="button" data-apm-close aria-label="Kapat">✕</button></div><p>Parolalar bu cihazda işletim sisteminin güvenli deposuyla şifrelenir. Anka Web parolalarınızı sunucuya göndermez.</p><div class="apm-status" role="status"></div><div class="apm-list"></div><form class="apm-fields"><input name="origin" type="url" required placeholder="https://ornek.com" autocomplete="url" aria-label="Site adresi"><input name="username" type="text" required maxlength="512" placeholder="Kullanıcı adı" autocomplete="username" aria-label="Kullanıcı adı"><input name="password" type="password" required maxlength="4096" placeholder="Parola" autocomplete="new-password" aria-label="Parola"><button type="submit">Güvenli Kaydet</button></form></div>';
+        panel.innerHTML = '<div class="apm-card"><div class="apm-head"><h2>Anka Web Parola Yöneticisi</h2><button type="button" data-apm-close aria-label="Kapat">Kapat</button></div><p class="apm-intro">Kayıtlı hesaplar bu cihazda şifreli saklanır. Sistem kimlik doğrulaması desteklenmediği için kayıtlı parolalar gösterilmez ve otomatik doldurulmaz.</p><div class="apm-security"><strong>Güvenlik denetimi</strong><br>Parola gücü, yaygın kullanım ve kayıtlar arasındaki tekrar yalnızca bu cihazdaki şifreli kayıtlarla kontrol edilir. Harici sızıntı veritabanı sorgusu yapılmaz.</div><div class="apm-status" role="status"></div><label class="apm-filter"><span>Hesaplarda ara</span><input type="search" data-apm-search placeholder="Site veya kullanıcı adı" autocomplete="off"></label><div class="apm-list"></div><form class="apm-fields"><input name="origin" type="url" required placeholder="https://ornek.com" autocomplete="url" aria-label="Site adresi"><input name="username" type="text" required maxlength="512" placeholder="Kullanıcı adı" autocomplete="username" aria-label="Kullanıcı adı"><div class="apm-secret"><input name="password" type="password" required maxlength="4096" placeholder="Parola" autocomplete="new-password" aria-label="Parola"><button type="button" data-apm-reveal aria-label="Parolayı göster">Göster</button></div><div class="apm-strength"><span data-apm-strength-label>Parola gücü</span><span data-apm-strength-score></span><progress data-apm-strength-meter max="4" value="0"></progress><span class="apm-check-result" data-apm-check-result>Parolanızı yazınca değerlendirme görünür.</span></div><div class="apm-sets"><label><input type="checkbox" data-apm-set="lower" checked> Küçük harf</label><label><input type="checkbox" data-apm-set="upper" checked> Büyük harf</label><label><input type="checkbox" data-apm-set="digit" checked> Rakam</label><label><input type="checkbox" data-apm-set="symbol" checked> Özel karakter</label></div><div class="apm-generator"><button type="button" data-apm-generate>Güçlü parola oluştur</button><input type="range" min="12" max="64" step="1" value="20" data-apm-length aria-label="Oluşturulacak parola uzunluğu"><output data-apm-length-output>20</output></div><button class="apm-submit" type="submit">Şifreli olarak kaydet</button></form></div>';
         document.body.appendChild(panel);
-        const close = () => { panel.hidden = true; };
+        const form = panel.querySelector('form');
+        const passwordInput = form.querySelector('[name="password"]');
+        const audit = panel.querySelector('[data-apm-check-result]');
+        const meter = panel.querySelector('[data-apm-strength-meter]');
+        const scoreLabel = panel.querySelector('[data-apm-strength-score]');
+        const close = () => {
+            panel.hidden = true;
+            clearTimeout(auditTimer);
+            auditSequence += 1;
+            passwordInput.value = '';
+            passwordInput.type = 'password';
+            panel.querySelector('[data-apm-reveal]').textContent = 'Göster';
+        };
+        let auditTimer = 0;
+        let auditSequence = 0;
         panel.querySelector('[data-apm-close]').addEventListener('click', close);
         panel.addEventListener('click', (event) => { if (event.target === panel) close(); });
-        const form = panel.querySelector('form');
+        panel.querySelector('[data-apm-reveal]').addEventListener('click', (event) => {
+            const reveal = passwordInput.type === 'password';
+            passwordInput.type = reveal ? 'text' : 'password';
+            event.currentTarget.textContent = reveal ? 'Gizle' : 'Göster';
+        });
+        const length = panel.querySelector('[data-apm-length]');
+        const lengthOutput = panel.querySelector('[data-apm-length-output]');
+        length.addEventListener('input', () => { lengthOutput.value = length.value; });
+        panel.querySelectorAll('[data-apm-set]').forEach((el) => el.addEventListener('change', () => {
+    const btn = panel.querySelector('[data-apm-generate]');
+    btn.disabled = !panel.querySelector('[data-apm-set]:checked');
+}));
+        const randomIndex = (maximum) => {
+            const limit = Math.floor(256 / maximum) * maximum;
+            const bytes = new Uint8Array(64);
+            for (;;) {
+                window.crypto.getRandomValues(bytes);
+                for (const byte of bytes) if (byte < limit) return byte % maximum;
+            }
+        };
+const APM_SETS = { lower: 'abcdefghijkmnopqrstuvwxyz', upper: 'ABCDEFGHJKLMNPQRSTUVWXYZ', digit: '23456789', symbol: '!@#$%&*+-_=.?' };
+const selectedSets = () => Array.from(panel.querySelectorAll('[data-apm-set]:checked')).map((el) => APM_SETS[el.dataset.apmSet]).filter(Boolean);
+const generatePassword = (size) => {
+    const sets = selectedSets();
+    if (!sets.length) { panel.querySelector('.apm-status').textContent = 'En az bir karakter türü seçin.'; return ''; }
+    const realSize = Math.max(Number(size) || 20, sets.length);
+    const alphabet = sets.join('');
+    const characters = sets.map((set) => set[randomIndex(set.length)]);
+    while (characters.length < realSize) characters.push(alphabet[randomIndex(alphabet.length)]);
+    for (let index = characters.length - 1; index > 0; index -= 1) {
+        const swap = randomIndex(index + 1);
+        [characters[index], characters[swap]] = [characters[swap], characters[index]];
+    }
+    return characters.join('');
+};
+        panel.querySelector('[data-apm-generate]').addEventListener('click', () => {
+            try {
+                passwordInput.value = generatePassword(Number(length.value));
+                passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+                passwordInput.focus();
+            } catch (err) {
+                console.error('Secure password generation failed:', err);
+                panel.querySelector('.apm-status').textContent = 'Güvenli parola oluşturulamadı. Bu cihazın rastgele sayı desteğini kontrol edin.';
+            }
+        });
+        const localPasswordCheck = (password) => {
+    const warnings = [];
+    const common = ['password','123456','12345678','qwerty','abc123','111111','letmein','welcome','admin','iloveyou','123456789'];
+    const lower = /[a-z]/.test(password);
+    const upper = /[A-Z]/.test(password);
+    const digit = /[0-9]/.test(password);
+    const symbol = /[^a-zA-Z0-9]/.test(password);
+    let pool = 0;
+    if (lower) pool += 25;
+    if (upper) pool += 24;
+    if (digit) pool += 10;
+    if (symbol) pool += 20;
+    const entropy = password.length * Math.log2(pool || 1);
+    if (password.length < 8) warnings.push('weak');
+    if (common.includes(password.toLowerCase())) warnings.push('common');
+    if (/(.)\1{2,}/.test(password)) warnings.push('repeated');
+    if (/(012|123|234|345|456|567|678|789|abc|bcd|cde)/i.test(password)) warnings.push('sequence');
+    let score = entropy >= 100 ? 4 : entropy >= 80 ? 3 : entropy >= 60 ? 2 : entropy >= 40 ? 1 : 0;
+    if (warnings.length) score = Math.min(score, 1);
+    return { warnings, score, failed: false };
+};
+
+        const checkPassword = async () => {
+            const applyCheckResult = (result, password) => {
+    if (password !== passwordInput.value) return;
+    const labels = { weak: 'Uzunluk veya çeşitlilik yetersiz', common: 'Yaygın parola', repeated: 'Tekrar eden karakterler', sequence: 'Sıralı dizi içeriyor', personal: 'Kullanıcı/site bilgisi içeriyor', reused: 'Başka bir kayıtla tekrar kullanılmış' };
+    const warnings = (result.warnings || []).map((w) => labels[w] || w);
+    const score = Math.max(0, Math.min(4, Number(result.score) || 0));
+    meter.value = score;
+    scoreLabel.textContent = ['Çok zayıf', 'Zayıf', 'Orta', 'İyi', 'Güçlü'][score];
+    panel.style.setProperty('--apm-strength-color', ['#ef4444', '#f97316', '#eab308', '#22c55e', '#16a34a'][score]);
+    audit.textContent = warnings.length ? warnings.join(' · ') : 'Belirgin bir zayıflık veya tekrar bulunmadı.';
+};
+            const sequence = ++auditSequence;
+            const password = passwordInput.value;
+            if (!password) {
+                audit.textContent = 'Parolanızı yazınca değerlendirme görünür.';
+                scoreLabel.textContent = '';
+                meter.value = 0;
+                return { warnings: [], failed: false };
+            }
+            audit.textContent = 'Parola değerlendiriliyor…';
+            const ipc = ankaBridgeApi();
+            const origin = String(form.querySelector('[name="origin"]').value || '');
+            const username = String(form.querySelector('[name="username"]').value || '');
+            try {
+                if (!ipc || typeof ipc.invoke !== 'function') { const local = localPasswordCheck(password); applyCheckResult(local, password); return local; }
+                const result = await ipc.invoke('password-manager:check', { origin, username, password });
+                if (sequence !== auditSequence || passwordInput.value !== password) return { warnings: [], failed: false };
+                if (!result || !result.ok || !Array.isArray(result.warnings) || !Number.isFinite(result.score)) {
+                    throw new Error(result && result.error || 'password-check-failed');
+                }
+                const labels = {
+                    weak: 'Uzunluk veya çeşitlilik yetersiz',
+                    common: 'Yaygın parola',
+                    personal: 'Kullanıcı/site bilgisi içeriyor',
+                    reused: 'Başka bir kayıtla tekrar kullanılmış'
+                };
+                const warnings = result.warnings.map((warning) => labels[warning] || warning);
+                const score = Math.max(0, Math.min(4, Number(result.score) || 0));
+                meter.value = score;
+                scoreLabel.textContent = ['Çok zayıf', 'Zayıf', 'Orta', 'İyi', 'Güçlü'][score];
+                panel.style.setProperty('--apm-strength-color', ['#ef4444', '#f97316', '#eab308', '#22c55e', '#16a34a'][score]);
+                audit.textContent = warnings.length ? warnings.join(' · ') : 'Belirgin bir zayıflık veya tekrar bulunmadı.';
+                return { warnings, failed: false };
+} catch (err) {
+    console.error('Password safety check failed, yerel hesap kullanılıyor:', err);
+    if (sequence !== auditSequence || passwordInput.value !== password) return { warnings: [], failed: false };
+    const local = localPasswordCheck(password);
+    applyCheckResult(local, password);
+    return local;
+}
+        };
+        passwordInput.addEventListener('input', () => {
+            clearTimeout(auditTimer);
+            auditTimer = setTimeout(checkPassword, 300);
+        });
+        const submitButton = form.querySelector('[type="submit"]');
+        panel.querySelector('[data-apm-search]').addEventListener('input', (event) => {
+            refreshPasswordManager(event.currentTarget.value);
+        });
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
             const status = panel.querySelector('.apm-status');
             const formData = new FormData(form);
+            submitButton.disabled = true;
+            form.querySelectorAll('input').forEach((input) => { input.disabled = true; });
             try {
                 const ipc = ankaBridgeApi();
+                clearTimeout(auditTimer);
+                const inspection = await checkPassword();
+                if (inspection.failed && !window.confirm('Parola güvenlik değerlendirmesi tamamlanamadı. Yine de kaydetmek istiyor musunuz?')) return;
+                if (inspection.warnings.length && !window.confirm('Parola denetimi şu uyarıları verdi: ' + inspection.warnings.join(', ') + '. Yine de kaydetmek istiyor musunuz?')) return;
                 const result = await ipc.invoke('password-manager:save', {
                     origin: String(formData.get('origin') || ''),
                     username: String(formData.get('username') || ''),
@@ -963,11 +1334,16 @@ window.openPasswordManager = function () {
                     'Parola kaydedilemedi. Site adresini ve alanları kontrol edin.';
                 if (result && result.ok) {
                     form.reset();
-                    await refreshPasswordManager();
+                    passwordInput.type = 'password';
+                    panel.querySelector('[data-apm-reveal]').textContent = 'Göster';
+                    await refreshPasswordManager(panel.querySelector('[data-apm-search]').value);
                 }
             } catch (err) {
                 console.error('Password manager save failed:', err);
                 status.textContent = 'Parola kaydedilemedi.';
+            } finally {
+                submitButton.disabled = false;
+                form.querySelectorAll('input').forEach((input) => { input.disabled = false; });
             }
         });
         panel.querySelector('.apm-list').addEventListener('click', async (event) => {
@@ -987,7 +1363,7 @@ window.openPasswordManager = function () {
     panel.hidden = false;
     const activeUrl = ankaActiveView() && ankaActiveView().getURL();
     try { panel.querySelector('[name="origin"]').value = new URL(activeUrl).origin; } catch (err) {}
-    refreshPasswordManager();
+    refreshPasswordManager(panel.querySelector('[data-apm-search]').value);
     panel.querySelector('[name="origin"]').focus();
 };
 
@@ -1011,16 +1387,21 @@ window.showSiteInfo = function () {
         panel.setAttribute('role', 'dialog');
         panel.setAttribute('aria-label', 'Site bilgisi');
         panel.style.cssText = 'position:fixed;z-index:2147482000;width:min(360px,calc(100vw - 24px));max-height:calc(100vh - 76px);overflow:auto;padding:16px;border:1px solid var(--border-color,#30323a);border-radius:14px;background:var(--bg-secondary,#18181b);color:var(--text-color,#f4f4f5);box-shadow:0 18px 50px #0008;font:inherit';
+        const officialAnkaFile = parsed && parsed.protocol === 'file:' &&
+            (ankaFileKey(url) === ankaFileKey(getNewTabUrl()) || ankaIsWelcomeUrl(url) || isErrorPageUrl(url));
         const title = document.createElement('strong');
-        title.textContent = parsed && parsed.protocol === 'file:' ? 'Yerel dosya' : 'Anka Web sayfası';
+        title.textContent = officialAnkaFile ? 'Anka Web’in resmi yerel dosyası' :
+            parsed && parsed.protocol === 'file:' ? 'Yerel dosya' : 'Anka Web sayfası';
         title.style.cssText = 'display:block;font-size:15px;overflow-wrap:anywhere';
         const status = document.createElement('p');
         let filePath = '';
         if (parsed && parsed.protocol === 'file:') {
             try { filePath = decodeURIComponent(parsed.pathname); } catch (err) { filePath = parsed.pathname; }
         }
-        status.textContent = filePath
-            ? 'Bu içerik cihazınızdaki yerel dosyadan açıldı: ' + filePath
+        status.textContent = officialAnkaFile
+            ? 'Bu, Anka Web uygulamasının kendi yerel sayfasıdır.'
+            : filePath
+                ? 'Bu içerik cihazınızdaki yerel dosyadan açıldı: ' + filePath
             : 'Bu dahili sayfada siteye özel izinler kullanılamaz. Bir web sitesine geçtiğinizde bağlantı ve site ayarları burada görünür.';
         status.style.cssText = 'font-size:12px;line-height:1.55;overflow-wrap:anywhere;opacity:.82;margin:10px 0';
         const close = document.createElement('button');
@@ -1194,7 +1575,7 @@ window.showSiteInfo = function () {
     });
 };
 
-async function refreshPasswordManager() {
+async function refreshPasswordManager(query = '') {
     const panel = document.getElementById('anka-password-manager');
     if (!panel) return;
     const list = panel.querySelector('.apm-list');
@@ -1210,20 +1591,38 @@ async function refreshPasswordManager() {
                 : 'Kayıtlı parolalar açılamadı. Depo bozuk veya erişilemiyor olabilir.';
             return;
         }
-        status.textContent = result.entries.length ? result.entries.length + ' güvenli kayıt' : 'Henüz kayıtlı parola yok.';
+        if (!Array.isArray(result.entries)) throw new Error('password-store-invalid');
+        const normalizedQuery = String(query || '').trim().toLocaleLowerCase('tr-TR');
+        const filtered = result.entries.filter((entry) =>
+            !normalizedQuery || (entry.origin + ' ' + entry.username).toLocaleLowerCase('tr-TR').includes(normalizedQuery)
+        );
+        status.textContent = result.entries.length
+            ? filtered.length + ' / ' + result.entries.length + ' şifreli hesap'
+            : 'Henüz kayıtlı hesap yok.';
         const fragment = document.createDocumentFragment();
-        result.entries.forEach((entry) => {
+        filtered.forEach((entry) => {
             const row = document.createElement('div');
             row.className = 'apm-row';
-            const label = document.createElement('span');
-            label.textContent = entry.origin + ' · ' + entry.username;
+            const info = document.createElement('span');
+            info.textContent = entry.origin + ' · ' + entry.username;
+            const updated = document.createElement('small');
+            updated.textContent = Number.isFinite(entry.updatedAt) && entry.updatedAt > 0
+                ? 'Güncellendi: ' + new Date(entry.updatedAt).toLocaleString('tr-TR')
+                : 'Güncelleme zamanı bilinmiyor';
+            info.appendChild(updated);
             const remove = document.createElement('button');
             remove.type = 'button';
             remove.dataset.apmRemove = entry.id;
             remove.textContent = 'Sil';
-            row.append(label, remove);
+            row.append(info, remove);
             fragment.appendChild(row);
         });
+        if (result.entries.length && !filtered.length) {
+            const empty = document.createElement('p');
+            empty.className = 'apm-empty';
+            empty.textContent = 'Bu aramayla eşleşen hesap bulunamadı.';
+            fragment.appendChild(empty);
+        }
         list.replaceChildren(fragment);
     } catch (err) {
         console.error('Password manager list failed:', err);
@@ -1278,7 +1677,13 @@ function applyMandatorySecurity(vw) {
                 if (typeof vw.getURL === 'function') checkUrlSecurity(vw.getURL(), vw);
                 injectForcedRestrictions(vw);
                 ankaSetupPasswordManager(vw);
-            } catch (err) {}
+            } catch (err) {
+                console.error('Sekme güvenlik ayarları uygulanamadı:', err);
+            }
+            ankaFpsLimit = [0, 30, 45, 60, 90, 120].includes(Number(getSetting('fps-limit', '0')))
+                ? Number(getSetting('fps-limit', '0'))
+                : 0;
+            ankaApplyFpsLimitToView(vw, ankaFpsLimit);
         });
 
         vw.addEventListener('console-message', (e) => {
@@ -1315,14 +1720,14 @@ function ankaInjectStyles() {
         --anka-z-tabs: 500;
         --anka-z-toolbar: 600;
         --anka-z-dropdown: 1500;
-        --anka-z-context: 5000;
-        --anka-z-preview: 5500;
-        --anka-z-suggest: 6000;
-        --anka-z-findbar: 7000;
-        --anka-z-side: 8000;
-        --anka-z-overlay: 9000;
-        --anka-z-toast: 15000;
-        --anka-z-link: 14000;
+        --anka-z-context: 3000000;
+        --anka-z-preview: 3000001;
+        --anka-z-suggest: 3000002;
+        --anka-z-findbar: 3000003;
+        --anka-z-side: 3000004;
+        --anka-z-overlay: 3000005;
+        --anka-z-toast: 3000006;
+        --anka-z-link: 3000007;
         --anka-ease: cubic-bezier(.16,1,.3,1);
         --anka-radius: 10px;
         --anka-radius-lg: 14px;
@@ -1426,6 +1831,7 @@ function ankaInjectStyles() {
         position: fixed;
         top: 42px;
         right: -50%;
+        left: -50%;
         width: 45%;
         min-width: min(340px, 100vw);
         max-width: 780px;
@@ -1438,10 +1844,11 @@ function ankaInjectStyles() {
         box-shadow: -10px 0 30px rgba(0,0,0,.5);
         display: flex;
         flex-direction: column;
-        transition: right .2s ease;
+        transition: right .2s ease, left .2s ease;
         font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
     }
-    #anka-side-devtools.open { right: 0; }
+    #anka-side-devtools.open { right: 0; left: auto; }
+    #anka-side-devtools.open.open-left { left: 0; right: auto; border-left: 0; border-right: 1px solid var(--anka-border); box-shadow: 10px 0 30px rgba(0,0,0,.5); }
     .side-dt-header {
         display: flex;
         align-items: center;
@@ -1517,7 +1924,7 @@ function ankaInjectStyles() {
 
     .anka-find-bar {
         position: fixed;
-        top: 12px;
+        top: calc(var(--titlebar-h, 42px) + var(--toolbar-h, 52px) + 8px);
         right: 12px;
         background: var(--anka-surface);
         border: 1px solid var(--anka-border);
@@ -1531,6 +1938,8 @@ function ankaInjectStyles() {
         box-shadow: var(--anka-shadow-md);
         flex-wrap: wrap;
         max-width: calc(100vw - 24px);
+        max-height: calc(100dvh - var(--titlebar-h, 42px) - var(--toolbar-h, 52px) - 24px);
+        overflow: auto;
     }
     .anka-find-bar input {
         background: var(--anka-surface-2);
@@ -1881,8 +2290,9 @@ function ankaInjectStyles() {
         .session-save-row, .session-card-head, .session-actions { flex-wrap: wrap; }
         .session-actions > button { flex: 1; }
         .anka-find-bar input { min-width: 120px; }
-        #anka-side-devtools { width: 92vw; min-width: 0; right: -100%; }
+        #anka-side-devtools { width: 92vw; min-width: 0; right: -100%; left: -100%; }
         #anka-side-devtools.open { right: 0; }
+        #anka-side-devtools.open.open-left { left: 0; right: auto; }
     }
     @media (pointer: coarse) {
         #custom-context-menu { min-width: 260px; padding: 8px; }
@@ -1892,6 +2302,36 @@ function ankaInjectStyles() {
     @media (prefers-reduced-motion: reduce) {
         #custom-context-menu, #custom-context-submenu, .anka-tab-preview, .anka-toast, #anka-side-devtools { transition: none; }
     }
+    .anka-cqa-overlay{position:fixed;inset:0;z-index:var(--anka-z-overlay);background:rgba(0,0,0,.35);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);opacity:0;transition:opacity .2s ease;display:flex}
+    .anka-cqa-overlay.open{opacity:1}
+    .anka-cqa-panel{width:min(340px,88vw);height:100%;display:flex;flex-direction:column;background:var(--anka-surface);border-right:1px solid var(--anka-border);color:var(--anka-text);box-shadow:12px 0 40px rgba(0,0,0,.35);transform:translateX(-100%);transition:transform .24s cubic-bezier(.2,.7,.2,1);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:6px 8px}
+    .anka-cqa-overlay.open .anka-cqa-panel{transform:translateX(0)}
+    .anka-cqa-header{display:flex;align-items:center;gap:10px;padding:12px 10px;border-bottom:1px solid var(--anka-border);margin-bottom:6px}
+    .anka-cqa-logo{width:30px;height:30px;object-fit:contain}
+    .anka-cqa-title{font-weight:700;font-size:14px;letter-spacing:-.01em}
+    .anka-cqa-item{display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:8px;cursor:pointer;color:inherit;font-size:13px;font-weight:550;border:none;background:transparent;text-align:left;width:100%;position:relative;transition:background .1s ease}
+    .anka-cqa-item:hover,.anka-cqa-item.active{background:var(--anka-surface-2)}
+    .anka-cqa-icon{flex:0 0 22px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:5px;background:var(--anka-surface-2);color:var(--anka-accent);font-size:12px;font-weight:700;transition:background .1s ease,color .1s ease}
+    .anka-cqa-item:hover .anka-cqa-icon{background:var(--anka-accent);color:#fff}
+    .anka-cqa-label{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .anka-cqa-item.has-submenu::after{content:'▸';color:var(--anka-text-soft);font-size:11px;flex:none;margin-left:4px}
+    .anka-cqa-sep{height:1px;background:var(--anka-border);margin:6px 4px}
+    .anka-cqa-submenu{position:fixed;z-index:calc(var(--anka-z-overlay) + 1);width:min(400px,80vw);max-height:min(560px,80vh);display:flex;flex-direction:column;background:var(--anka-surface);color:var(--anka-text);border:1px solid var(--anka-border);border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.45);overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;opacity:0;transform:translateX(-6px);transition:opacity .14s ease,transform .14s ease;pointer-events:none}
+    .anka-cqa-submenu.show{opacity:1;transform:translateX(0);pointer-events:auto}
+    .anka-cqa-submenu-header{padding:12px 16px;border-bottom:1px solid var(--anka-border);display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700}
+    .anka-cqa-submenu-list{padding:6px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;display:flex;flex-direction:column;gap:1px}
+    .anka-cqa-submenu-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;cursor:pointer;color:inherit;font-size:12.5px;text-align:left;border:none;background:transparent;width:100%;transition:background .1s ease}
+    .anka-cqa-submenu-item:hover{background:var(--anka-surface-2)}
+    .anka-cqa-submenu-fav{width:18px;height:18px;flex:none;object-fit:contain;border-radius:3px;background:var(--anka-surface-2)}
+    .anka-cqa-submenu-main{flex:1;min-width:0}
+    .anka-cqa-submenu-main strong{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px}
+    .anka-cqa-submenu-main small{display:block;color:var(--anka-text-soft);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .anka-cqa-submenu-empty{padding:24px 16px;text-align:center;color:var(--anka-text-soft);font-size:12.5px}
+    .anka-cqa-submenu-foot{padding:8px 12px;border-top:1px solid var(--anka-border);display:flex;justify-content:flex-end}
+    .anka-cqa-submenu-foot button{background:var(--anka-accent);border:none;color:#fff;padding:6px 12px;border-radius:7px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+    .anka-cqa-submenu-foot button:hover{filter:brightness(1.08)}
+    @media(max-width:520px){.anka-cqa-submenu{width:calc(100vw - 24px);left:12px!important;top:auto!important;bottom:12px!important;max-height:60vh}}
+    @media (prefers-reduced-motion:reduce){.anka-cqa-overlay,.anka-cqa-panel,.anka-cqa-submenu{transition:none}}
 `;
     document.head.appendChild(style);
 }
@@ -1916,6 +2356,7 @@ function closeSubmenu() {
 }
 
 function closeContextMenu() {
+    if (window.AnkaRightClick) window.AnkaRightClick.deactivate('browser-context-menu');
     ankaDetachMenuKeys();
     closeSubmenu();
     const menu = document.getElementById('custom-context-menu');
@@ -2012,13 +2453,32 @@ function showContextMenu(x, y, items) {
     });
     menu.appendChild(frag);
     document.body.appendChild(menu);
+    if (window.AnkaRightClick) {
+        window.AnkaRightClick.register('browser-context-menu', {
+            panel: menu,
+            extraSurfaces: () => ankaSubmenuEl ? [ankaSubmenuEl] : [],
+            group: 'context-menus',
+            isOpen: () => !!document.getElementById('custom-context-menu'),
+            close: closeContextMenu,
+            dismissOnOutside: true,
+            dismissOnEscape: true
+        });
+        window.AnkaRightClick.activate('browser-context-menu');
+    }
 
+    const titlebar = document.getElementById('titlebar');
+    const toolbar = document.getElementById('toolbar');
+    const chromeBottom = Math.ceil((toolbar || titlebar)?.getBoundingClientRect().bottom || 0);
+    const minTop = Math.min(window.innerHeight - 8, Math.max(8, chromeBottom + 6));
     menu.style.maxWidth = Math.max(0, window.innerWidth - 16) + 'px';
-    menu.style.maxHeight = Math.max(0, window.innerHeight - 16) + 'px';
+    menu.style.maxHeight = Math.max(0, window.innerHeight - minTop - 8) + 'px';
     const menuWidth = Math.min(menu.offsetWidth || 240, Math.max(0, window.innerWidth - 16));
-    const menuHeight = Math.min(menu.offsetHeight || (cleaned.length * 36), Math.max(0, window.innerHeight - 16));
+    const menuHeight = Math.min(menu.offsetHeight || (cleaned.length * 36), Math.max(0, window.innerHeight - minTop - 8));
     const left = Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8));
-    const top = y + menuHeight <= window.innerHeight - 8 ? y : Math.max(8, y - menuHeight);
+    const preferredTop = y < minTop ? minTop : y;
+    const top = preferredTop + menuHeight <= window.innerHeight - 8
+        ? preferredTop
+        : Math.max(minTop, window.innerHeight - menuHeight - 8);
     menu.style.left = left + 'px';
     menu.style.top = top + 'px';
 
@@ -2660,57 +3120,105 @@ function ankaStateOfView(vw) {
     return vw && vw.id ? ankaTabs.get(vw.id) : null;
 }
 
-function ankaOpenDevTools(vw) {
-    if (getSetting('dev-tools-shortcut', 'true') === 'false') return;
+function ankaOpenDevTools(vw, mode) {
+    mode = mode === 'detach' ? 'detach' : 'right';
+    if (getSetting('dev-tools-shortcut', 'true') === 'false') {
+        showNotification('Geliştirici araçları ayarlardan kapalı.');
+        return;
+    }
     if (!vw) vw = ankaActiveView();
     if (!vw || typeof vw.openDevTools !== 'function') {
         showNotification('DevTools bu sekmede kullanılamaz.');
         return;
     }
     try {
-        if (typeof vw.isDevToolsOpened === 'function' && vw.isDevToolsOpened()) {
-            vw.closeDevTools();
-        } else {
-            vw.openDevTools();
+        const st = ankaStateOfView(vw);
+        const bridge = ankaBridgeApi();
+        if (st && st.devToolsTogglePending) return;
+        if (bridge && typeof bridge.invoke === 'function' && typeof vw.getWebContentsId === 'function') {
+            const webContentsId = vw.getWebContentsId();
+            if (!Number.isInteger(webContentsId)) throw new Error('Sekme WebContents kimliği alınamadı.');
+            if (st) st.devToolsTogglePending = true;
+            bridge.invoke('webview-devtools:toggle', { webContentsId, mode }).then((result) => {
+                if (!result || !result.ok) throw new Error(result && result.error ? result.error : 'DevTools açılamadı.');
+                if (st) st.devToolsOpen = result.open;
+            }).catch((err) => {
+                try {
+                    if (!(typeof vw.isDevToolsOpened === 'function' && vw.isDevToolsOpened())) {
+                        vw.openDevTools({ mode });
+                    }
+                    if (st) st.devToolsOpen = true;
+                } catch (fallbackError) {
+                    console.error('Sekme DevTools açılamadı:', err, fallbackError);
+                    showNotification('DevTools açılamadı.');
+                }
+            }).finally(() => {
+                if (st) st.devToolsTogglePending = false;
+            });
+            return;
         }
-    } catch (err) {}
+        const isOpen = typeof vw.isDevToolsOpened === 'function'
+            ? vw.isDevToolsOpened()
+            : !!(st && st.devToolsOpen);
+        if (isOpen) vw.closeDevTools();
+        else vw.openDevTools({ mode });
+        if (st) st.devToolsOpen = !isOpen;
+    } catch (err) {
+        const st = ankaStateOfView(vw);
+        if (st) st.devToolsOpen = false;
+        console.error('DevTools açılamadı:', err);
+        showNotification('DevTools açılamadı. Bu sekme için desteklenmiyor olabilir.');
+    }
 }
 
 function openDevToolsDetached(vw) {
+    if (getSetting('dev-tools-shortcut', 'true') === 'false') {
+        showNotification('Geliştirici araçları ayarlardan kapalı.');
+        return;
+    }
     if (!vw) vw = ankaActiveView();
     if (!vw || typeof vw.openDevTools !== 'function') {
         showNotification('DevTools bu sekmede kullanılamaz.');
         return;
     }
-    try {
-        if (typeof vw.isDevToolsOpened === 'function' && vw.isDevToolsOpened()) vw.closeDevTools();
-        vw.openDevTools({ mode: 'detach' });
-        showNotification('DevTools ayrı pencerede açıldı.');
-    } catch (err) {
-        try { vw.openDevTools(); } catch (e) {}
-    }
+    ankaOpenDevTools(vw, 'detach');
 }
 
 function openDevToolsDocked(vw, mode) {
+    if (getSetting('dev-tools-shortcut', 'true') === 'false') {
+        showNotification('Geliştirici araçları ayarlardan kapalı.');
+        return;
+    }
     if (!vw) vw = ankaActiveView();
     if (!vw || typeof vw.openDevTools !== 'function') {
         showNotification('DevTools bu sekmede kullanılamaz.');
         return;
     }
+    if (mode && mode !== 'right') {
+        showNotification('DevTools yalnızca sağ panelde açılabilir.');
+        return;
+    }
     try {
-        if (typeof vw.isDevToolsOpened === 'function' && vw.isDevToolsOpened()) vw.closeDevTools();
-        vw.openDevTools({ mode: mode || 'right' });
-        const labels = { right: 'sağda', left: 'solda', bottom: 'altta', undocked: 'ayrı' };
-        showNotification('DevTools ' + (labels[mode] || mode) + ' açıldı.');
+        ankaOpenDevTools(vw);
     } catch (err) {
-        try { vw.openDevTools(); } catch (e) {}
+        console.error('DevTools yerleşimi açılamadı:', err);
+        showNotification('DevTools bu yerleşimde açılamadı.');
     }
 }
 
 function closeDevTools(vw) {
     if (!vw) vw = ankaActiveView();
     if (!vw || typeof vw.closeDevTools !== 'function') return;
-    try { vw.closeDevTools(); showNotification('DevTools kapatıldı.'); } catch (err) {}
+    try {
+        const st = ankaStateOfView(vw);
+        if (st) st.devToolsOpen = false;
+        vw.closeDevTools();
+        showNotification('DevTools kapatıldı.');
+    }
+    catch (err) {
+        console.error('DevTools kapatılamadı:', err);
+        showNotification('DevTools kapatılamadı.');
+    }
 }
 
 function inspectElementAt(vw, x, y) {
@@ -2725,19 +3233,15 @@ function openDevToolsMenu(vw) {
         showNotification('Aktif sekme yok.');
         return;
     }
-    const isOpen = typeof vw.isDevToolsOpened === 'function' && vw.isDevToolsOpened();
+    const st = ankaStateOfView(vw);
+    const isOpen = typeof vw.isDevToolsOpened === 'function'
+        ? vw.isDevToolsOpened()
+        : !!(st && st.devToolsOpen);
     const r = window.innerWidth;
     showContextMenu(Math.round(r / 2 - 120), 120, [
-        { label: 'Ayrı Pencerede Aç', action: () => openDevToolsDetached(vw) },
-        { label: 'Sağ Panelde Aç', action: () => openDevToolsDocked(vw, 'right') },
-        { label: 'Sol Panelde Aç', action: () => openDevToolsDocked(vw, 'left') },
-        { label: 'Alt Panelde Aç', action: () => openDevToolsDocked(vw, 'bottom') },
-        { label: 'Bağımsız (undocked)', action: () => openDevToolsDocked(vw, 'undocked') },
-        '---',
-        { label: 'Yanda HTML Kaynağını Göster', action: () => toggleSideViewSource(vw) },
-        { label: 'Konsolu Temizle', action: () => { try { if (vw.__ankaReady) vw.executeJavaScript('console.clear()'); } catch (e) {} } },
-        '---',
-        { label: isOpen ? 'DevTools Kapat' : 'DevTools Aç (Varsayılan)', danger: isOpen, action: () => { try { if (vw.isDevToolsOpened && vw.isDevToolsOpened()) vw.closeDevTools(); else vw.openDevTools(); } catch (e) {} } }
+        { label: isOpen ? 'DevTools Kapat' : 'DevTools Sağ Panelde Aç', action: () => ankaOpenDevTools(vw) },
+        { label: 'Sağ HTML İnceleyicisi', action: () => toggleSideViewSource(vw, 'right') },
+        { label: 'Konsolu Temizle', action: () => { try { if (vw.__ankaReady) vw.executeJavaScript('console.clear()'); } catch (e) {} } }
     ]);
 }
 
@@ -2828,9 +3332,34 @@ function hardReload(vw) {
 }
 
 function printPage(vw) {
+    if (!vw) {
+        showNotification('Yazdırılacak bir sayfa bulunamadı.');
+        return;
+    }
+    const bridge = ankaBridgeApi();
+    if (bridge && typeof bridge.invoke === 'function' &&
+        typeof vw.getWebContentsId === 'function' && typeof vw.printToPDF === 'function') {
+        let webContentsId;
+        try { webContentsId = vw.getWebContentsId(); }
+        catch (err) {
+            console.error('Yazdırma için sekme kimliği alınamadı:', err);
+            showNotification('Yazdırma başlatılamadı.');
+            return;
+        }
+        bridge.invoke('webview-print', webContentsId).then((result) => {
+            if (!result || !result.ok) throw new Error(result && result.error ? result.error : 'Yazdırma başlatılamadı.');
+            if (!result.queued) showNotification('Yazdırma tamamlandı.');
+        }).catch((err) => {
+            console.error('Sekme yazdırılamadı:', err);
+            showNotification('Yazdırma başlatılamadı. Yazıcıyı ve sayfanın yüklenmesini kontrol edin.');
+        });
+        return;
+    }
     try {
+        if (typeof vw.print !== 'function') throw new Error('Bu sayfa yazdırmayı desteklemiyor.');
         vw.print({ silent: false, printBackground: true });
     } catch (err) {
+        console.error('Sayfa yazdırılamadı:', err);
         showNotification('Yazdırma başlatılamadı.');
     }
 }
@@ -2954,9 +3483,10 @@ function openFindBar(vw) {
     input.focus();
 }
 
-function toggleSideViewSource(vw) {
+function toggleSideViewSource(vw, side) {
+    side = side === 'left' ? 'left' : 'right';
     let panel = ankaById('anka-side-devtools');
-    if (panel && panel.classList.contains('open')) {
+    if (panel && panel.classList.contains('open') && panel.dataset.side === side) {
         closeSideViewSource();
         return;
     }
@@ -2967,13 +3497,14 @@ function toggleSideViewSource(vw) {
         const copy = ankaMk('button', { type: 'button', className: 'side-dt-close', text: 'Kopyala' });
         const refresh = ankaMk('button', { type: 'button', className: 'side-dt-close', text: 'Yenile' });
         const devtools = ankaMk('button', { type: 'button', className: 'side-dt-close', text: 'DevTools' });
-        const detach = ankaMk('button', { type: 'button', className: 'side-dt-close', text: 'Ayrı' });
+        const detach = ankaMk('button', { type: 'button', className: 'side-dt-close', text: 'Sağ Panel' });
+        const dockLeft = ankaMk('button', { type: 'button', className: 'side-dt-close', text: 'Sol' });
         const dockRight = ankaMk('button', { type: 'button', className: 'side-dt-close', text: 'Sağ' });
         const dockBottom = ankaMk('button', { type: 'button', className: 'side-dt-close', text: 'Alt' });
         const close = ankaMk('button', { type: 'button', className: 'side-dt-close danger', text: 'Kapat', onclick: closeSideViewSource });
         const search = ankaMk('input', { id: 'side-dt-search', type: 'search', placeholder: 'HTML içinde ara...' });
         const code = ankaMk('pre', { className: 'side-dt-content', id: 'side-dt-code' });
-        panel = ankaMk('aside', { id: 'anka-side-devtools' }, ankaMk('div', { className: 'side-dt-header' }, ankaMk('span', { text: 'Anka Web İncele · HTML' }), ankaMk('span', { className: 'side-dt-actions' }, copy, refresh, devtools, detach, dockRight, dockBottom, close)), search, code);
+        panel = ankaMk('aside', { id: 'anka-side-devtools' }, ankaMk('div', { className: 'side-dt-header' }, ankaMk('span', { text: 'Anka Web İncele · HTML' }), ankaMk('span', { className: 'side-dt-actions' }, copy, refresh, devtools, detach, dockLeft, dockRight, dockBottom, close)), search, code);
         document.body.appendChild(panel);
         const renderMatch = () => {
             const source = panel.__ankaSource || '';
@@ -2996,20 +3527,19 @@ function toggleSideViewSource(vw) {
         refresh.addEventListener('click', () => panel.__ankaLoad && panel.__ankaLoad());
         devtools.addEventListener('click', () => {
             const view = panel.__ankaView;
-            if (!view || typeof view.openDevTools !== 'function') return;
-            try {
-                if (view.isDevToolsOpened && view.isDevToolsOpened()) view.closeDevTools();
-                view.openDevTools();
-            } catch (err) {}
+            if (view) ankaOpenDevTools(view);
         });
         detach.addEventListener('click', () => { const view = panel.__ankaView; if (view) openDevToolsDetached(view); });
+        dockLeft.addEventListener('click', () => { const view = panel.__ankaView; if (view) toggleSideViewSource(view, 'left'); });
         dockRight.addEventListener('click', () => { const view = panel.__ankaView; if (view) openDevToolsDocked(view, 'right'); });
-        dockBottom.addEventListener('click', () => { const view = panel.__ankaView; if (view) openDevToolsDocked(view, 'bottom'); });
+        dockBottom.addEventListener('click', () => { const view = panel.__ankaView; if (view) toggleSideViewSource(view, 'right'); });
         panel.__ankaRenderSource = renderMatch;
         panel.__ankaSearch = search;
     }
 
     panel.__ankaView = vw;
+    panel.dataset.side = side;
+    panel.classList.toggle('open-left', side === 'left');
     panel.__ankaLoad = () => {
         const requestId = String((Number(panel.dataset.requestId) || 0) + 1);
         panel.dataset.requestId = requestId;
@@ -3020,6 +3550,7 @@ function toggleSideViewSource(vw) {
             panel.__ankaSource = String(html || '').replace(/></g, '>\n<');
             if (panel.__ankaRenderSource) panel.__ankaRenderSource();
             panel.classList.add('open');
+            panel.classList.toggle('open-left', panel.dataset.side === 'left');
         }).catch(() => showNotification('Kaynak kodu alınamadı.'));
     };
     panel.__ankaLoad();
@@ -3038,12 +3569,21 @@ function ankaBuildWebview(id, opts) {
     if (id) vw.id = id;
     vw.className = o.className || 'browser-view';
     let webPreferences = ANKA_GUEST_PREFS;
+    let preload = o.preload || '';
+    if (!preload && !o.incognito && o.url && ankaIsNewTabUrl(o.url)) {
+        try {
+            const { fileURLToPath } = require('url');
+            preload = fileURLToPath(new URL('../core/main/newtab-preload.js', window.location.href));
+        } catch (err) {
+            console.error('Yeni sekme ayar köprüsü yüklenemedi:', err);
+        }
+    }
     if (!o.incognito && o.url && ankaReadSiteSettingsForUrl(o.url).javascript === false) {
         webPreferences = webPreferences.replace('javascript=yes', 'javascript=no');
     }
     vw.setAttribute('webpreferences', webPreferences);
     if (o.partition) vw.setAttribute('partition', o.partition);
-    if (o.preload) vw.setAttribute('preload', o.preload);
+    if (preload) vw.setAttribute('preload', preload);
     vw.style.cssText = o.style || 'display:none; width:100%; height:100%; flex:1;';
     return vw;
 }
@@ -3264,14 +3804,8 @@ function attachWebviewContextMenu(vw) {
             label: 'Geliştirici Araçları',
             submenu: [
                 { label: 'İncele', action: () => inspectElementAt(vw, p.x || 0, p.y || 0) },
-                { label: 'DevTools Aç/Kapat', shortcut: 'F12', action: () => ankaOpenDevTools(vw) },
                 '---',
-                { label: 'Ayrı Pencerede Aç', action: () => openDevToolsDetached(vw) },
-                { label: 'Sağ Panelde Aç', action: () => openDevToolsDocked(vw, 'right') },
-                { label: 'Sol Panelde Aç', action: () => openDevToolsDocked(vw, 'left') },
-                { label: 'Alt Panelde Aç', action: () => openDevToolsDocked(vw, 'bottom') },
-                '---',
-                { label: 'Yanda HTML Kaynağını Göster', action: () => toggleSideViewSource(vw) },
+                { label: 'Sağ HTML İnceleyicisi', action: () => toggleSideViewSource(vw, 'right') },
                 { label: 'DevTools Kapat', danger: true, action: () => closeDevTools(vw) }
             ]
         });
@@ -3286,10 +3820,32 @@ function ankaCreateTabEntry(id, o) {
     const tab = ankaMk('div', { className: o.className || 'tab', id: 'btn-' + id, draggable: 'true', role: 'tab' });
     const icon = ankaMk('img', { className: 'tab-icon', alt: '', draggable: 'false' });
     icon.onerror = () => {
-        icon.onerror = null;
+        const candidates = icon.__ankaFaviconCandidates || [];
+        const next = (icon.__ankaFaviconIndex || 0) + 1;
+        if (next < candidates.length) {
+            icon.__ankaFaviconIndex = next;
+            icon.dataset.ankaOriginalSrc = candidates[next];
+            icon.src = candidates[next];
+            return;
+        }
+        const st = ankaTabs.get(id);
+        if (st && ankaLoadNativeFavicon(st, st.vw, icon, icon.src)) return;
+        if (icon.dataset.ankaFallback === 'true') return;
+        icon.dataset.ankaFallback = 'true';
         icon.src = ANKA_LOGO;
     };
-    icon.src = o.icon || (window.ankaGetLogo ? window.ankaGetLogo() : ANKA_LOGO);
+    icon.onload = () => {
+        icon.dataset.ankaFallback = 'false';
+    };
+    icon.dataset.ankaOriginalSrc = o.icon || (window.ankaGetLogo ? window.ankaGetLogo() : ANKA_LOGO);
+    icon.__ankaFaviconCandidates = /^https?:/i.test(icon.dataset.ankaOriginalSrc)
+        ? [icon.dataset.ankaOriginalSrc]
+        : [];
+    icon.__ankaFaviconIndex = 0;
+    icon.src = /^https?:/i.test(icon.dataset.ankaOriginalSrc)
+        ? ankaRefreshFaviconUrl(icon.dataset.ankaOriginalSrc, {})
+        : icon.dataset.ankaOriginalSrc;
+    const groupEl = ankaMk('span', { className: 'tab-group-label', hidden: true });
     const titleEl = ankaMk('span', { className: 'tab-title', text: o.title });
     const controls = ankaMk('div', { className: 'tab-controls', style: 'display:flex;align-items:center;gap:4px;margin-left:auto;' });
     const muteEl = ankaMk('div', { className: 'mute-tab', title: 'Sesi Aç/Kapat', text: '🔊', style: 'display:none;cursor:pointer;font-size:12px;padding:2px 6px;background:rgba(255,255,255,0.05);border-radius:4px;' });
@@ -3298,7 +3854,7 @@ function ankaCreateTabEntry(id, o) {
     closeEl.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
     closeEl.addEventListener('click', (e) => closeTab(id, e));
     controls.append(muteEl, closeEl);
-    tab.append(icon, titleEl, controls);
+    tab.append(icon, groupEl, titleEl, controls);
 
     tab.addEventListener('click', () => switchTab(id));
     tab.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
@@ -3325,11 +3881,11 @@ function ankaCreateTabEntry(id, o) {
     });
 
     const memEl = ankaMk('span', { className: 'tab-memory' });
-    tab.append(icon, titleEl, memEl, controls);
-    const st = { id, tab, icon, titleEl, muteEl, memEl, vw: null, url: o.url, title: o.title || '', internal: o.internal || '', pinned: false, incognito: !!o.incognito, sleeping: false, lastActive: Date.now(), zoom: 0, dark: false, darkKey: null, reader: false, audible: false, muted: false, loading: false, ai: !!o.ai, lastCrash: 0, group: String(o.group || '').slice(0, 32) };
-    if (st.group) ankaSetTabGroup(st, st.group);
+    tab.insertBefore(memEl, controls);
+    const st = { id, tab, icon, groupEl, titleEl, muteEl, memEl, vw: null, url: o.url, title: o.title || '', internal: o.internal || '', pinned: false, incognito: !!o.incognito, sleeping: false, lastActive: Date.now(), zoom: 0, dark: false, darkKey: null, reader: false, audible: false, muted: false, loading: false, ai: !!o.ai, lastCrash: 0, group: String(o.group || '').slice(0, 32) };
     ankaTabs.set(id, st);
     if (tabBar) tabBar.append(tab);
+    if (st.group) ankaRenderTabGroup(st);
     return st;
 }
 
@@ -3503,6 +4059,16 @@ function ankaSyncTab(st, vw) {
 function ankaOnNavigated(st, vw, url) {
     if (!url) return;
     st.url = url;
+    st.faviconReadId = (st.faviconReadId || 0) + 1;
+    st.faviconGeneration = (st.faviconGeneration || 0) + 1;
+    const favicon = getFaviconUrl(url);
+    st.icon.__ankaFaviconCandidates = /^https?:/i.test(favicon) ? [favicon] : [];
+    st.icon.__ankaFaviconIndex = 0;
+    st.icon.dataset.ankaFallback = 'false';
+    st.icon.dataset.ankaOriginalSrc = favicon;
+    st.icon.dataset.ankaRetry = 'false';
+    st.icon.src = ankaRefreshFaviconUrl(favicon, st);
+    if (/^https?:/i.test(favicon)) ankaFetchFaviconData(st, vw, [favicon]);
     st.reader = false;
     const sitePrefs = st.incognito ? {} : ankaReadSiteSettingsForUrl(url);
     if (st.dark && !sitePrefs.dark && st.darkKey) {
@@ -3517,6 +4083,7 @@ function ankaOnNavigated(st, vw, url) {
         ankaSyncUrlBar(st);
         ankaUpdateBookmarkButton();
     }
+    ankaRefreshTabFavicon(st, vw);
     ankaPersistSession();
 }
 
@@ -3530,37 +4097,48 @@ function ankaWireTabEvents(st, vw) {
         }
         if (st.dark) ankaApplyDark(st, vw);
         if (typeof syncNewTabTheme === 'function') syncNewTabTheme(vw);
+        ankaRefreshTabFavicon(st, vw);
     });
     vw.addEventListener('page-title-updated', (e) => {
         ankaSetTitle(st, e.title);
         ankaUpdateHistoryTitle(st, st.url, e.title);
     });
     vw.addEventListener('page-favicon-updated', (e) => {
-        const fav = e.favicons && e.favicons.find((f) => /^(https?|data):/i.test(f));
-        if (fav) st.icon.src = fav;
+        ankaSetTabFavicon(st, vw, e.favicons || []);
     });
+    vw.addEventListener('devtools-opened', () => { st.devToolsOpen = true; });
+    vw.addEventListener('devtools-closed', () => { st.devToolsOpen = false; });
     vw.addEventListener('console-message', (event) => {
-        if (!event || event.message !== 'anka-welcome-complete') return;
+        if (!event) return;
         let currentUrl = '';
         try { currentUrl = vw.getURL(); } catch (err) {}
         if (!ankaIsWelcomeUrl(currentUrl)) return;
-        ankaWrite('anka_welcome_completed', true);
-        st.url = ankaHomeUrl();
-        ankaLoad(vw, st.url);
-        if (st.id === activeTabId) ankaSyncUrlBar(st);
+        if (event.message === 'anka-welcome-settings') {
+            if (typeof window.toggleSettings === 'function') window.toggleSettings();
+            return;
+        }
+        if (event.message === 'anka-welcome-complete') {
+            if (!window.ANKA_PRIVATE_WINDOW) ankaWrite('anka_welcome_completed', true);
+            st.url = ankaHomeUrl();
+            ankaLoad(vw, st.url);
+            if (st.id === activeTabId) ankaSyncUrlBar(st);
+        }
     });
     vw.addEventListener('did-start-loading', () => {
         st.loading = true;
         st.tab.classList.add('loading');
         st.tab.classList.remove('crashed');
+        if (st.id === activeTabId) ankaSetTabLoadTracking(st, true, true);
     });
-    st.didStopLoadingHandler = () => {
+    vw.addEventListener('did-stop-loading', () => {
         st.loading = false;
         st.tab.classList.remove('loading');
-        ankaSyncTab(st, vw);
-        if (typeof window.__ankaScheduleStar === 'function') window.__ankaScheduleStar();
-    };
-    st.didStopLoadingAttached = false;
+        if (ankaLoadTrackingView === vw) ankaUnwireTabLoading(st, vw);
+        if (st.id === activeTabId) {
+            ankaSyncTab(st, vw);
+            if (typeof window.__ankaScheduleStar === 'function') window.__ankaScheduleStar();
+        }
+    });
     const onNav = (e) => {
         if (e.isMainFrame === false) return;
         ankaOnNavigated(st, vw, e.url);
@@ -3599,32 +4177,62 @@ function ankaWireTabEvents(st, vw) {
 }
 
 function ankaUnwireTabLoading(st, vw) {
-    if (!st || !vw || !st.didStopLoadingHandler) return;
-    if (st.didStopLoadingAttached) vw.removeEventListener('did-stop-loading', st.didStopLoadingHandler);
-    st.didStopLoadingAttached = false;
-    st.didStopLoadingHandler = null;
+    if (!vw || ankaLoadTrackingView !== vw) return;
+    if (ankaLoadPollTimer) clearInterval(ankaLoadPollTimer);
+    ankaLoadPollTimer = 0;
+    ankaLoadTrackingView = null;
 }
 
-function ankaSetTabLoadTracking(st, enabled) {
+function ankaSetTabLoadTracking(st, enabled, forceLoading) {
     const vw = st && st.vw;
-    if (!vw || !st.didStopLoadingHandler) return;
+    if (!vw) return;
     if (!enabled) {
-        if (st.didStopLoadingAttached) vw.removeEventListener('did-stop-loading', st.didStopLoadingHandler);
-        st.didStopLoadingAttached = false;
+        ankaUnwireTabLoading(st, vw);
         return;
     }
-    if (!st.didStopLoadingAttached) {
-        vw.addEventListener('did-stop-loading', st.didStopLoadingHandler);
-        st.didStopLoadingAttached = true;
+    if (ankaLoadTrackingView !== vw) {
+        if (ankaLoadPollTimer) clearInterval(ankaLoadPollTimer);
+        ankaLoadPollTimer = 0;
+        ankaLoadTrackingView = vw;
     }
-    let loading = st.loading;
-    try { loading = vw.isLoading(); } catch (err) {}
+    let loading = !!forceLoading;
+    if (!forceLoading) {
+        loading = st.loading;
+        try { loading = vw.isLoading(); }
+        catch (err) {
+            console.error('Sekme yükleme durumu alınamadı:', err);
+            loading = false;
+        }
+    }
     st.loading = !!loading;
     st.tab.classList.toggle('loading', st.loading);
     if (!st.loading) {
+        if (ankaLoadPollTimer) clearInterval(ankaLoadPollTimer);
+        ankaLoadPollTimer = 0;
         ankaSyncTab(st, vw);
         if (typeof window.__ankaScheduleStar === 'function') window.__ankaScheduleStar();
+        return;
     }
+    if (ankaLoadPollTimer) return;
+    ankaLoadPollTimer = setInterval(() => {
+        if (ankaLoadTrackingView !== vw || activeTabId !== st.id || st.vw !== vw) {
+            ankaUnwireTabLoading(st, vw);
+            return;
+        }
+        let stillLoading;
+        try { stillLoading = vw.isLoading(); }
+        catch (err) {
+            console.error('Sekme yükleme durumu alınamadı:', err);
+            ankaUnwireTabLoading(st, vw);
+            return;
+        }
+        if (stillLoading) return;
+        st.loading = false;
+        st.tab.classList.remove('loading');
+        ankaUnwireTabLoading(st, vw);
+        ankaSyncTab(st, vw);
+        if (typeof window.__ankaScheduleStar === 'function') window.__ankaScheduleStar();
+    }, 250);
 }
 
 function ankaWake(st) {
@@ -3632,7 +4240,11 @@ function ankaWake(st) {
     const container = ankaById('wv-container');
     if (!container) return null;
     const vw = ankaBuildWebview(st.id, {
-        partition: st.incognito ? 'ankaprivate-' + st.id : '',
+        partition: st.incognito
+            ? 'ankaprivate-' + st.id
+            : window.ANKA_PROFILE_ISOLATION && window.ANKA_PROFILE_ID && window.ANKA_PROFILE_ID !== 'default'
+                ? 'persist:anka-profile-' + window.ANKA_PROFILE_ID
+                : '',
         url: st.url,
         incognito: st.incognito,
         preload: ankaIsNewTabUrl(st.url) && window.__ankaGuestPreload ? window.__ankaGuestPreload : ''
@@ -3788,6 +4400,7 @@ function hideTabPreview() {
 }
 
 const ANKA_COMMANDS = [
+        { id: 'quick-access', label: 'Hızlı Erişim Menüsü', desc: 'Soldan açılan araç menüsü', shortcut: 'Ctrl+Shift+Q', run: () => window.openQuickAccessMenu() },
     { id: 'new-tab', label: 'Yeni Sekme', desc: 'Yeni bir sekme aç', shortcut: 'Ctrl+T', run: () => createNewTab(ankaHomeUrl()) },
     { id: 'incognito', label: 'Gizli Sekme', desc: 'Yeni gizli sekme aç', shortcut: 'Ctrl+Shift+N', run: () => createIncognitoTab() },
     { id: 'close-tab', label: 'Sekmeyi Kapat', desc: 'Aktif sekmeyi kapat', shortcut: 'Ctrl+W', run: () => { if (activeTabId) closeTab(activeTabId); } },
@@ -3798,15 +4411,12 @@ const ANKA_COMMANDS = [
     { id: 'bookmark', label: 'Yer İmi Ekle / Kaldır', desc: 'Sayfayı yer imlerine ekle veya kaldır', shortcut: 'Ctrl+D', run: () => toggleBookmark() },
     { id: 'bookmarks', label: 'Yer İmlerini Aç', desc: 'Yer imlerini görüntüle', shortcut: 'Ctrl+Shift+B', run: () => openBookmarksPanel() },
     { id: 'history', label: 'Geçmiş', desc: 'Gezinti geçmişini aç', shortcut: 'Ctrl+H', run: () => { if (typeof window.__ankaOpenHistory === 'function') window.__ankaOpenHistory(); else openHistoryPanel(); } },
+    { id: 'tab-groups', label: 'Sekme Grubu Yöneticisi', desc: 'Grupları oluştur, yeniden adlandır, düzenle veya kapat', run: () => window.__ankaManageTabGroups() },
     { id: 'settings', label: 'Ayarlar', desc: 'Ayarlar panelini aç', shortcut: 'Ctrl+,', run: () => { if (typeof toggleSettings === 'function') toggleSettings(); } },
-    { id: 'downloads', label: 'İndirilenler', desc: 'İndirilenler panelini aç', run: () => { if (typeof window.openAnkaPage === 'function') window.openAnkaPage('downloads'); } },
+    { id: 'downloads', label: 'İndirilenler', desc: 'İndirilenler panelini aç', shortcut: 'Ctrl+J', run: () => { if (typeof window.openAnkaPage === 'function') window.openAnkaPage('downloads'); } },
     { id: 'help', label: 'Yardım', desc: 'Yardım panelini aç', shortcut: 'F1', run: () => { if (typeof window.openAnkaPage === 'function') window.openAnkaPage('help'); else if (typeof toggleHelp === 'function') toggleHelp(); } },
-    { id: 'devtools-detach', label: 'DevTools — Ayrı Pencere', desc: 'Geliştirici araçlarını ayrı pencerede aç', shortcut: 'Ctrl+Shift+I', run: () => openDevToolsDetached(ankaActiveView()) },
-    { id: 'devtools-right', label: 'DevTools — Sağ Panel', desc: 'Sağ panelde geliştirici araçları', run: () => openDevToolsDocked(ankaActiveView(), 'right') },
-    { id: 'devtools-left', label: 'DevTools — Sol Panel', desc: 'Sol panelde geliştirici araçları', run: () => openDevToolsDocked(ankaActiveView(), 'left') },
-    { id: 'devtools-bottom', label: 'DevTools — Alt Panel', desc: 'Alt panelde geliştirici araçları', run: () => openDevToolsDocked(ankaActiveView(), 'bottom') },
-    { id: 'devtools-undocked', label: 'DevTools — Undocked', desc: 'Bağımsız DevTools penceresi', run: () => openDevToolsDocked(ankaActiveView(), 'undocked') },
-    { id: 'devtools-source', label: 'DevTools — HTML Kaynağı Yanda', desc: 'Yanda HTML kaynağını görüntüle', shortcut: 'Ctrl+U', run: () => toggleSideViewSource(ankaActiveView()) },
+    { id: 'devtools-toggle', label: 'DevTools Aç / Kapat', desc: 'Geliştirici araçlarını sağ panelde aç veya kapat', shortcut: 'Ctrl+Shift+I', run: () => ankaOpenDevTools(ankaActiveView()) },
+    { id: 'devtools-source', label: 'HTML İnceleyicisi — Sağ Panel', desc: 'Sayfanın HTML kaynağını sağ panelde göster', shortcut: 'Ctrl+U', run: () => toggleSideViewSource(ankaActiveView(), 'right') },
     { id: 'devtools-close', label: 'DevTools — Kapat', desc: 'DevTools penceresini kapat', run: () => closeDevTools(ankaActiveView()) },
     { id: 'devtools-menu', label: 'DevTools — Tüm Seçenekler', desc: 'Tüm DevTools seçenekleri menüsü', run: () => openDevToolsMenu(ankaActiveView()) },
     { id: 'zoom-in', label: 'Yakınlaştır', desc: 'Sayfayı yakınlaştır', shortcut: 'Ctrl++', run: () => ankaZoom(0.5) },
@@ -3937,7 +4547,279 @@ function closeCommandPalette() {
     ankaCmdState = null;
 }
 
+function ankaCqaEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+let ankaCqaHideTimer = 0;
+let ankaCqaActiveItem = null;
+let ankaCqaTouchMode = false;
+try { ankaCqaTouchMode = window.matchMedia('(hover: none)').matches; } catch (e) {}
+
+function ankaCqaCloseSubmenu() {
+    const sub = document.getElementById('anka-cqa-submenu');
+    if (sub) sub.remove();
+    if (ankaCqaActiveItem) ankaCqaActiveItem.classList.remove('active');
+    ankaCqaActiveItem = null;
+    clearTimeout(ankaCqaHideTimer);
+}
+
+function ankaCqaScheduleHide() {
+    clearTimeout(ankaCqaHideTimer);
+    ankaCqaHideTimer = setTimeout(ankaCqaCloseSubmenu, 220);
+}
+
+function ankaCqaCancelHide() {
+    clearTimeout(ankaCqaHideTimer);
+}
+
+function ankaCqaPositionSubmenu(item, sub) {
+    const panel = document.querySelector('.anka-cqa-panel');
+    if (!panel) return;
+    const itemRect = item.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const subWidth = sub.offsetWidth || 400;
+    const subHeight = sub.offsetHeight || 300;
+    let left = panelRect.right + 6;
+    if (left + subWidth > window.innerWidth - 12) left = panelRect.left - subWidth - 6;
+    if (left < 12) left = 12;
+    let top = itemRect.top;
+    if (top + subHeight > window.innerHeight - 12) top = Math.max(12, window.innerHeight - subHeight - 12);
+    sub.style.left = left + 'px';
+    sub.style.top = top + 'px';
+}
+
+function ankaCqaBuildSubmenu(type, item) {
+    ankaCqaCloseSubmenu();
+    item.classList.add('active');
+    ankaCqaActiveItem = item;
+    const sub = ankaMk('div', { id: 'anka-cqa-submenu', className: 'anka-cqa-submenu' });
+    let title = '';
+    let listHtml = '';
+    let footLabel = '';
+    let footAction = null;
+
+    if (type === 'history') {
+        title = 'Geçmiş';
+        const list = ankaHistory().slice(0, 12);
+        if (!list.length) listHtml = '<div class="anka-cqa-submenu-empty">Henüz geçmiş yok.</div>';
+        else listHtml = list.map((h) => {
+            const host = ankaHostLabel(h.url) || h.url;
+            const t = h.title || host;
+            return `<button class="anka-cqa-submenu-item" data-url="${ankaCqaEsc(h.url)}"><img class="anka-cqa-submenu-fav" src="${ankaCqaEsc(getFaviconUrl(h.url))}" alt=""><div class="anka-cqa-submenu-main"><strong>${ankaCqaEsc(t)}</strong><small>${ankaCqaEsc(host)}</small></div></button>`;
+        }).join('');
+        footLabel = 'Tüm geçmişi gör';
+        footAction = () => { closeQuickAccessMenu(); openHistoryPanel(); };
+    } else if (type === 'bookmarks') {
+        title = 'Yer işaretleri';
+        const list = ankaBookmarks().slice(0, 12);
+        if (!list.length) listHtml = '<div class="anka-cqa-submenu-empty">Henüz yer işareti yok.</div>';
+        else listHtml = list.map((b) => {
+            const host = ankaHostLabel(b.url) || b.url;
+            const t = b.title || host;
+            return `<button class="anka-cqa-submenu-item" data-url="${ankaCqaEsc(b.url)}"><img class="anka-cqa-submenu-fav" src="${ankaCqaEsc(getFaviconUrl(b.url))}" alt=""><div class="anka-cqa-submenu-main"><strong>${ankaCqaEsc(t)}</strong><small>${ankaCqaEsc(host)}</small></div></button>`;
+        }).join('');
+        footLabel = 'Tüm yer işaretleri';
+        footAction = () => { closeQuickAccessMenu(); openBookmarksPanel(); };
+    } else if (type === 'passwords') {
+        title = 'Şifreler ve otomatik doldurma';
+        listHtml = '<div class="anka-cqa-submenu-empty">Yükleniyor…</div>';
+        footLabel = 'Parola yöneticisi';
+        footAction = () => { closeQuickAccessMenu(); if (typeof window.openPasswordManager === 'function') window.openPasswordManager(); };
+    } else if (type === 'tabgroups') {
+        title = 'Sekme grupları';
+        const groups = window.__ankaGetTabGroups ? window.__ankaGetTabGroups() : [];
+        if (!groups.length) listHtml = '<div class="anka-cqa-submenu-empty">Henüz sekme grubu yok.</div>';
+        else listHtml = groups.slice(0, 12).map((g) => `<button class="anka-cqa-submenu-item" data-group="${ankaCqaEsc(g.name)}"><span class="anka-cqa-submenu-fav" style="background:var(--anka-accent)"></span><div class="anka-cqa-submenu-main"><strong>${ankaCqaEsc(g.name)}</strong><small>${g.tabs.length} sekme</small></div></button>`).join('');
+        footLabel = 'Grupları yönet';
+        footAction = () => { closeQuickAccessMenu(); if (typeof window.__ankaManageTabGroups === 'function') window.__ankaManageTabGroups(); };
+    } else if (type === 'downloads') {
+        title = 'İndirilenler';
+        listHtml = '<div class="anka-cqa-submenu-empty">Yükleniyor…</div>';
+        footLabel = 'Tüm indirilenler';
+        footAction = () => { closeQuickAccessMenu(); if (typeof window.openAnkaPage === 'function') window.openAnkaPage('downloads'); };
+    }
+
+    sub.innerHTML = `<div class="anka-cqa-submenu-header"><span>${ankaCqaEsc(title)}</span></div><div class="anka-cqa-submenu-list">${listHtml}</div>`;
+    if (footAction) {
+        const foot = ankaMk('div', { className: 'anka-cqa-submenu-foot' });
+        const btn = ankaMk('button', { type: 'button', text: footLabel });
+        btn.addEventListener('click', footAction);
+        foot.append(btn);
+        sub.append(foot);
+    }
+
+    sub.addEventListener('mouseenter', ankaCqaCancelHide);
+    sub.addEventListener('mouseleave', (e) => {
+        const to = e.relatedTarget;
+        if (to && to.closest && to.closest('.anka-cqa-item.has-submenu')) return;
+        ankaCqaScheduleHide();
+    });
+
+    sub.addEventListener('click', (e) => {
+        const btn = e.target.closest('.anka-cqa-submenu-item');
+        if (!btn) return;
+        const url = btn.getAttribute('data-url');
+        const group = btn.getAttribute('data-group');
+        if (url) { closeQuickAccessMenu(); createNewTab(url); }
+        else if (group) {
+            const groups = window.__ankaGetTabGroups ? window.__ankaGetTabGroups() : [];
+            const g = groups.find((x) => x.name === group);
+            closeQuickAccessMenu();
+            if (g && g.tabs[0]) switchTab(g.tabs[0].id);
+        }
+    });
+
+    document.body.append(sub);
+    requestAnimationFrame(() => {
+        ankaCqaPositionSubmenu(item, sub);
+        sub.classList.add('show');
+    });
+
+    if (type === 'passwords' && ankaBridgeApi()) {
+        const bridge = ankaBridgeApi();
+        bridge.invoke('password-manager:list').then((result) => {
+            const listEl = sub.querySelector('.anka-cqa-submenu-list');
+            if (!listEl || !sub.isConnected) return;
+            if (!result || !result.ok || !Array.isArray(result.entries) || !result.entries.length) {
+                listEl.innerHTML = '<div class="anka-cqa-submenu-empty">Kayıtlı şifre yok.</div>';
+                return;
+            }
+            listEl.innerHTML = result.entries.slice(0, 12).map((entry) => {
+                const host = ankaHostLabel(entry.origin) || entry.origin;
+                return `<button class="anka-cqa-submenu-item" data-pw="1"><img class="anka-cqa-submenu-fav" src="${ankaCqaEsc(getFaviconUrl(entry.origin))}" alt=""><div class="anka-cqa-submenu-main"><strong>${ankaCqaEsc(host)}</strong><small>${ankaCqaEsc(entry.username)}</small></div></button>`;
+            }).join('');
+            listEl.querySelectorAll('[data-pw]').forEach((b) => b.addEventListener('click', () => { closeQuickAccessMenu(); if (typeof window.openPasswordManager === 'function') window.openPasswordManager(); }));
+            ankaCqaPositionSubmenu(item, sub);
+        }).catch(() => {
+            const listEl = sub.querySelector('.anka-cqa-submenu-list');
+            if (listEl) listEl.innerHTML = '<div class="anka-cqa-submenu-empty">Şifreler yüklenemedi.</div>';
+        });
+    } else if (type === 'downloads' && ankaBridgeApi()) {
+        const bridge = ankaBridgeApi();
+        bridge.invoke('get-downloads-list').then((list) => {
+            const listEl = sub.querySelector('.anka-cqa-submenu-list');
+            if (!listEl || !sub.isConnected) return;
+            if (!Array.isArray(list) || !list.length) {
+                listEl.innerHTML = '<div class="anka-cqa-submenu-empty">Henüz indirme yok.</div>';
+                return;
+            }
+            listEl.innerHTML = list.slice(0, 12).map((d) => {
+                const state = d.state === 'completed' ? 'Tamamlandı' : d.state === 'progressing' ? 'İndiriliyor' : 'İptal edildi';
+                return `<button class="anka-cqa-submenu-item" data-dl="${ankaCqaEsc(String(d.id))}"><span class="anka-cqa-submenu-fav" style="background:var(--anka-accent)"></span><div class="anka-cqa-submenu-main"><strong>${ankaCqaEsc(d.fileName)}</strong><small>${state}</small></div></button>`;
+            }).join('');
+            listEl.querySelectorAll('[data-dl]').forEach((b) => b.addEventListener('click', () => {
+                const id = b.getAttribute('data-dl');
+                closeQuickAccessMenu();
+                if (bridge && typeof bridge.invoke === 'function') bridge.invoke('open-download-item', id).catch(() => {});
+            }));
+            ankaCqaPositionSubmenu(item, sub);
+        }).catch(() => {
+            const listEl = sub.querySelector('.anka-cqa-submenu-list');
+            if (listEl) listEl.innerHTML = '<div class="anka-cqa-submenu-empty">İndirilenler yüklenemedi.</div>';
+        });
+    }
+}
+
+function closeQuickAccessMenu() {
+    ankaCqaCloseSubmenu();
+    const root = document.getElementById('anka-quick-access');
+    if (!root) return false;
+    root.classList.remove('open');
+    setTimeout(() => { if (root.parentNode) root.remove(); }, 200);
+    return true;
+}
+window.__ankaCloseQuickAccess = closeQuickAccessMenu;
+
+window.openQuickAccessMenu = function () {
+    if (document.getElementById('anka-quick-access')) { closeQuickAccessMenu(); return; }
+    const overlay = ankaMk('div', { id: 'anka-quick-access', className: 'anka-cqa-overlay' });
+    const panel = ankaMk('aside', { className: 'anka-cqa-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Hızlı Erişim' });
+    const header = ankaMk('div', { className: 'anka-cqa-header' },
+        ankaMk('img', { className: 'anka-cqa-logo', src: window.ankaGetLogo ? window.ankaGetLogo() : ANKA_LOGO, alt: '' }),
+        ankaMk('span', { className: 'anka-cqa-title', text: 'Anka Web' })
+    );
+    panel.append(header);
+
+    const openWin = (incog) => {
+        closeQuickAccessMenu();
+        const bridge = ankaBridgeApi();
+        if (bridge && typeof bridge.invoke === 'function') bridge.invoke('open-browser-window', incog ? { incognito: true } : { profileId: 'default' }).catch(() => {});
+        else if (incog) createIncognitoTab();
+        else showNotification('Yeni pencere bu ortamda desteklenmiyor.');
+    };
+
+    const items = [
+        { icon: '＋', label: 'Yeni sekme', run: () => { closeQuickAccessMenu(); createNewTab(ankaHomeUrl()); } },
+        { icon: '❐', label: 'Yeni pencere', run: () => openWin(false) },
+        { icon: '◐', label: 'Gizli pencere', run: () => openWin(true) },
+        '---',
+        { icon: '◷', label: 'Geçmiş', submenuType: 'history' },
+        { icon: '★', label: 'Yer işaretleri ve listeler', submenuType: 'bookmarks' },
+        { icon: '⚿', label: 'Şifreler ve otomatik doldurma', submenuType: 'passwords' },
+        { icon: '◫', label: 'Sekme grupları', submenuType: 'tabgroups' },
+        { icon: '↓', label: 'İndirilenler', submenuType: 'downloads' },
+        '---',
+        { icon: '⌕', label: 'Sekme ara', run: () => { closeQuickAccessMenu(); openTabSearch(); } },
+        { icon: '◧', label: 'Oturumlar', run: () => { closeQuickAccessMenu(); openSessionManager(); } },
+        { icon: '♪', label: 'Medya denetimi', run: () => { closeQuickAccessMenu(); openMediaCenter(); } },
+        { icon: '◇', label: 'Okuma modu', run: () => { closeQuickAccessMenu(); toggleReaderMode(ankaActiveView()); } },
+        { icon: '◈', label: 'Karanlık mod', run: () => { closeQuickAccessMenu(); toggleDarkMode(ankaActiveView()); } },
+        { icon: '⌦', label: 'Verileri temizle', run: () => { closeQuickAccessMenu(); clearBrowsingData(); } },
+        '---',
+        { icon: '⚙', label: 'Ayarlar', run: () => { closeQuickAccessMenu(); if (typeof toggleSettings === 'function') toggleSettings(); } },
+        { icon: '?', label: 'Yardım', run: () => { closeQuickAccessMenu(); if (typeof window.openAnkaPage === 'function') window.openAnkaPage('help'); } }
+    ];
+
+    const fullActions = {
+        history: () => openHistoryPanel(),
+        bookmarks: () => openBookmarksPanel(),
+        passwords: () => { if (typeof window.openPasswordManager === 'function') window.openPasswordManager(); },
+        tabgroups: () => { if (typeof window.__ankaManageTabGroups === 'function') window.__ankaManageTabGroups(); },
+        downloads: () => { if (typeof window.openAnkaPage === 'function') window.openAnkaPage('downloads'); }
+    };
+
+    items.forEach((item) => {
+        if (item === '---') { panel.append(ankaMk('div', { className: 'anka-cqa-sep' })); return; }
+        const row = ankaMk('button', { type: 'button', className: 'anka-cqa-item' });
+        if (item.submenuType) row.classList.add('has-submenu');
+        row.append(ankaMk('span', { className: 'anka-cqa-icon', text: item.icon }));
+        row.append(ankaMk('span', { className: 'anka-cqa-label', text: item.label }));
+        if (item.submenuType) {
+            row.addEventListener('mouseenter', () => {
+                if (ankaCqaTouchMode) return;
+                ankaCqaCancelHide();
+                if (ankaCqaActiveItem !== row) ankaCqaBuildSubmenu(item.submenuType, row);
+            });
+            row.addEventListener('mouseleave', (e) => {
+                if (ankaCqaTouchMode) return;
+                const to = e.relatedTarget;
+                if (to && to.closest && to.closest('#anka-cqa-submenu')) return;
+                ankaCqaScheduleHide();
+            });
+            row.addEventListener('click', () => {
+                if (ankaCqaTouchMode && ankaCqaActiveItem !== row) {
+                    ankaCqaBuildSubmenu(item.submenuType, row);
+                    return;
+                }
+                closeQuickAccessMenu();
+                const fn = fullActions[item.submenuType];
+                if (fn) fn();
+            });
+        } else if (item.run) {
+            row.addEventListener('click', item.run);
+        }
+        panel.append(row);
+    });
+
+    overlay.append(panel);
+    overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) closeQuickAccessMenu(); });
+    document.body.append(overlay);
+    requestAnimationFrame(() => overlay.classList.add('open'));
+};
+
 function createNewTab(url = 'newtab.html', opts = {}) {
+    opts = { ...opts, incognito: !!opts.incognito || !!window.ANKA_PRIVATE_WINDOW };
     const tabBar = ankaById('tab-bar');
     if (!tabBar || !ankaById('wv-container')) return null;
     if (tabBar.querySelectorAll('.tab').length >= getMaxTabs()) {
@@ -3949,7 +4831,12 @@ function createNewTab(url = 'newtab.html', opts = {}) {
     const pageNames = { ayarlar: 'settings', yardım: 'help', yardim: 'help', indirilenler: 'downloads', geçmiş: 'history', gecmis: 'history' };
     const internal = pageMatch ? pageNames[pageMatch[1].toLowerCase()] || pageMatch[1].toLowerCase() : '';
     const isNewTab = !url || url === 'newtab.html' || ankaIsNewTabUrl(url);
-    const secureUrl = internal ? 'anka://' + internal : isNewTab ? getNewTabUrl() : ankaResolveTarget(url);
+    let secureUrl = internal ? 'anka://' + internal : isNewTab ? getNewTabUrl() : ankaResolveTarget(url);
+    if (isNewTab && opts.incognito && /^file:/i.test(secureUrl)) {
+        const privateStartUrl = new URL(secureUrl);
+        privateStartUrl.searchParams.set('incognito', '1');
+        secureUrl = privateStartUrl.href;
+    }
     if (!secureUrl) return null;
 
     const isBlank = isNewTab || secureUrl === 'about:blank' || secureUrl.startsWith('file:');
@@ -3957,7 +4844,7 @@ function createNewTab(url = 'newtab.html', opts = {}) {
     const id = 'tab-' + Date.now() + '-' + (++ankaTabSeq);
     const st = ankaCreateTabEntry(id, {
         title: internalTitles[internal] || (isBlank ? 'Yeni Sekme' : (opts.lazy ? ankaHostLabel(secureUrl) : 'Yükleniyor...')),
-        icon: isBlank || internal ? ANKA_LOGO : getFaviconUrl(secureUrl, opts.incognito),
+        icon: isBlank || internal ? ANKA_LOGO : getFaviconUrl(secureUrl),
         url: secureUrl,
         incognito: opts.incognito,
         internal
@@ -4047,20 +4934,29 @@ function ankaTabIdsInOrder() {
 }
 
 function closeOtherTabs(keepId) {
-    ankaTabIdsInOrder().forEach((tid) => {
+    const ids = ankaTabIdsInOrder().filter((tid) => {
         const st = ankaTabs.get(tid);
-        if (tid !== keepId && !(st && st.pinned)) closeTab(tid);
+        return tid !== keepId && !(st && st.pinned);
     });
+    closeTabBatch(ids, 'Diğer sekmeler kapatılacak. Devam edilsin mi?');
 }
 
 function closeTabsToRight(targetId) {
     const ids = ankaTabIdsInOrder();
     const from = ids.indexOf(targetId);
     if (from < 0) return;
-    ids.slice(from + 1).forEach((tid) => {
+    const targets = ids.slice(from + 1).filter((tid) => {
         const st = ankaTabs.get(tid);
-        if (!(st && st.pinned)) closeTab(tid);
+        return !(st && st.pinned);
     });
+    closeTabBatch(targets, 'Sağdaki sekmeler kapatılacak. Devam edilsin mi?');
+}
+
+function closeTabBatch(ids, prompt) {
+    if (!ids.length) return;
+    if (getSetting('confirm-close-tabs', 'false') === 'true' &&
+        !window.confirm(prompt || ids.length + ' sekme kapatılacak. Devam edilsin mi?')) return;
+    ids.forEach((id) => closeTab(id, null, true));
 }
 
 function ankaInspectTab(st, useDevTools) {
@@ -4090,12 +4986,7 @@ function ankaShowTabMenu(id, x, y) {
             label: 'Geliştirici Araçları',
             submenu: [
                 { label: 'DevTools Aç / Kapat', shortcut: 'F12', action: () => ankaInspectTab(st, true) },
-                { label: 'Ayrı Pencerede Aç', action: () => openDevToolsDetached(st.vw || ankaWake(st)) },
-                { label: 'Sağ Panelde Aç', action: () => openDevToolsDocked(st.vw || ankaWake(st), 'right') },
-                { label: 'Sol Panelde Aç', action: () => openDevToolsDocked(st.vw || ankaWake(st), 'left') },
-                { label: 'Alt Panelde Aç', action: () => openDevToolsDocked(st.vw || ankaWake(st), 'bottom') },
-                '---',
-                { label: 'HTML Kaynağını Yanda Gör', action: () => ankaInspectTab(st, false) },
+                { label: 'Sağ HTML İnceleyicisi', action: () => toggleSideViewSource(st.vw || ankaWake(st), 'right') },
                 { label: 'DevTools Kapat', danger: true, action: () => closeDevTools(st.vw) }
             ]
         },
@@ -4111,24 +5002,302 @@ function ankaShowTabMenu(id, x, y) {
     ]);
 }
 
-function ankaSetTabGroup(st, value) {
+async function ankaSetTabGroup(st, value) {
     if (!st) return;
     let name = value;
-    if (name === undefined) name = window.prompt('Sekme grubu adı (boş bırakarak grubu kaldırın):', st.group || '');
+    if (name === undefined) {
+        if (typeof window.ankaPrompt !== 'function') {
+            showNotification('Sekme grubu adı penceresi açılamadı.');
+            return;
+        }
+        name = await window.ankaPrompt('Sekme grubu adı (boş bırakarak grubu kaldırın):', {
+            title: 'Sekme Grubu',
+            value: st.group || '',
+            inputLabel: 'Sekme grubu adı',
+            maxLength: 32
+        });
+    }
     if (name === null) return;
     name = String(name).trim().slice(0, 32);
     st.group = name;
-    st.tab.dataset.group = name;
-    st.tab.style.borderTop = '';
+    ankaRenderTabGroup(st);
+    ankaPersistSession();
+}
+
+function ankaRenderTabGroup(st) {
+    const name = st.group;
+    st.groupEl.textContent = name;
+    st.groupEl.hidden = !name;
     st.tab.title = (name ? '[' + name + '] ' : '') + (st.title || '');
     if (name) {
         let hash = 0;
         for (let index = 0; index < name.length; index += 1) hash = (hash * 31 + name.charCodeAt(index)) | 0;
         const colors = ['#60a5fa', '#34d399', '#fbbf24', '#c084fc', '#fb7185', '#22d3ee'];
-        st.tab.style.borderTop = '2px solid ' + colors[Math.abs(hash) % colors.length];
+        st.tab.dataset.group = name;
+        st.tab.style.setProperty('--tab-group-color', colors[Math.abs(hash) % colors.length]);
+        const bar = ankaById('tab-bar');
+        if (bar) {
+            const members = Array.from(bar.children).filter((tab) =>
+                tab.classList.contains('tab') &&
+                tab.dataset.group === name &&
+                tab.classList.contains('pinned') === st.tab.classList.contains('pinned')
+            );
+            if (members.length > 1) {
+                const insertBefore = members[members.length - 1].nextSibling;
+                const group = document.createDocumentFragment();
+                members.forEach((tab) => group.appendChild(tab));
+                bar.insertBefore(group, insertBefore);
+            }
+        }
+    } else {
+        delete st.tab.dataset.group;
+        st.tab.style.removeProperty('--tab-group-color');
     }
-    ankaPersistSession();
 }
+
+window.__ankaGetTabGroups = function () {
+    const groups = new Map();
+    for (const st of ankaTabs.values()) {
+        if (!st.group) continue;
+        if (!groups.has(st.group)) groups.set(st.group, []);
+        groups.get(st.group).push({
+            id: st.id,
+            title: st.title || st.url || 'Yeni Sekme'
+        });
+    }
+    return Array.from(groups, ([name, tabs]) => ({ name, tabs }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+};
+
+window.__ankaManageTabGroups = function () {
+    let panel = document.getElementById('anka-group-manager');
+    if (!panel) {
+        const style = document.createElement('style');
+        style.id = 'anka-group-manager-style';
+        style.textContent = '#anka-group-manager{position:fixed;inset:0;z-index:2147482000;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.68);color:var(--text-color,#f4f4f5);font:14px system-ui}#anka-group-manager[hidden]{display:none}#anka-group-manager .agm-card{display:flex;flex-direction:column;width:min(680px,100%);max-height:90vh;padding:20px;border:1px solid var(--border-color,#333);border-radius:16px;background:var(--bg-secondary,#18181b);box-shadow:0 20px 60px #0009}#anka-group-manager .agm-head,#anka-group-manager .agm-row,#anka-group-manager .agm-actions{display:flex;align-items:center;gap:8px}#anka-group-manager .agm-head{justify-content:space-between}#anka-group-manager .agm-head h2{margin:0;font-size:19px}#anka-group-manager .agm-list{min-height:0;overflow:auto;margin:12px 0}#anka-group-manager .agm-row{justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-color,#333)}#anka-group-manager .agm-info{display:flex;flex-direction:column;min-width:0;gap:4px}#anka-group-manager .agm-info strong{overflow-wrap:anywhere}#anka-group-manager .agm-info small{color:var(--text-secondary,#aaa)}#anka-group-manager .agm-actions{justify-content:flex-end;flex-wrap:wrap}#anka-group-manager button{min-height:38px;padding:6px 10px;border:1px solid var(--border-color,#444);border-radius:8px;background:var(--bg-tertiary,#292930);color:inherit;font:inherit;cursor:pointer}#anka-group-manager button:hover{border-color:var(--accent,#ff4757)}#anka-group-manager .agm-primary{background:var(--accent,#ff4757);border-color:var(--accent,#ff4757);color:#fff}#anka-group-manager .agm-danger{color:#f28b82}#anka-group-manager .agm-empty{padding:24px;text-align:center;color:var(--text-secondary,#aaa)}@media(max-width:600px){#anka-group-manager .agm-card{padding:14px}#anka-group-manager .agm-row{align-items:flex-start;flex-direction:column}}';
+        document.head.appendChild(style);
+        panel = document.createElement('section');
+        panel.id = 'anka-group-manager';
+        panel.hidden = true;
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-modal', 'true');
+        panel.setAttribute('aria-label', 'Sekme Grubu Yöneticisi');
+        document.body.appendChild(panel);
+        panel.addEventListener('click', (event) => {
+            if (event.target === panel) panel.hidden = true;
+        });
+        panel.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') panel.hidden = true;
+        });
+    }
+    panel.replaceChildren();
+    const card = document.createElement('div');
+    card.className = 'agm-card';
+    const header = document.createElement('div');
+    header.className = 'agm-head';
+    const title = document.createElement('h2');
+    title.textContent = 'Sekme Grupları';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = 'Kapat';
+    close.addEventListener('click', () => { panel.hidden = true; });
+    header.append(title, close);
+    const description = document.createElement('p');
+    description.textContent = 'Gruplar sekmeleri düzenler. Bir grubu açabilir, yeniden adlandırabilir, sekme ekleyebilir veya grubu kaldırabilirsiniz.';
+    const create = document.createElement('button');
+    create.type = 'button';
+    create.className = 'agm-primary';
+    create.textContent = 'Aktif sekmeden grup oluştur';
+    create.addEventListener('click', async () => {
+        const active = ankaTabs.get(activeTabId);
+        if (!active) {
+            showNotification('Önce bir sekme açın.');
+            return;
+        }
+        const value = typeof window.ankaPrompt === 'function'
+            ? await window.ankaPrompt('Yeni grup için bir ad girin:', {
+                title: 'Sekme Grubu Oluştur',
+                inputLabel: 'Grup adı',
+                maxLength: 32
+            })
+            : null;
+        const name = String(value || '').trim().slice(0, 32);
+        if (!name) return;
+        await ankaSetTabGroup(active, name);
+        window.__ankaManageTabGroups();
+    });
+    const list = document.createElement('div');
+    list.className = 'agm-list';
+    const groups = window.__ankaGetTabGroups();
+    if (!groups.length) {
+        const empty = document.createElement('div');
+        empty.className = 'agm-empty';
+        empty.textContent = 'Henüz grup yok. Aktif sekmeden ilk grubunuzu oluşturun.';
+        list.appendChild(empty);
+    }
+    groups.forEach((group) => {
+        const row = document.createElement('div');
+        row.className = 'agm-row';
+        const info = document.createElement('div');
+        info.className = 'agm-info';
+        const name = document.createElement('strong');
+        name.textContent = group.name;
+        const detail = document.createElement('small');
+        detail.textContent = group.tabs.length + ' sekme';
+        info.append(name, detail);
+        const actions = document.createElement('div');
+        actions.className = 'agm-actions';
+        const addActive = document.createElement('button');
+        addActive.type = 'button';
+        addActive.textContent = 'Aktif sekmeyi ekle';
+        addActive.addEventListener('click', async () => {
+            const active = ankaTabs.get(activeTabId);
+            if (!active) {
+                showNotification('Önce bir sekme açın.');
+                return;
+            }
+            await ankaSetTabGroup(active, group.name);
+            window.__ankaManageTabGroups();
+        });
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.textContent = 'Grubu aç';
+        open.addEventListener('click', () => {
+            const first = ankaTabs.get(group.tabs[0].id);
+            if (first) switchTab(first.id);
+            panel.hidden = true;
+        });
+        const rename = document.createElement('button');
+        rename.type = 'button';
+        rename.textContent = 'Yeniden adlandır';
+        rename.addEventListener('click', async () => {
+            const value = typeof window.ankaPrompt === 'function'
+                ? await window.ankaPrompt('Grup için yeni bir ad girin:', {
+                    title: 'Grubu Yeniden Adlandır',
+                    value: group.name,
+                    inputLabel: 'Grup adı',
+                    maxLength: 32
+                })
+                : null;
+            const nextName = String(value || '').trim().slice(0, 32);
+            if (!nextName || nextName === group.name) return;
+            for (const tab of group.tabs) {
+                const state = ankaTabs.get(tab.id);
+                if (state) await ankaSetTabGroup(state, nextName);
+            }
+            window.__ankaManageTabGroups();
+        });
+        const ungroup = document.createElement('button');
+        ungroup.type = 'button';
+        ungroup.textContent = 'Grubu kaldır';
+        ungroup.addEventListener('click', async () => {
+            for (const tab of group.tabs) {
+                const state = ankaTabs.get(tab.id);
+                if (state) await ankaSetTabGroup(state, '');
+            }
+            window.__ankaManageTabGroups();
+        });
+        const closeGroup = document.createElement('button');
+        closeGroup.type = 'button';
+        closeGroup.className = 'agm-danger';
+        closeGroup.textContent = 'Grup sekmelerini kapat';
+        closeGroup.addEventListener('click', () => {
+            if (!window.confirm('"' + group.name + '" grubundaki ' + group.tabs.length + ' sekme kapatılsın mı?')) return;
+            group.tabs.forEach((tab) => closeTab(tab.id, null, true));
+            window.__ankaManageTabGroups();
+        });
+        actions.append(addActive, open, rename, ungroup, closeGroup);
+        row.append(info, actions);
+        list.appendChild(row);
+    });
+    card.append(header, description, create, list);
+    panel.appendChild(card);
+    panel.hidden = false;
+    close.focus();
+};
+
+window.__ankaActivateTab = function (id) {
+    if (ankaTabs.has(id)) switchTab(id);
+};
+
+function ankaSetupVerticalTabs() {
+    const bar = ankaById('tab-bar');
+    const list = ankaById('vt-tabs');
+    if (!bar || !list || list.__ankaReady) return;
+    list.__ankaReady = true;
+    let renderFrame = 0;
+    const render = () => {
+        renderFrame = 0;
+        const fragment = document.createDocumentFragment();
+        bar.querySelectorAll('.tab').forEach((tab) => {
+            const id = tab.id.replace(/^btn-/, '');
+            if (!id) return;
+            const row = ankaMk('div', {
+                className: 'vt-tab' + (tab.classList.contains('active') ? ' active' : ''),
+                role: 'tab',
+                tabIndex: 0,
+                'aria-selected': String(tab.classList.contains('active')),
+                'aria-label': tab.querySelector('.tab-title')?.textContent || 'Yeni Sekme'
+            });
+            row.dataset.tabId = id;
+            const icon = tab.querySelector('.tab-icon');
+            if (icon && icon.getAttribute('src')) {
+                row.appendChild(ankaMk('img', { className: 'vt-tab-icon', alt: '', src: icon.getAttribute('src') }));
+            }
+            if (tab.dataset.group) row.appendChild(ankaMk('span', { className: 'vt-tab-group-dot', 'aria-hidden': 'true' }));
+            row.appendChild(ankaMk('span', {
+                className: 'vt-tab-title',
+                text: tab.querySelector('.tab-title')?.textContent || 'Yeni Sekme'
+            }));
+            const memory = tab.querySelector('.tab-memory');
+            if (memory && memory.textContent) {
+                row.appendChild(ankaMk('span', { className: 'vt-tab-memory', text: memory.textContent }));
+            }
+            const close = ankaMk('button', {
+                className: 'vt-tab-close',
+                type: 'button',
+                title: 'Sekmeyi kapat',
+                'aria-label': 'Sekmeyi kapat'
+            }, '×');
+            row.appendChild(close);
+            fragment.appendChild(row);
+        });
+        list.replaceChildren(fragment);
+    };
+    const scheduleRender = () => {
+        if (!renderFrame) renderFrame = requestAnimationFrame(render);
+    };
+    const observer = new MutationObserver(scheduleRender);
+    observer.observe(bar, {
+        attributes: true,
+        attributeFilter: ['class', 'data-group', 'src'],
+        childList: true,
+        characterData: true,
+        subtree: true
+    });
+    list.addEventListener('click', (event) => {
+        const row = event.target.closest('.vt-tab');
+        if (!row) return;
+        const id = row.dataset.tabId;
+        if (event.target.closest('.vt-tab-close')) {
+            const tab = ankaById('btn-' + id);
+            const close = tab && tab.querySelector('.close-tab');
+            if (close) close.click();
+            return;
+        }
+        switchTab(id);
+    });
+    list.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const row = event.target.closest('.vt-tab');
+        if (!row || event.target.closest('.vt-tab-close')) return;
+        event.preventDefault();
+        switchTab(row.dataset.tabId);
+    });
+    scheduleRender();
+}
+
+window.addEventListener('DOMContentLoaded', ankaSetupVerticalTabs, { once: true });
 
 function ankaSetupTabBar() {
     const bar = ankaById('tab-bar');
@@ -4143,6 +5312,8 @@ function ankaSetupTabBar() {
         tab.classList.add('dragging');
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', 'anka-tab:' + tab.id);
+        const st = ankaTabs.get(tab.id.replace(/^btn-/, ''));
+        if (st && /^https?:/i.test(st.url)) e.dataTransfer.setData('text/uri-list', st.url);
     });
 
     bar.addEventListener('dragover', (e) => {
@@ -4170,6 +5341,24 @@ function ankaSetupTabBar() {
 
     bar.addEventListener('drop', (e) => {
         if (dragEl) return;
+        const crossWindowData = e.dataTransfer && e.dataTransfer.getData('application/x-anka-tab');
+        if (crossWindowData) {
+            try {
+                const transfer = JSON.parse(crossWindowData);
+                const url = normalizeSessionUrl(transfer.url);
+                if (url && /^https?:\/\//i.test(url) && /^[a-f0-9-]{32,64}$/i.test(transfer.token)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const id = transfer.incognito || window.ANKA_PRIVATE_WINDOW
+                        ? createIncognitoTab(url)
+                        : createNewTab(url);
+                    if (id && typeof window.ankaConsumeDraggedTab === 'function') window.ankaConsumeDraggedTab(transfer.token, url);
+                    return;
+                }
+            } catch (err) {
+                console.error('Sürüklenen sekme açılamadı:', err);
+            }
+        }
         const raw = e.dataTransfer && e.dataTransfer.getData('text/uri-list');
         const url = raw && normalizeSessionUrl(raw.split(/\r?\n/).find((l) => l && !l.startsWith('#')));
         if (url) {
@@ -4271,8 +5460,11 @@ function cycleTab(dir) {
     switchTab(ids[(cur + dir + ids.length) % ids.length]);
 }
 
-function closeTab(id, e) {
+function closeTab(id, e, skipConfirm = false) {
     if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    if (!skipConfirm && getSetting('confirm-close-tabs', 'false') === 'true' &&
+        ankaTabIdsInOrder().length > 1 &&
+        !window.confirm('Bu sekme kapatılacak. Devam edilsin mi?')) return false;
     const st = ankaTabs.get(id);
     const tabBtn = ankaById('btn-' + id);
     const vw = st && st.vw ? st.vw : ankaById(id);
@@ -4306,6 +5498,7 @@ function closeTab(id, e) {
         else createNewTab(ankaHomeUrl());
     }
     ankaPersistSession();
+    return true;
 }
 
 window.__ankaOpenWelcomeGuide = function () {
@@ -4504,7 +5697,15 @@ function openSessionManager() {
 }
 
 function ankaPersistSessionNow() {
-    if (getSetting('restore-session', 'false') !== 'true' && getSetting('disk-backed-tab-saver', 'false') !== 'true') return;
+    if (window.ANKA_PRIVATE_WINDOW) return;
+    if (getSetting('restore-session', 'false') !== 'true' && getSetting('disk-backed-tab-saver', 'false') !== 'true') {
+        try { localStorage.removeItem('anka_last_session'); } catch (err) {}
+        if (window.ANKA_WINDOW_ID) {
+            const bridge = ankaBridgeApi();
+            if (bridge) bridge.send('crash-recovery:forget-window', window.ANKA_WINDOW_ID);
+        }
+        return;
+    }
     const urls = [];
     const tabs = [];
     let active = 0;
@@ -4515,12 +5716,45 @@ function ankaPersistSessionNow() {
         urls.push(st.url);
         tabs.push({ url: st.url, group: st.group });
     });
-    ankaWrite('anka_last_session', { urls, tabs, active, time: Date.now() });
+    const snapshot = { urls, tabs, active, time: Date.now() };
+    ankaWrite('anka_last_session', snapshot);
+    if (window.ANKA_WINDOW_ID) {
+        const bridge = ankaBridgeApi();
+        if (bridge) bridge.send('crash-recovery:save-window', {
+            windowId: window.ANKA_WINDOW_ID,
+            tabs,
+            active,
+            profileId: window.ANKA_PROFILE_ID || 'default'
+        });
+    }
 }
 
 const ankaPersistSession = ankaDebounce(ankaPersistSessionNow, 800);
+window.addEventListener('anka:session-storage-setting-changed', ankaPersistSessionNow);
+
+function ankaRestoreSessionSnapshot(saved) {
+    if (!saved || !Array.isArray(saved.tabs)) return false;
+    const records = saved.tabs
+        .map((tab) => ({ url: normalizeSessionUrl(tab && tab.url), group: typeof (tab && tab.group) === 'string' ? tab.group.slice(0, 32) : '' }))
+        .filter((tab) => tab.url)
+        .slice(0, getMaxTabs());
+    if (!records.length) return false;
+    const active = Math.min(Math.max(parseInt(saved.active, 10) || 0, 0), records.length - 1);
+    records.forEach((tab, i) => {
+        const id = createNewTab(tab.url, i === active ? { silent: true } : { lazy: true, background: true });
+        if (id && tab.group) ankaSetTabGroup(ankaTabs.get(id), tab.group);
+    });
+    return true;
+}
+
+window.ankaRestoreSessionSnapshot = ankaRestoreSessionSnapshot;
 
 function ankaOpenInitialTabs() {
+    if (window.ANKA_RECOVERY_PENDING || window.ANKA_RECOVERY_RESTORING) return;
+    if (window.ANKA_PRIVATE_WINDOW) {
+        createNewTab('newtab.html', { silent: true, incognito: true });
+        return;
+    }
     if (getSetting('school-mode', 'false') === 'true') {
         createNewTab(typeof getStartupUrl === 'function' ? getStartupUrl() : ankaHomeUrl(), { silent: true });
         return;
@@ -4531,20 +5765,10 @@ function ankaOpenInitialTabs() {
     }
     if (getSetting('restore-session', 'false') === 'true' || getSetting('disk-backed-tab-saver', 'false') === 'true') {
         const saved = ankaRead('anka_last_session', null);
-        if (saved && (Array.isArray(saved.tabs) || Array.isArray(saved.urls))) {
-            const records = (Array.isArray(saved.tabs) ? saved.tabs : saved.urls.map((url) => ({ url, group: '' })))
-                .map((tab) => ({ url: normalizeSessionUrl(tab && tab.url), group: typeof (tab && tab.group) === 'string' ? tab.group.slice(0, 32) : '' }))
-                .filter((tab) => tab.url)
-                .slice(0, getMaxTabs());
-            if (records.length) {
-                const active = Math.min(Math.max(parseInt(saved.active, 10) || 0, 0), records.length - 1);
-                records.forEach((tab, i) => {
-                    const id = createNewTab(tab.url, i === active ? { silent: true } : { lazy: true, background: true });
-                    if (id && tab.group) ankaSetTabGroup(ankaTabs.get(id), tab.group);
-                });
-                return;
-            }
-        }
+        if (saved && ankaRestoreSessionSnapshot({
+            tabs: Array.isArray(saved.tabs) ? saved.tabs : (saved.urls || []).map((url) => ({ url, group: '' })),
+            active: saved.active
+        })) return;
     }
     createNewTab(ankaHomeUrl(), { silent: true });
 }
@@ -4670,6 +5894,7 @@ const ANKA_CTRL_KEYS = {
     l: () => focusUrlBar(),
     e: () => focusUrlBar(),
     o: () => ankaPickLocalFile(),
+    j: () => { if (typeof window.openAnkaPage === 'function') window.openAnkaPage('downloads'); },
     r: () => reloadPage(),
     f: (vw) => openFindBar(vw),
     u: (vw) => toggleSideViewSource(vw),
@@ -4685,6 +5910,7 @@ const ANKA_CTRL_KEYS = {
 const ANKA_SHIFT_KEYS = {
     t: () => reopenClosedTab(),
     n: () => createIncognitoTab(),
+    j: (vw) => ankaOpenDevTools(vw),
     h: () => typeof window.openAnkaPage === 'function' ? window.openAnkaPage('history') : openHistoryPanel(),
     a: () => openTabSearch(),
     s: (vw) => takeScreenshot(vw),
@@ -4699,7 +5925,8 @@ const ANKA_SHIFT_KEYS = {
     e: (vw) => toggleReaderMode(vw),
     g: () => ankaReleaseMemory(),
     k: () => { if (activeTabId) togglePinTab(activeTabId); },
-    p: () => openCommandPalette()
+    p: () => openCommandPalette(),
+    q: () => window.openQuickAccessMenu()
 };
 
 function ankaLetter(ev) {
@@ -4769,6 +5996,7 @@ document.addEventListener('keydown', (e) => {
         closeCommandPalette();
         return;
     }
+    if (closeQuickAccessMenu()) return;
     closeContextMenu();
     ankaCloseFindBar();
     ankaCloseOverlay();
@@ -4818,6 +6046,7 @@ function ankaOpenDroppedFile(file) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.__ankaAccessReady) await window.__ankaAccessReady;
+    if (window.__ankaSettingsReady) await window.__ankaSettingsReady;
     ankaInjectStyles();
     setAiMode(isAiModeActive());
     ankaSetupTabBar();
@@ -4845,15 +6074,78 @@ document.addEventListener('DOMContentLoaded', async () => {
     ankaStartSleepTimer();
 
     if (window.__ankaAuthenticated && !ankaById('tab-bar')?.querySelector('.tab')) ankaOpenInitialTabs();
+    if (window.ANKA_RECOVERY_PENDING) {
+        const banner = ankaById('crash-recovery-banner');
+        const restoreButton = ankaById('crash-recovery-restore');
+        const dismissButton = ankaById('crash-recovery-dismiss');
+        if (banner) banner.hidden = false;
+        if (restoreButton) restoreButton.addEventListener('click', async () => {
+            const bridge = ankaBridgeApi();
+            if (!bridge) {
+                showNotification('Oturum kurtarma kullanılamıyor.');
+                return;
+            }
+            restoreButton.disabled = true;
+            try {
+                const result = await bridge.invoke('crash-recovery:restore');
+                if (!result || !result.ok) throw new Error('Kurtarma verileri açılamadı.');
+                window.ANKA_RECOVERY_PENDING = false;
+                if (banner) banner.hidden = true;
+                if (!result.primary || !ankaRestoreSessionSnapshot(result.primary)) {
+                    createNewTab(ankaHomeUrl(), { silent: true });
+                }
+                showNotification(result.windows > 1
+                    ? `${result.windows} pencere ve kaydedilmiş sekmeler geri yüklendi.`
+                    : 'Kaydedilmiş sekmeler geri yüklendi.');
+            } catch (err) {
+                restoreButton.disabled = false;
+                console.error('Oturum kurtarma başarısız:', err);
+                showNotification(err.message || 'Oturum geri yüklenemedi.');
+            }
+        });
+        if (dismissButton) dismissButton.addEventListener('click', () => {
+            window.ANKA_RECOVERY_PENDING = false;
+            if (banner) banner.hidden = true;
+            ankaOpenInitialTabs();
+        });
+    }
 
     window.ankaBrowserApi = {
         openUrl: (value, opts) => ankaOpenExternal(value, opts),
         setDefaultBrowser: ankaSetDefaultBrowser,
         releaseMemory: ankaReleaseMemory,
         toggleReader: () => toggleReaderMode(ankaActiveView()),
+        toggleDevTools: () => {
+            const view = ankaActiveView();
+            if (view && typeof view.openDevTools === 'function') {
+                ankaOpenDevTools(view);
+                return;
+            }
+            if (getSetting('dev-tools-shortcut', 'true') === 'false') {
+                showNotification('Geliştirici araçları ayarlardan kapalı.');
+                return;
+            }
+            const bridge = ankaBridgeApi();
+            if (bridge) bridge.send('devtools-toggle');
+            else showNotification('DevTools bu pencerede kullanılamıyor.');
+        },
         openCommandPalette,
+        openQuickAccessMenu: () => window.openQuickAccessMenu(),
         openDevToolsMenu: () => openDevToolsMenu(ankaActiveView()),
-        openDevToolsDetached: () => openDevToolsDetached(ankaActiveView()),
+        openDevToolsDetached: () => {
+            const view = ankaActiveView();
+            if (view && typeof view.openDevTools === 'function') {
+                openDevToolsDetached(view);
+                return;
+            }
+            if (getSetting('dev-tools-shortcut', 'true') === 'false') {
+                showNotification('Geliştirici araçları ayarlardan kapalı.');
+                return;
+            }
+            const bridge = ankaBridgeApi();
+            if (bridge) bridge.send('devtools-detached');
+            else showNotification('DevTools bu pencerede kullanılamıyor.');
+        },
         openDevToolsDocked: (mode) => openDevToolsDocked(ankaActiveView(), mode),
         closeDevTools: () => closeDevTools(ankaActiveView()),
         commands: ANKA_COMMANDS
@@ -4862,5 +6154,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const bridge = ankaBridgeApi();
     ankaExternalReady = true;
     ankaDrainExternal();
+    ['menu-btn', 'main-menu-btn', 'app-menu-btn', 'hamburger-btn', 'quick-access-btn', 'tab-dropdown-btn', 'more-btn', 'hizli-erisim-btn'].forEach((id) => {
+        const btn = ankaById(id);
+        if (btn && !btn.__ankaQAWired) {
+            btn.__ankaQAWired = true;
+            btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); window.openQuickAccessMenu(); });
+        }
+    });
     if (bridge) bridge.send('anka-renderer-ready');
 });

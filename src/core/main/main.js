@@ -1,21 +1,31 @@
-const { app, BrowserWindow, session, ipcMain, shell, screen, safeStorage, Tray, Menu, dialog } = require('electron');
+const { app, BrowserWindow, session, ipcMain, webContents, shell, screen, safeStorage, Tray, Menu, dialog, nativeImage, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const dns = require('dns').promises;
+const http = require('http');
 const https = require('https');
+const net = require('net');
 const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 const os = require('os');
 const { checkUpdates, runFirstLaunch, isSplashOpen } = require('./updater');
 const { setupDefaultBrowser } = require('./default-browser');
+const { createSchoolManagement } = require('./school-management');
 const instance = setupDefaultBrowser({ getWindow: () => win });
 if (!instance.primary) return;
 
 let win = null;
+let schoolManagementWindow = null;
+const secondaryWindows = new Set();
+const crashWindows = new Set();
+let crashWindow = null;
 let tray = null;
 let appQuitting = false;
 let startMinimizedOnLaunch = process.argv.includes('--start-minimized');
+let uncleanShutdownDetected = false;
 const downloads = new Map();
+const tabDragTransfers = new Map();
 let runtimeSettings = {};
 let cacheCleanupStarted = false;
 let cacheCleanupComplete = false;
@@ -29,20 +39,52 @@ let cachedWindowBounds = null;
 let cachedWindowBoundsTime = 0;
 let previousSystemCpuSample = null;
 
+app.on('web-contents-created', (event, contents) => {
+    contents.setMaxListeners(0);
+    if (contents.getType() === 'webview') {
+        if (typeof contents.setBackgroundThrottling === 'function') {
+            contents.setBackgroundThrottling(settingEnabled('background-tab-throttling', true));
+        }
+        contents.on('page-favicon-updated', (_event, favicons) => {
+            const host = contents.hostWebContents;
+            if (!host || host.isDestroyed() || !isConfigWindow(host) || !Array.isArray(favicons)) return;
+            host.send('webview-favicon-updated', contents.id, favicons.filter((url) =>
+                typeof url === 'string' && url.length <= 32768
+            ));
+        });
+    }
+});
+
 const SETTINGS_FILE = 'anka-settings.json';
 const SCHOOL_CONFIG_FILE = 'anka-school-mode.json';
 const PASSWORDS_FILE = 'anka-passwords.enc';
 const I18N_CACHE_FILE = 'anka-i18n-cache.json';
 const DRAWING_FILE = 'anka-drawing.png';
 const DEV_EXTENSIONS_FILE = 'anka-developer-extensions.json';
+const CRASH_RECOVERY_FILE = 'anka-crash-recovery.json';
+const CRASH_LOG_FILE = 'anka-crash.log';
+const RUNNING_MARKER_FILE = 'anka-running.marker';
 const DEFAULT_SCHOOL_URL = 'https://www.eba.gov.tr/';
 const DANGEROUS_EXT = /\.(exe|msi|com|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|scr|pif|jar|sh|bash|zsh|desktop|appimage|deb|rpm|run|dll|so|dylib|reg|lnk|url|command|pkg|html?|shtml|xhtml|svg|xml|mht|mhtml|xsl|xslt)$/i;
 const RISKY_DOWNLOAD_EXT = /\.(exe|msi|com|bat|cmd|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|scr|pif|jar|sh|bash|zsh|appimage|deb|rpm|run|dll|so|dylib|reg|command|pkg)$/i;
 const FINGERPRINT_HEADERS = ['Sec-Ch-Ua', 'Sec-Ch-Ua-Mobile', 'Sec-Ch-Ua-Platform', 'Sec-Ch-Ua-Platform-Version', 'Sec-Ch-Ua-Arch', 'Sec-Ch-Ua-Bitness', 'Sec-Ch-Ua-Full-Version', 'Sec-Ch-Ua-Full-Version-List', 'Sec-Ch-Ua-Model'];
 const BASE_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write', 'fullscreen', 'pointerLock', 'media']);
-const PLATFORM_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const COMMON_PASSWORDS = new Set([
+    '123456', '123456789', '12345678', 'password', 'password123',
+    'qwerty', 'qwerty123', 'letmein', 'admin', 'iloveyou', 'ankara123'
+]);
 const AD_HOSTS = /(^|\.)(doubleclick\.net|googlesyndication\.com|googleadservices\.com|adservice\.google\.com|adnxs\.com|adsrvr\.org|taboola\.com|outbrain\.com)$/i;
 const TRACKER_HOSTS = /(^|\.)(google-analytics\.com|googletagmanager\.com|hotjar\.com|mixpanel\.com|segment\.io|scorecardresearch\.com|facebook\.net)$/i;
+const PRIVATE_NETWORKS = new net.BlockList();
+[
+    ['0.0.0.0', 8, 'ipv4'], ['10.0.0.0', 8, 'ipv4'], ['100.64.0.0', 10, 'ipv4'],
+    ['127.0.0.0', 8, 'ipv4'], ['169.254.0.0', 16, 'ipv4'], ['172.16.0.0', 12, 'ipv4'],
+    ['192.0.0.0', 24, 'ipv4'], ['192.0.2.0', 24, 'ipv4'], ['192.168.0.0', 16, 'ipv4'],
+    ['198.18.0.0', 15, 'ipv4'], ['198.51.100.0', 24, 'ipv4'], ['203.0.113.0', 24, 'ipv4'],
+    ['224.0.0.0', 4, 'ipv4'], ['240.0.0.0', 4, 'ipv4'], ['::', 128, 'ipv6'],
+    ['::1', 128, 'ipv6'], ['::ffff:0:0', 96, 'ipv6'], ['fc00::', 7, 'ipv6'],
+    ['fe80::', 10, 'ipv6'], ['ff00::', 8, 'ipv6'], ['2001:db8::', 32, 'ipv6']
+].forEach(([address, prefix, family]) => PRIVATE_NETWORKS.addSubnet(address, prefix, family));
 
 function getUserDataPath() {
     if (_cachedUserDataPath) return _cachedUserDataPath;
@@ -53,6 +95,180 @@ function getUserDataPath() {
 
 function getAppDataFile(name) {
     return path.join(getUserDataPath(), name);
+}
+
+async function downloadShortcutIcon(iconUrl, pageUrl, redirectDepth = 0) {
+    if (redirectDepth > 3) throw new Error('Site simgesi çok fazla yönlendirme yaptı.');
+
+    let target;
+    try {
+        target = new URL(iconUrl, pageUrl);
+        if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) {
+            throw new Error('Site simgesi sayfanın güvenli kaynağında değil.');
+        }
+    } catch (err) {
+        throw new Error(err.message || 'Site simgesi adresi geçersiz.');
+    }
+
+    const hostname = target.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    const family = net.isIP(hostname);
+    const addresses = family
+        ? [{ address: hostname, family }]
+        : await dns.lookup(hostname, { all: true, verbatim: true });
+    if (!addresses.length || addresses.some((entry) =>
+        ![4, 6].includes(entry.family) ||
+        PRIVATE_NETWORKS.check(entry.address, entry.family === 4 ? 'ipv4' : 'ipv6')
+    )) {
+        throw new Error('Özel ağ adreslerinden site simgesi alınamaz.');
+    }
+
+    const transport = target.protocol === 'https:' ? https : http;
+    return new Promise((resolve, reject) => {
+        const request = transport.get(target, {
+            timeout: 5000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
+                'Referer': (() => { try { return new URL(pageUrl).origin + '/'; } catch (e) { return target.origin + '/'; } })()
+            },
+            lookup: (host, options, callback) => {
+                if (options && options.all) callback(null, addresses);
+                else callback(null, addresses[0].address, addresses[0].family);
+            }
+        }, (response) => {
+            if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
+                response.resume();
+                let nextHref;
+                try {
+                    nextHref = new URL(response.headers.location, target.href).href;
+                } catch (err) {
+                    reject(new Error('Yönlendirme adresi geçersiz.'));
+                    return;
+                }
+                downloadShortcutIcon(nextHref, nextHref, redirectDepth + 1).then(resolve, reject);
+                return;
+            }
+
+            const contentType = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+            const looksLikeImage = !contentType ||
+                /^image\//.test(contentType) ||
+                /^application\/octet-stream$/.test(contentType) ||
+                /^application\/x-icon$/.test(contentType);
+            if (response.statusCode !== 200 || !looksLikeImage) {
+                response.resume();
+                reject(new Error('Site simgesi desteklenmeyen bir yanıt verdi.'));
+                return;
+            }
+
+            const chunks = [];
+            let size = 0;
+            response.on('data', (chunk) => {
+                size += chunk.length;
+                if (size > 512 * 1024) {
+                    request.destroy(new Error('Site simgesi boyut sınırını aştı.'));
+                    return;
+                }
+                chunks.push(chunk);
+            });
+            response.on('end', () => resolve(Buffer.concat(chunks)));
+            response.on('error', reject);
+        });
+        request.on('timeout', () => request.destroy(new Error('Site simgesi isteği zaman aşımına uğradı.')));
+        request.on('error', reject);
+    });
+}
+
+async function createSiteShortcutIcon(iconUrl, pageUrl) {
+    if (typeof iconUrl !== 'string' || !iconUrl || iconUrl.length > 32768) return null;
+    const imageBuffer = await downloadShortcutIcon(iconUrl, pageUrl);
+    const image = nativeImage.createFromBuffer(imageBuffer);
+    if (image.isEmpty()) throw new Error('Site simgesi çözümlenemedi.');
+    const png = image.toPNG();
+    if (!png.length || png.length > 2 * 1024 * 1024) throw new Error('Site simgesi boyutu geçersiz.');
+
+    const directory = getAppDataFile('site-shortcut-icons');
+    const key = crypto.createHash('sha256').update(new URL(pageUrl).origin).digest('hex');
+    const pngPath = path.join(directory, key + '.png');
+    const icoPath = path.join(directory, key + '.ico');
+    const header = Buffer.alloc(22);
+    header.writeUInt16LE(1, 2);
+    header.writeUInt16LE(1, 4);
+    header.writeUInt16LE(1, 10);
+    header.writeUInt16LE(32, 12);
+    header.writeUInt32LE(png.length, 14);
+    header.writeUInt32LE(header.length, 18);
+
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(pngPath, png, { mode: 0o600 });
+    fs.writeFileSync(icoPath, Buffer.concat([header, png]), { mode: 0o600 });
+    return { pngPath, icoPath };
+}
+
+function writeCrashLog(error) {
+    const detail = error instanceof Error ? (error.stack || error.message) : String(error || 'Unknown error');
+    const line = `${new Date().toISOString()} ${detail}\n`;
+    const file = getAppDataFile(CRASH_LOG_FILE);
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        if (fs.existsSync(file) && fs.statSync(file).size > 1024 * 1024) fs.writeFileSync(file, '', { encoding: 'utf8', mode: 0o600 });
+        fs.appendFileSync(file, line, { encoding: 'utf8', mode: 0o600 });
+        return file;
+    } catch (err) {
+        console.error('Crash log could not be written:', err);
+        return '';
+    }
+}
+
+function showCrashWindow(error) {
+    const logPath = writeCrashLog(error);
+    if (!app.isReady()) return;
+    if (crashWindow && !crashWindow.isDestroyed()) {
+        crashWindow.show();
+        crashWindow.focus();
+        return;
+    }
+    crashWindow = new BrowserWindow({
+        width: 580,
+        height: 560,
+        minWidth: 360,
+        minHeight: 460,
+        resizable: true,
+        show: false,
+        title: 'Anka Web - Kurtarma',
+        icon: path.join(app.getAppPath(), 'src', 'icons', 'dark-logo.png'),
+        backgroundColor: '#111116',
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false,
+            sandbox: false
+        }
+    });
+    const current = crashWindow;
+    const contents = current.webContents;
+    crashWindows.add(contents);
+    current.once('ready-to-show', () => {
+        if (!current.isDestroyed()) {
+            current.show();
+            current.focus();
+        }
+    });
+    current.on('closed', () => {
+        crashWindows.delete(contents);
+        if (crashWindow === current) crashWindow = null;
+    });
+    current.loadFile(path.join(app.getAppPath(), 'src', 'renderer', 'crash.html')).catch((err) => {
+        console.error('Crash recovery window could not be opened:', err);
+    });
+    if (!logPath) console.error('Crash details may be unavailable because the log file could not be written.');
+}
+
+function watchWindowCrashes(browserWindow) {
+    if (!browserWindow || !browserWindow.webContents) return;
+    browserWindow.webContents.on('render-process-gone', (event, details) => {
+        const reason = details && details.reason ? details.reason : 'unknown';
+        showCrashWindow(new Error('Renderer process terminated: ' + reason));
+    });
 }
 
 function settingEnabled(id, fallback = false) {
@@ -71,6 +287,7 @@ function applyCacheSizeLimit() {
 function updateRuntimeSetting(id, value) {
     runtimeSettings[id] = value;
     if (id === 'cache-size-limit') applyCacheSizeLimit();
+    if (id === 'background-tab-throttling') applyBackgroundTabThrottling();
     if (id === 'tray-in-background') {
         if (value === true || value === 'true') createTray();
         else destroyTray();
@@ -82,6 +299,19 @@ function updateRuntimeSetting(id, value) {
         const result = applyStartupOnLogin(value === true || value === 'true');
         if (!result.ok && win && !win.isDestroyed()) win.webContents.send('settings-error', result.error || 'Otomatik başlatma ayarı uygulanamadı.');
     }
+}
+
+function applyBackgroundTabThrottling() {
+    const enabled = settingEnabled('background-tab-throttling', true);
+    webContents.getAllWebContents().forEach((contents) => {
+        if (contents.isDestroyed() || contents.getType() !== 'webview' ||
+            typeof contents.setBackgroundThrottling !== 'function') return;
+        try {
+            contents.setBackgroundThrottling(enabled);
+        } catch (err) {
+            console.error('Chromium arka plan sekme ayarı uygulanamadı:', err);
+        }
+    });
 }
 
 function enforceSafeSearch(url) {
@@ -133,12 +363,104 @@ function readAppState() {
 }
 
 function writeAppState(state) {
-    _stateCache = state;
+    const file = getAppDataFile(SETTINGS_FILE);
+    const temporary = `${file}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
     try {
         fs.mkdirSync(getUserDataPath(), { recursive: true });
-        fs.writeFileSync(getAppDataFile(SETTINGS_FILE), JSON.stringify(state), 'utf8');
+        const serialized = JSON.stringify(state);
+        fs.writeFileSync(temporary, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+        fs.renameSync(temporary, file);
+        _stateCache = state;
         return true;
-    } catch (err) { return false; }
+    } catch (err) {
+        try { fs.rmSync(temporary, { force: true }); } catch (cleanupErr) {}
+        console.error('Application settings could not be saved:', err);
+        return false;
+    }
+}
+
+function readCrashRecoveryWindows() {
+    try {
+        const data = JSON.parse(fs.readFileSync(getAppDataFile(CRASH_RECOVERY_FILE), 'utf8'));
+        if (!Array.isArray(data)) return [];
+        return data.slice(-20).map((entry) => {
+            if (!entry || !Number.isSafeInteger(entry.windowId) ||
+                !Array.isArray(entry.tabs) || typeof entry.profileId !== 'string') return null;
+            const profileId = /^[a-z0-9_-]{1,48}$/i.test(entry.profileId) ? entry.profileId : 'default';
+            const tabs = entry.tabs.slice(0, 30).map((tab) => {
+                if (!tab || typeof tab.url !== 'string' || tab.url.length > 8192) return null;
+                try {
+                    const url = new URL(tab.url);
+                    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+                } catch (err) {
+                    return null;
+                }
+                return { url: tab.url, group: typeof tab.group === 'string' ? tab.group.slice(0, 32) : '' };
+            }).filter(Boolean);
+            return {
+                windowId: entry.windowId,
+                profileId,
+                tabs,
+                active: Math.max(0, Math.min(Number.isInteger(entry.active) ? entry.active : 0, Math.max(0, tabs.length - 1))),
+                updatedAt: Number.isFinite(entry.updatedAt) ? entry.updatedAt : 0
+            };
+        }).filter(Boolean);
+    } catch (err) {
+        if (err.code !== 'ENOENT') console.error('Crash recovery data could not be read:', err);
+        return [];
+    }
+}
+
+function writeCrashRecoveryWindows(windows) {
+    const file = getAppDataFile(CRASH_RECOVERY_FILE);
+    const temporary = `${file}.${process.pid}.tmp`;
+    try {
+        fs.mkdirSync(getUserDataPath(), { recursive: true });
+        fs.writeFileSync(temporary, JSON.stringify(windows.slice(-20)), { encoding: 'utf8', mode: 0o600 });
+        fs.renameSync(temporary, file);
+        return true;
+    } catch (err) {
+        try { fs.rmSync(temporary, { force: true }); } catch (cleanupErr) {}
+        console.error('Crash recovery data could not be saved:', err);
+        return false;
+    }
+}
+
+function forgetCrashRecoveryWindow(windowId) {
+    const windows = readCrashRecoveryWindows();
+    const remaining = windows.filter((entry) => entry.windowId !== windowId);
+    if (remaining.length !== windows.length) writeCrashRecoveryWindows(remaining);
+}
+
+function saveCrashRecoveryWindow(event, payload) {
+    if (!isConfigWindow(event.sender) || !payload || !Array.isArray(payload.tabs) ||
+        payload.tabs.length > 30 || !Number.isSafeInteger(payload.windowId)) return;
+    try {
+        const url = new URL(event.sender.getURL());
+        if (Number(url.searchParams.get('windowId')) !== payload.windowId) return;
+        const profileId = url.searchParams.get('profile') || 'default';
+        const tabs = payload.tabs.map((tab) => {
+            if (!tab || typeof tab.url !== 'string' || tab.url.length > 8192) return null;
+            try {
+                const tabUrl = new URL(tab.url);
+                if (tabUrl.protocol !== 'http:' && tabUrl.protocol !== 'https:') return null;
+            } catch (err) {
+                return null;
+            }
+            return { url: tab.url, group: typeof tab.group === 'string' ? tab.group.slice(0, 32) : '' };
+        }).filter(Boolean);
+        const windows = readCrashRecoveryWindows().filter((entry) => entry.windowId !== payload.windowId);
+        windows.push({
+            windowId: payload.windowId,
+            profileId: /^[a-z0-9_-]{1,48}$/i.test(profileId) ? profileId : 'default',
+            tabs,
+            active: Math.max(0, Math.min(Number.isInteger(payload.active) ? payload.active : 0, Math.max(0, tabs.length - 1))),
+            updatedAt: Date.now()
+        });
+        writeCrashRecoveryWindows(windows);
+    } catch (err) {
+        console.error('Crash recovery snapshot was rejected:', err);
+    }
 }
 
 function readSchoolConfig() {
@@ -186,6 +508,35 @@ function readPasswordDatabase() {
         typeof entry.username === 'string' &&
         typeof entry.password === 'string'
     );
+}
+
+function inspectLocalPassword(password, entries, origin, username) {
+    const normalized = password.toLowerCase();
+    const warnings = [];
+    const domain = (() => {
+        try { return new URL(origin).hostname.replace(/^www\./, '').split('.')[0].toLowerCase(); }
+        catch (err) { return ''; }
+    })();
+    const characterClasses = [
+        /[a-z]/.test(password),
+        /[A-Z]/.test(password),
+        /\d/.test(password),
+        /[^A-Za-z0-9]/.test(password)
+    ].filter(Boolean).length;
+    if (password.length < 12 || characterClasses < 3 || /(.)\1{3,}/.test(password)) warnings.push('weak');
+    if (COMMON_PASSWORDS.has(normalized)) warnings.push('common');
+    if ((username && normalized.includes(username.toLowerCase())) ||
+        (domain.length >= 4 && normalized.includes(domain))) warnings.push('personal');
+    if (entries.some((entry) => entry.password === password &&
+        !(entry.origin === origin && entry.username === username))) warnings.push('reused');
+    const score = Math.max(0, Math.min(4,
+        Math.floor(password.length / 5) +
+        Math.max(0, characterClasses - 1) -
+        (warnings.includes('common') ? 3 : 0) -
+        (warnings.includes('weak') ? 1 : 0) -
+        (warnings.includes('personal') ? 1 : 0)
+    ));
+    return { warnings, score };
 }
 
 function writePasswordDatabase(entries) {
@@ -400,9 +751,13 @@ function createWindow() {
             offscreen: false
         }
     });
+    watchWindowCrashes(win);
 
     const indexPath = path.join(app.getAppPath(), 'src/renderer/index.html');
-    win.loadURL(pathToFileURL(indexPath).href).catch((mainErr) => {
+    const indexUrl = new URL(pathToFileURL(indexPath).href);
+    indexUrl.searchParams.set('windowId', String(win.id));
+    if (uncleanShutdownDetected) indexUrl.searchParams.set('recovery', '1');
+    win.loadURL(indexUrl.href).catch((mainErr) => {
         if (mainErr && mainErr.code !== 'ERR_ABORTED') console.error(mainErr);
     });
 
@@ -455,6 +810,7 @@ function createWindow() {
     });
 
     win.on('closed', () => {
+        forgetCrashRecoveryWindow(win.id);
         win = null;
         cachedWindowBounds = null;
         if (process.platform !== 'darwin' && !tray) app.quit();
@@ -576,6 +932,7 @@ function setupSessionHandlers() {
     const ses = session.defaultSession;
     runtimeSettings = { ...(readAppState().settings || {}) };
     applyCacheSizeLimit();
+    applyBackgroundTabThrottling();
 
     ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
         let parsed;
@@ -605,7 +962,6 @@ function setupSessionHandlers() {
         const url = details.url || '';
         try { forceRestrictedYouTubeCookie(headers, new URL(url)); } catch (err) {}
 
-        headers['User-Agent'] = PLATFORM_USER_AGENT;
         if (settingEnabled('do-not-track', true)) headers.DNT = '1';
         else delete headers.DNT;
 
@@ -706,7 +1062,301 @@ async function loadSavedDeveloperExtensions() {
     }
 }
 
+function createSecondaryWindow(options = {}) {
+    const profileId = typeof options.profileId === 'string' && /^[a-z0-9_-]{1,48}$/i.test(options.profileId)
+        ? options.profileId
+        : 'default';
+    const incognito = options.incognito === true;
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { x, y, width, height } = primaryDisplay.workArea;
+    const isMac = process.platform === 'darwin';
+    const secondary = new BrowserWindow({
+        width,
+        height,
+        x,
+        y,
+        minWidth: 760,
+        minHeight: 480,
+        frame: false,
+        transparent: process.platform !== 'linux',
+        backgroundColor: '#00000000',
+        titleBarStyle: isMac ? 'hiddenInset' : 'default',
+        icon: path.join(app.getAppPath(), 'src', 'icons', 'dark-logo.png'),
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false,
+            webSecurity: true,
+            webviewTag: true,
+            nodeIntegrationInSubFrames: false,
+            sandbox: false,
+            backgroundThrottling: true,
+            allowRunningInsecureContent: false,
+            spellcheck: false,
+            offscreen: false
+        }
+    });
+    watchWindowCrashes(secondary);
+    secondaryWindows.add(secondary);
+    const indexUrl = new URL(pathToFileURL(path.join(app.getAppPath(), 'src', 'renderer', 'index.html')).href);
+    indexUrl.searchParams.set('profile', incognito ? 'default' : profileId);
+    indexUrl.searchParams.set('windowId', String(secondary.id));
+    if (incognito) indexUrl.searchParams.set('incognito', '1');
+    if (options.recoveryRestore === true) indexUrl.searchParams.set('recoveryRestore', '1');
+    secondary.loadURL(indexUrl.href).catch((err) => {
+        if (err && err.code !== 'ERR_ABORTED') console.error('Yeni pencere yüklenemedi:', err);
+    });
+    secondary.once('ready-to-show', () => {
+        if (!secondary.isDestroyed()) {
+            secondary.show();
+            secondary.maximize();
+            secondary.focus();
+        }
+    });
+    secondary.on('maximize', () => {
+        if (!secondary.isDestroyed()) secondary.webContents.send('window-state-change', 'maximized');
+    });
+    secondary.on('unmaximize', () => {
+        if (!secondary.isDestroyed()) secondary.webContents.send('window-state-change', 'restored');
+    });
+    secondary.on('enter-full-screen', () => {
+        if (!secondary.isDestroyed()) secondary.webContents.send('window-fullscreen-change', true);
+    });
+    secondary.on('leave-full-screen', () => {
+        if (!secondary.isDestroyed()) secondary.webContents.send('window-fullscreen-change', false);
+    });
+    secondary.webContents.setWindowOpenHandler(({ url }) => {
+        if (!secondary.isDestroyed()) secondary.webContents.send('open-new-tab', url);
+        return { action: 'deny' };
+    });
+    secondary.on('closed', () => {
+        forgetCrashRecoveryWindow(secondary.id);
+        secondaryWindows.delete(secondary);
+    });
+    return secondary;
+}
+
 function registerDefaultBrowserHandlers() {
+    ipcMain.handle('create-site-shortcuts', async (event, payload) => {
+        if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || !isConfigWindow(event.sender)) {
+            throw new Error('Bu işlem yalnızca Anka Web ana penceresinden kullanılabilir.');
+        }
+        if (!payload || typeof payload.url !== 'string' || payload.url.length > 8192) {
+            throw new Error('Geçerli bir web sayfası seçilmedi.');
+        }
+
+        let url;
+        try {
+            url = new URL(payload.url);
+        } catch (err) {
+            throw new Error('Sayfa adresi geçerli değil.');
+        }
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+            throw new Error('Yalnızca kullanıcı bilgisi içermeyen HTTP veya HTTPS sayfaları kısayol yapılabilir.');
+        }
+        if (process.platform !== 'win32' && process.platform !== 'linux') {
+            throw new Error('Site kısayolları Windows ve Linux üzerinde destekleniyor.');
+        }
+
+        let siteIcon = null;
+        try {
+            siteIcon = await createSiteShortcutIcon(payload.iconUrl, url.href);
+        } catch (err) {
+            console.error('Site simgesi masaüstü kısayoluna eklenemedi:', err);
+        }
+
+        const pageTitle = typeof payload.title === 'string' ? payload.title.slice(0, 200) : '';
+        let cleanName = (pageTitle || url.hostname).normalize('NFKC')
+            .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .replace(/[. ]+$/g, '')
+            .trim()
+            .slice(0, 70) || 'Anka Web - Site';
+        if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(cleanName)) cleanName = '_' + cleanName;
+        const desktopDir = app.getPath('desktop');
+        const startMenuDir = process.platform === 'win32'
+            ? path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Anka Web')
+            : path.join(process.env.XDG_DATA_HOME && path.isAbsolute(process.env.XDG_DATA_HOME)
+                ? process.env.XDG_DATA_HOME
+                : path.join(app.getPath('home'), '.local', 'share'), 'applications');
+        const extension = process.platform === 'win32' ? '.lnk' : '.desktop';
+        const launchArgs = process.defaultApp && process.argv[1]
+            ? [path.resolve(process.argv[1]), url.href]
+            : [url.href];
+        const target = process.platform === 'linux' && process.env.APPIMAGE &&
+            path.isAbsolute(process.env.APPIMAGE) && /\.appimage$/i.test(process.env.APPIMAGE) &&
+            fs.existsSync(process.env.APPIMAGE)
+            ? process.env.APPIMAGE
+            : process.execPath;
+        const quoteWindowsArg = (value) => '"' + String(value)
+            .replace(/(\\*)"/g, '$1$1\\"')
+            .replace(/(\\+)$/g, '$1$1') + '"';
+        const desktopExecArg = (value) => '"' + String(value)
+            .replace(/%/g, '%%')
+            .replace(/\\/g, '\\\\')
+            .replace(/"/g, '\\"')
+            .replace(/[$`]/g, '\\$&') + '"';
+        const desktopEntry = [
+            '[Desktop Entry]',
+            'Type=Application',
+            'Name=' + cleanName.replace(/[\r\n]/g, ' '),
+            'Comment=Anka Web ile ' + url.hostname.replace(/[\r\n]/g, ' ') + ' sayfasını aç',
+            'Exec=' + [target, ...launchArgs].map(desktopExecArg).join(' '),
+            'Icon=' + (siteIcon ? siteIcon.pngPath : 'anka-web'),
+            'Terminal=false',
+            'Categories=Network;WebBrowser;',
+            ''
+        ].join('\n');
+
+        fs.mkdirSync(desktopDir, { recursive: true });
+        fs.mkdirSync(startMenuDir, { recursive: true });
+        let suffix = 1;
+        let name = cleanName;
+        let desktopShortcut = path.join(desktopDir, name + extension);
+        let startMenuShortcut = path.join(startMenuDir, name + extension);
+        while (fs.existsSync(desktopShortcut) || fs.existsSync(startMenuShortcut)) {
+            suffix += 1;
+            if (suffix > 10000) throw new Error('Bu site için daha fazla kısayol adı üretilemedi.');
+            name = `${cleanName} (${suffix})`;
+            desktopShortcut = path.join(desktopDir, name + extension);
+            startMenuShortcut = path.join(startMenuDir, name + extension);
+        }
+
+        let createdDesktop = false;
+        let createdStartMenu = false;
+        try {
+            if (process.platform === 'win32') {
+                const shortcutOptions = {
+                    target,
+                    args: launchArgs.map(quoteWindowsArg).join(' '),
+                    description: `Anka Web ile ${url.hostname} sayfasını aç`,
+                    icon: siteIcon ? siteIcon.icoPath : path.join(app.getAppPath(), 'src', 'icons', 'logo.ico'),
+                    iconIndex: 0,
+                    appUserModelId: 'com.wraitgame.ankaweb'
+                };
+                if (!shell.writeShortcutLink(desktopShortcut, 'create', shortcutOptions)) {
+                    throw new Error('Masaüstü kısayolu oluşturulamadı.');
+                }
+                createdDesktop = true;
+                if (!shell.writeShortcutLink(startMenuShortcut, 'create', shortcutOptions)) {
+                    throw new Error('Başlat menüsü kısayolu oluşturulamadı.');
+                }
+                createdStartMenu = true;
+            } else {
+                for (const [file, isDesktop] of [[desktopShortcut, true], [startMenuShortcut, false]]) {
+                    fs.writeFileSync(file, desktopEntry, { encoding: 'utf8', mode: 0o700, flag: 'wx' });
+                    fs.chmodSync(file, 0o700);
+                    if (isDesktop) createdDesktop = true;
+                    else createdStartMenu = true;
+                }
+            }
+        } catch (err) {
+            if (createdDesktop) fs.rmSync(desktopShortcut, { force: true });
+            if (createdStartMenu) fs.rmSync(startMenuShortcut, { force: true });
+            console.error('Site kısayolu oluşturulamadı:', err);
+            throw new Error(err.message || 'Site kısayolları oluşturulamadı.');
+        }
+        return { ok: true, desktop: desktopShortcut, startMenu: startMenuShortcut, siteIcon: !!siteIcon };
+    });
+
+    ipcMain.handle('tabs:metrics', async (event) => {
+        if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || !isConfigWindow(event.sender)) {
+            return [];
+        }
+        const metricsByPid = new Map(app.getAppMetrics().map((metric) => [metric.pid, metric.memory]));
+        const views = webContents.getAllWebContents().filter((contents) =>
+            !contents.isDestroyed() && contents.getType() === 'webview' &&
+            typeof contents.getOSProcessId === 'function'
+        );
+        return views.map((contents) => {
+            try {
+                const memory = metricsByPid.get(contents.getOSProcessId());
+                if (!memory) return null;
+                return {
+                    id: contents.id,
+                    memory
+                };
+            } catch (err) {
+                return null;
+            }
+        }).filter(Boolean);
+    });
+    ipcMain.on('tab-drag-start', (event, payload) => {
+        if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || !payload ||
+            typeof payload.token !== 'string' || !/^[a-f0-9-]{32,64}$/i.test(payload.token) ||
+            typeof payload.tabId !== 'string' || payload.tabId.length > 100 ||
+            typeof payload.url !== 'string' || !/^https?:\/\//i.test(payload.url)) return;
+        for (const [token, transfer] of tabDragTransfers) {
+            if (transfer.expiresAt < Date.now()) tabDragTransfers.delete(token);
+        }
+        if (tabDragTransfers.size >= 100) tabDragTransfers.delete(tabDragTransfers.keys().next().value);
+        tabDragTransfers.set(payload.token, {
+            sender: event.sender,
+            tabId: payload.tabId,
+            url: payload.url,
+            incognito: payload.incognito === true,
+            expiresAt: Date.now() + 60000
+        });
+    });
+    ipcMain.on('tab-drag-consumed', (event, payload) => {
+        if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame ||
+            !payload || typeof payload.token !== 'string') return;
+        const transfer = tabDragTransfers.get(payload.token);
+        tabDragTransfers.delete(payload.token);
+        if (!transfer || transfer.expiresAt < Date.now() || transfer.sender === event.sender ||
+            transfer.url !== payload.url || transfer.sender.isDestroyed()) return;
+        transfer.sender.send('close-moved-tab', transfer.tabId, transfer.url);
+    });
+    ipcMain.handle('open-browser-window', (event, options) => {
+        if (!event.sender || event.sender.isDestroyed() || !event.senderFrame || event.senderFrame !== event.sender.mainFrame) {
+            return { ok: false, error: 'not-authorized' };
+        }
+        try {
+            const secondary = createSecondaryWindow(options);
+            return { ok: true, id: secondary.id };
+        } catch (err) {
+            console.error('Yeni tarayıcı penceresi açılamadı:', err);
+            return { ok: false, error: 'window-create-failed' };
+        }
+    });
+    ipcMain.on('crash-recovery:save-window', saveCrashRecoveryWindow);
+    ipcMain.on('crash-recovery:forget-window', (event, windowId) => {
+        if (!isConfigWindow(event.sender) || !Number.isSafeInteger(windowId)) return;
+        try {
+            const url = new URL(event.sender.getURL());
+            if (Number(url.searchParams.get('windowId')) !== windowId) return;
+            const profileId = url.searchParams.get('profile') || 'default';
+            const windows = readCrashRecoveryWindows().filter((entry) => entry.profileId !== profileId);
+            writeCrashRecoveryWindows(windows);
+        } catch (err) {
+            console.error('Crash recovery data could not be cleared:', err);
+        }
+    });
+    ipcMain.handle('crash-recovery:restore', (event) => {
+        if (!isConfigWindow(event.sender)) return { ok: false, error: 'not-authorized' };
+        try {
+            const url = new URL(event.sender.getURL());
+            if (url.searchParams.get('recovery') !== '1' || url.searchParams.get('incognito') === '1') {
+                return { ok: false, error: 'not-authorized' };
+            }
+            const windows = readCrashRecoveryWindows().sort((a, b) => b.updatedAt - a.updatedAt);
+            if (!windows.length) return { ok: true, primary: null, windows: 0 };
+            const defaultIndex = windows.findIndex((entry) => entry.profileId === 'default');
+            const primary = windows.splice(defaultIndex >= 0 ? defaultIndex : 0, 1)[0];
+            for (const snapshot of windows) {
+                const secondary = createSecondaryWindow({
+                    profileId: snapshot.profileId,
+                    recoveryRestore: true
+                });
+                secondary.webContents.once('did-finish-load', () => {
+                    if (!secondary.isDestroyed()) secondary.webContents.send('restore-session-tabs', snapshot);
+                });
+            }
+            return { ok: true, primary, windows: windows.length + 1 };
+        } catch (err) {
+            console.error('Crash recovery could not be restored:', err);
+            return { ok: false, error: 'restore-failed' };
+        }
+    });
     const isPasswordManagerRequest = (event) => !!win && !win.isDestroyed() &&
         event.sender === win.webContents && (!event.senderFrame || event.senderFrame === win.webContents.mainFrame);
     const passwordEntryId = (entry) => crypto.createHash('sha256')
@@ -823,20 +1473,36 @@ function registerDefaultBrowserHandlers() {
 
     ipcMain.handle('password-manager:get-for-origin', (event, origin) => {
         if (!isPasswordManagerRequest(event) || typeof origin !== 'string') return { ok: false, error: 'not-authorized' };
-        let normalized;
         try {
             const parsed = new URL(origin);
             if (!['http:', 'https:'].includes(parsed.protocol)) return { ok: false, error: 'invalid-origin' };
-            normalized = parsed.origin;
+        } catch (err) {
+            return { ok: false, error: 'invalid-origin' };
+        }
+        return { ok: false, error: 'system-auth-unavailable' };
+    });
+
+    ipcMain.handle('password-manager:check', (event, payload) => {
+        if (!isPasswordManagerRequest(event) || !payload || typeof payload !== 'object') {
+            return { ok: false, error: 'not-authorized' };
+        }
+        if (typeof payload.origin !== 'string' || typeof payload.username !== 'string' ||
+            typeof payload.password !== 'string' || payload.username.length > 512 ||
+            payload.password.length > 4096) return { ok: false, error: 'invalid-credential' };
+        let origin;
+        try {
+            const parsed = new URL(payload.origin);
+            if (!['http:', 'https:'].includes(parsed.protocol)) return { ok: false, error: 'invalid-origin' };
+            origin = parsed.origin;
         } catch (err) {
             return { ok: false, error: 'invalid-origin' };
         }
         try {
-            return { ok: true, entries: readPasswordDatabase()
-                .filter((entry) => entry.origin === normalized)
-                .map(({ username, password }) => ({ username, password })) };
+            const entries = readPasswordDatabase();
+            const inspection = inspectLocalPassword(payload.password, entries, origin, payload.username.trim());
+            return { ok: true, warnings: inspection.warnings, score: inspection.score };
         } catch (err) {
-            console.error('Password manager could not retrieve a credential:', err);
+            console.error('Password safety check could not read the encrypted local store:', err);
             return { ok: false, error: err.message === 'secure-storage-unavailable' ? err.message : 'store-unreadable' };
         }
     });
@@ -910,6 +1576,125 @@ function registerDefaultBrowserHandlers() {
 
     ipcMain.handle('load-app-state', () => readAppState());
 
+    ipcMain.handle('save-app-setting:commit', (event, payload) => {
+        if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame ||
+            !isAppSettingsSender(event.sender) || !payload ||
+            typeof payload.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,80}$/i.test(payload.id) ||
+            !['string', 'boolean', 'number'].includes(typeof payload.val) ||
+            (typeof payload.val === 'number' && !Number.isFinite(payload.val)) ||
+            (typeof payload.val === 'string' && payload.val.length > 8192)) {
+            return { ok: false, error: 'invalid-request' };
+        }
+        const currentState = readAppState();
+        const state = {
+            ...currentState,
+            settings: { ...(currentState.settings || {}), [payload.id]: payload.val }
+        };
+        if (!writeAppState(state)) return { ok: false, error: 'save-failed' };
+        updateRuntimeSetting(payload.id, payload.val);
+        return { ok: true };
+    });
+
+    ipcMain.handle('settings:export-config', async (event, data) => {
+        if (!isConfigWindow(event.sender) || !data || typeof data !== 'object' ||
+            Array.isArray(data) || typeof data.schoolModeEnabled !== 'boolean') {
+            return { ok: false, error: 'invalid-request' };
+        }
+        if (!passwordStorageAvailable()) return { ok: false, error: 'secure-storage-unavailable' };
+        let serialized;
+        try {
+            serialized = JSON.stringify(data);
+            if (Buffer.byteLength(serialized, 'utf8') > 1024 * 1024) {
+                return { ok: false, error: 'config-too-large' };
+            }
+        } catch (err) {
+            return { ok: false, error: 'invalid-config' };
+        }
+
+        const owner = getSenderWindow(event);
+        const result = await dialog.showSaveDialog(owner && !owner.isDestroyed() ? owner : undefined, {
+            title: 'Anka Web ayarlarını güvenli biçimde kaydet',
+            defaultPath: `ankaweb-ayarlar-${new Date().toISOString().slice(0, 10)}.ankaconfig`,
+            filters: [{ name: 'Anka Web ayar dosyası', extensions: ['ankaconfig'] }]
+        });
+        if (result.canceled || !result.filePath) return { ok: false, cancelled: true };
+
+        let configFile;
+        try {
+            const encrypted = safeStorage.encryptString(serialized);
+            configFile = JSON.stringify({
+                format: 'anka-config',
+                version: 2,
+                cipher: 'electron-safeStorage',
+                data: encrypted.toString('base64')
+            });
+        } catch (err) {
+            console.error('OS settings encryption failed:', err);
+            return { ok: false, error: 'secure-storage-unavailable' };
+        }
+        const tempPath = `${result.filePath}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+        try {
+            await fs.promises.writeFile(tempPath, configFile, { flag: 'wx', mode: 0o600 });
+            await fs.promises.rename(tempPath, result.filePath);
+            return { ok: true };
+        } catch (err) {
+            try { await fs.promises.rm(tempPath, { force: true }); } catch (cleanupError) {}
+            console.error('Settings export failed:', err);
+            return { ok: false, error: 'write-failed' };
+        }
+    });
+
+    ipcMain.handle('settings:import-config', async (event) => {
+        if (!isConfigWindow(event.sender)) {
+            return { ok: false, error: 'invalid-request' };
+        }
+        if (!passwordStorageAvailable()) return { ok: false, error: 'secure-storage-unavailable' };
+        const owner = getSenderWindow(event);
+        const result = await dialog.showOpenDialog(owner && !owner.isDestroyed() ? owner : undefined, {
+            title: 'Anka Web ayar dosyasını aç',
+            properties: ['openFile'],
+            filters: [{ name: 'Anka Web ayar dosyası', extensions: ['ankaconfig'] }]
+        });
+        if (result.canceled || !result.filePaths.length) return { ok: false, cancelled: true };
+        try {
+            const contents = await fs.promises.readFile(result.filePaths[0]);
+            if (contents.length > 2 * 1024 * 1024) return { ok: false, error: 'config-too-large' };
+            const envelope = JSON.parse(contents.toString('utf8'));
+            if (envelope && envelope.format === 'anka-config' && envelope.version === 1) {
+                return { ok: false, error: 'legacy-password-config' };
+            }
+            if (!envelope || envelope.format !== 'anka-config' || envelope.version !== 2 ||
+                envelope.cipher !== 'electron-safeStorage' || typeof envelope.data !== 'string') {
+                return { ok: false, error: 'invalid-config' };
+            }
+            if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(envelope.data)) {
+                return { ok: false, error: 'invalid-config' };
+            }
+            const encrypted = Buffer.from(envelope.data, 'base64');
+            if (!encrypted.length || encrypted.length > 1024 * 1024) {
+                return { ok: false, error: 'invalid-config' };
+            }
+            let plaintext;
+            try {
+                plaintext = safeStorage.decryptString(encrypted);
+            } catch (err) {
+                return { ok: false, error: 'wrong-device' };
+            }
+            const data = JSON.parse(plaintext);
+            if (!data || typeof data !== 'object' || Array.isArray(data) ||
+                typeof data.schoolModeEnabled !== 'boolean') {
+                return { ok: false, error: 'invalid-config' };
+            }
+            return { ok: true, data };
+        } catch (err) {
+            if (err && (err.code === 'ENOENT' || err.code === 'EACCES')) {
+                console.error('Settings import failed:', err);
+                return { ok: false, error: 'read-failed' };
+            }
+            return { ok: false, error: 'invalid-config' };
+        }
+    });
+
     ipcMain.handle('reset-all-app-data', async () => {
         try {
             const ses = session.defaultSession;
@@ -920,7 +1705,7 @@ function registerDefaultBrowserHandlers() {
             _schoolCache = null;
             i18nCachePending = null;
             if (i18nCacheTimer) { clearTimeout(i18nCacheTimer); i18nCacheTimer = 0; }
-            for (const file of [SETTINGS_FILE, SCHOOL_CONFIG_FILE, DRAWING_FILE, I18N_CACHE_FILE]) {
+            for (const file of [SETTINGS_FILE, SCHOOL_CONFIG_FILE, DRAWING_FILE, I18N_CACHE_FILE, CRASH_RECOVERY_FILE]) {
                 try { fs.rmSync(getAppDataFile(file), { force: true }); } catch (e) {}
             }
             if (win && !win.isDestroyed()) {
@@ -982,7 +1767,96 @@ function registerDefaultBrowserHandlers() {
         return { cpuPercent: Math.max(0, Math.min(100, (1 - idleDelta / totalDelta) * 100)) };
     });
 
-    ipcMain.on('devtools-toggle', () => { if (win && !win.isDestroyed()) win.webContents.toggleDevTools(); });
+    ipcMain.on('devtools-toggle', (event) => {
+        const owner = getSenderWindow(event);
+        if (!owner || owner.isDestroyed() || !settingEnabled('dev-tools-shortcut', true)) return;
+        try {
+            if (owner.webContents.isDevToolsOpened()) owner.webContents.closeDevTools();
+            else owner.webContents.openDevTools({ mode: 'detach' });
+        } catch (err) {
+            console.error('Uygulama DevTools açılamadı:', err);
+            owner.webContents.send('settings-error', 'DevTools açılamadı.');
+        }
+    });
+    ipcMain.handle('webview-devtools:toggle', (event, payload) => {
+        if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame ||
+            !isConfigWindow(event.sender) || !payload ||
+            !Number.isInteger(payload.webContentsId) ||
+            !['detach', 'right'].includes(payload.mode)) {
+            return { ok: false, error: 'not-authorized' };
+        }
+        const guest = webContents.fromId(payload.webContentsId);
+        const host = guest && !guest.isDestroyed() ? guest.hostWebContents : null;
+        if (!guest || guest.isDestroyed() || guest.getType() !== 'webview' ||
+            !host || host.id !== event.sender.id ||
+            !settingEnabled('dev-tools-shortcut', true)) {
+            return { ok: false, error: 'webview-not-found' };
+        }
+        try {
+            if (guest.isDevToolsOpened()) guest.closeDevTools();
+            else guest.openDevTools({ mode: payload.mode });
+            return { ok: true, open: guest.isDevToolsOpened() };
+        } catch (err) {
+            console.error('Sekme DevTools açılamadı:', err);
+            return { ok: false, error: 'devtools-open-failed' };
+        }
+    });
+    ipcMain.handle('webview-print', (event, webContentsId) => {
+        if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame ||
+            !isConfigWindow(event.sender) || !Number.isInteger(webContentsId)) {
+            return { ok: false, error: 'not-authorized' };
+        }
+        const guest = webContents.fromId(webContentsId);
+        const host = guest && !guest.isDestroyed() ? guest.hostWebContents : null;
+        if (!guest || guest.isDestroyed() || guest.getType() !== 'webview' ||
+            !host || host.id !== event.sender.id || typeof guest.print !== 'function') {
+            return { ok: false, error: 'webview-not-found' };
+        }
+        return new Promise((resolve) => {
+            try {
+                guest.print({ silent: false, printBackground: true }, (success, failureReason) => {
+                    if (success) resolve({ ok: true });
+                    else {
+                        console.error('Sekme yazdırılamadı:', failureReason || 'Yazdırma başarısız.');
+                        resolve({ ok: false, error: 'print-failed' });
+                    }
+                });
+            } catch (err) {
+                console.error('Sekme yazdırma iletişim kutusu açılamadı:', err);
+                resolve({ ok: false, error: 'print-failed' });
+            }
+        });
+    });
+    ipcMain.handle('site-favicon:load', async (event, payload) => {
+        if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame ||
+            !isConfigWindow(event.sender) || !payload ||
+            !Number.isInteger(payload.webContentsId) ||
+            typeof payload.url !== 'string' || payload.url.length > 32768) {
+            return { ok: false, error: 'not-authorized' };
+        }
+        const guest = webContents.fromId(payload.webContentsId);
+        const host = guest && !guest.isDestroyed() ? guest.hostWebContents : null;
+        if (!guest || guest.isDestroyed() || guest.getType() !== 'webview' ||
+            !host || host.id !== event.sender.id) {
+            return { ok: false, error: 'webview-not-found' };
+        }
+        try {
+            const imageBuffer = await downloadShortcutIcon(payload.url, guest.getURL());
+            const image = nativeImage.createFromBuffer(imageBuffer);
+            if (image.isEmpty()) throw new Error('Site simgesi çözümlenemedi.');
+            const dimensions = image.getSize();
+            const scale = Math.min(1, 64 / Math.max(dimensions.width, dimensions.height));
+            const png = image.resize({
+                width: Math.max(1, Math.round(dimensions.width * scale)),
+                height: Math.max(1, Math.round(dimensions.height * scale))
+            }).toPNG();
+            if (!png.length || png.length > 256 * 1024) throw new Error('Site simgesi boyutu geçersiz.');
+            return { ok: true, dataUrl: 'data:image/png;base64,' + png.toString('base64') };
+        } catch (err) {
+            console.error('Site faviconu güvenli şekilde yüklenemedi:', err);
+            return { ok: false, error: 'favicon-load-failed' };
+        }
+    });
     ipcMain.on('open-network-settings', (event) => {
         if (!win || win.isDestroyed() || event.sender !== win.webContents || process.platform !== 'win32') return;
         shell.openExternal('ms-settings:network-status').catch((err) => {
@@ -990,7 +1864,18 @@ function registerDefaultBrowserHandlers() {
             win.webContents.send('settings-error', 'Windows ağ ayarları açılamadı. Ayarlar uygulamasından Ağ ve internet bölümünü açın.');
         });
     });
-    ipcMain.on('devtools-detached', () => { if (win && !win.isDestroyed()) win.webContents.openDevTools({ mode: 'detach' }); });
+    ipcMain.on('devtools-detached', (event) => {
+        const owner = getSenderWindow(event);
+        if (owner && !owner.isDestroyed() && settingEnabled('dev-tools-shortcut', true)) {
+            try {
+                if (owner.webContents.isDevToolsOpened()) owner.webContents.closeDevTools();
+                else owner.webContents.openDevTools({ mode: 'detach' });
+            } catch (err) {
+                console.error('Uygulama DevTools açılamadı:', err);
+                owner.webContents.send('settings-error', 'DevTools açılamadı.');
+            }
+        }
+    });
     ipcMain.on('hard-reload', () => { if (win && !win.isDestroyed()) win.webContents.reloadIgnoringCache(); });
 
     ipcMain.handle('get-context-menu-point', () => {
@@ -1044,6 +1929,16 @@ function registerDefaultBrowserHandlers() {
     });
 
     ipcMain.handle('school-mode:get-config', () => publicSchoolConfig());
+
+    ipcMain.handle('school-mode:set-enabled', (event, enabled) => {
+        if (!isConfigWindow(event.sender) || typeof enabled !== 'boolean') {
+            return { ok: false, error: 'not-authorized' };
+        }
+        const config = readSchoolConfig();
+        config.enabled = enabled;
+        if (!writeSchoolConfig(config)) return { ok: false, error: 'Okul Modu durumu kaydedilemedi.' };
+        return { ok: true, config: publicSchoolConfig(config) };
+    });
 
     ipcMain.handle('school-mode:save-config', (event, payload) => {
         if (!payload || typeof payload !== 'object') return { ok: false, error: 'Ayarlar geçersiz.' };
@@ -1123,18 +2018,132 @@ function registerDefaultBrowserHandlers() {
         return { ok: true, user: { id: user.id, username: user.username, displayName: user.displayName } };
     });
 
+    ipcMain.handle('school-management:open-panel', async (event) => {
+        if (!isConfigWindow(event.sender)) return { ok: false, error: 'not-authorized' };
+        try {
+            await openSchoolManagementWindow(event.sender);
+            return { ok: true };
+        } catch (err) {
+            console.error('Okul yönetim paneli açılamadı:', err);
+            return { ok: false, error: 'panel-open-failed' };
+        }
+    });
+
+    createSchoolManagement({
+        app,
+        ipcMain,
+        safeStorage,
+        dialog,
+        getDataPath: getUserDataPath,
+        isConfigWindow,
+        getWindow: (event) => BrowserWindow.fromWebContents(event.sender),
+        applyPolicy: async (event, policy) => {
+            const state = readAppState();
+            const previousState = { ...state, settings: { ...(state.settings || {}) } };
+            const settings = {
+                'safe-search': policy.strictMode ? 'strict' : 'moderate',
+                'https-only': 'true',
+                'ad-block': 'true',
+                'track-protect': 'true',
+                'max-tabs': String(policy.maxTabs),
+                'max-live-tabs': String(policy.maxTabs)
+            };
+            const appliedSettings = { ...settings, ...(policy.settings || {}) };
+            state.settings = { ...(state.settings || {}), ...appliedSettings };
+            if (!writeAppState(state)) throw new Error('settings-save-failed');
+
+            const schoolConfig = readSchoolConfig();
+            const previousSchoolConfig = { ...schoolConfig };
+            schoolConfig.enabled = policy.schoolModeEnabled;
+            schoolConfig.startUrl = policy.startUrl;
+            if (!writeSchoolConfig(schoolConfig)) {
+                writeAppState(previousState);
+                _schoolCache = previousSchoolConfig;
+                throw new Error('school-config-save-failed');
+            }
+
+            Object.entries(appliedSettings).forEach(([id, value]) => updateRuntimeSetting(id, value));
+            const recipient = win && !win.isDestroyed() ? win.webContents : event.sender;
+            if (!recipient.isDestroyed()) recipient.send('school-management:policy-applied', policy);
+        }
+    });
+
     ipcMain.on('settings-update', (event, payload) => {
         if (!payload || typeof payload.id !== 'string') return;
+        if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || !isAppSettingsSender(event.sender)) return;
         updateRuntimeSetting(payload.id, payload.val);
     });
 
+    const setWindowTitle = (event, value) => {
+        if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame ||
+            !isConfigWindow(event.sender) || typeof value !== 'string') return false;
+        const owner = BrowserWindow.fromWebContents(event.sender);
+        if (!owner || owner.isDestroyed()) return false;
+        const name = value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 64);
+        owner.setTitle(name ? 'Anka Web — ' + name : 'Anka Web');
+        return true;
+    };
+
+    ipcMain.handle('set-window-title:apply', (event, value) => ({
+        ok: setWindowTitle(event, value)
+    }));
+
+    ipcMain.on('set-window-title', (event, value) => {
+        setWindowTitle(event, value);
+    });
+
+    ipcMain.on('set-theme-source', (event, value) => {
+        if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame ||
+            !isConfigWindow(event.sender) ||
+            !['system', 'light', 'dark'].includes(value)) return;
+        nativeTheme.themeSource = value;
+    });
+
     ipcMain.on('save-app-setting', (event, payload) => {
-        if (!payload || typeof payload.id !== 'string') return;
+        if (!payload || typeof payload.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,80}$/i.test(payload.id) ||
+            !event.senderFrame || event.senderFrame !== event.sender.mainFrame ||
+            !isAppSettingsSender(event.sender)) return;
+        const currentState = readAppState();
+        const state = {
+            ...currentState,
+            settings: { ...(currentState.settings || {}), [payload.id]: payload.val }
+        };
+        if (!writeAppState(state)) {
+            console.error('Application setting could not be saved:', payload.id);
+            if (!event.sender.isDestroyed()) {
+            event.sender.send('settings-error', 'Ayar kaydedilemedi. Depolama alanını ve dosya izinlerini kontrol edin.');
+            }
+            return;
+        }
         updateRuntimeSetting(payload.id, payload.val);
-        const state = readAppState();
-        state.settings = state.settings || {};
-        state.settings[payload.id] = payload.val;
-        writeAppState(state);
+    });
+
+    ipcMain.handle('anka:restart', (event) => {
+        if (!isConfigWindow(event.sender)) return { ok: false, error: 'not-authorized' };
+        app.relaunch();
+        app.quit();
+        return { ok: true };
+    });
+
+    ipcMain.handle('anka:crash-open-log', async (event) => {
+        if (!crashWindows.has(event.sender)) return { ok: false, error: 'not-authorized' };
+        const logPath = getAppDataFile(CRASH_LOG_FILE);
+        try {
+            fs.mkdirSync(path.dirname(logPath), { recursive: true });
+            if (!fs.existsSync(logPath)) fs.writeFileSync(logPath, '', { encoding: 'utf8', mode: 0o600 });
+            const error = await shell.openPath(logPath);
+            return error ? { ok: false, error: 'open-failed' } : { ok: true };
+        } catch (err) {
+            console.error('Crash log could not be opened:', err);
+            return { ok: false, error: 'open-failed' };
+        }
+    });
+
+    ipcMain.handle('anka:crash-restart', (event) => {
+        if (!crashWindows.has(event.sender)) return { ok: false, error: 'not-authorized' };
+        app.relaunch();
+        app.quit();
+        return { ok: true };
     });
 
     ipcMain.on('reset-app-settings', () => {
@@ -1161,11 +2170,17 @@ function registerDefaultBrowserHandlers() {
         try { fs.rmSync(getAppDataFile(DRAWING_FILE), { force: true }); } catch (err) {}
     });
 
-    ipcMain.handle('window-minimize', windowMinimize);
-    ipcMain.handle('window-maximize', windowMaximize);
-    ipcMain.handle('window-close', windowClose);
-    ipcMain.handle('is-window-maximized', () => (win && !win.isDestroyed()) ? win.isMaximized() : false);
-    ipcMain.handle('is-window-fullscreen', () => (win && !win.isDestroyed()) ? win.isFullScreen() : false);
+    ipcMain.handle('window-minimize', (event) => windowMinimize(event));
+    ipcMain.handle('window-maximize', (event) => windowMaximize(event));
+    ipcMain.handle('window-close', (event) => windowClose(event));
+    ipcMain.handle('is-window-maximized', (event) => {
+        const owner = getSenderWindow(event);
+        return owner && !owner.isDestroyed() ? owner.isMaximized() : false;
+    });
+    ipcMain.handle('is-window-fullscreen', (event) => {
+        const owner = getSenderWindow(event);
+        return owner && !owner.isDestroyed() ? owner.isFullScreen() : false;
+    });
 
     ipcMain.handle('get-downloads', getDownloadsList);
     ipcMain.handle('get-downloads-list', getDownloadsList);
@@ -1208,7 +2223,7 @@ function registerDefaultBrowserHandlers() {
     });
 
     ipcMain.handle('get-app-version', () => app.getVersion());
-    ipcMain.on('set-fullscreen', (event, val) => setFullscreen(val));
+    ipcMain.on('set-fullscreen', (event, val) => setFullscreen(val, event));
 
     ipcMain.on('set-as-default-browser', () => {
         try {
@@ -1288,19 +2303,63 @@ function clearDownloadHistory(cutoff = 0) {
     }
 }
 
-function windowMinimize() {
-    if (win && !win.isDestroyed()) win.minimize();
+function getSenderWindow(event) {
+    return event && event.sender ? BrowserWindow.fromWebContents(event.sender) : win;
 }
 
-function windowMaximize() {
-    if (win && !win.isDestroyed()) {
-        if (win.isMaximized()) win.unmaximize();
-        else win.maximize();
+function isDefaultAppWindow(contents) {
+    if (!contents || contents.isDestroyed()) return false;
+    try {
+        const url = new URL(contents.getURL());
+        const profileId = url.searchParams.get('profile');
+        return (profileId === null || profileId === 'default') && url.searchParams.get('incognito') !== '1';
+    } catch (err) {
+        return contents === (win && !win.isDestroyed() ? win.webContents : null);
     }
 }
 
-function windowClose() {
-    if (win && !win.isDestroyed()) win.close();
+function isConfigWindow(contents) {
+    if (!contents || contents.isDestroyed()) return false;
+    try {
+        const url = new URL(contents.getURL());
+        return url.protocol === 'file:' &&
+            (url.pathname.endsWith('/src/renderer/index.html') ||
+                url.pathname.endsWith('/src/renderer/school-management.html')) &&
+            url.searchParams.get('incognito') !== '1';
+    } catch (err) {
+        return false;
+    }
+}
+
+function isAppSettingsSender(contents) {
+    if (isConfigWindow(contents)) return true;
+    if (!contents || contents.isDestroyed() || contents.getType() !== 'webview') return false;
+    try {
+        const url = new URL(contents.getURL());
+        return url.protocol === 'file:' &&
+            url.pathname.endsWith('/src/renderer/newtab.html') &&
+            url.searchParams.get('incognito') !== '1';
+    } catch (err) {
+        return false;
+    }
+}
+
+function windowMinimize(event) {
+    const owner = getSenderWindow(event);
+    if (owner && !owner.isDestroyed()) owner.minimize();
+}
+
+function windowMaximize(event) {
+    const owner = getSenderWindow(event);
+    if (owner && !owner.isDestroyed()) {
+        if (owner.isMaximized()) owner.unmaximize();
+        else owner.maximize();
+    }
+}
+
+function windowClose(event) {
+    const owner = getSenderWindow(event);
+    if (owner && !owner.isDestroyed()) owner.close();
 }
 
 function showWindow() {
@@ -1311,6 +2370,47 @@ function showWindow() {
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
+}
+
+async function openSchoolManagementWindow(sender) {
+    if (schoolManagementWindow && !schoolManagementWindow.isDestroyed()) {
+        if (schoolManagementWindow.isMinimized()) schoolManagementWindow.restore();
+        schoolManagementWindow.show();
+        schoolManagementWindow.focus();
+        return;
+    }
+    const owner = BrowserWindow.fromWebContents(sender);
+    schoolManagementWindow = new BrowserWindow({
+        width: 1080,
+        height: 820,
+        minWidth: 760,
+        minHeight: 620,
+        show: false,
+        autoHideMenuBar: true,
+        title: 'Anka Web · Okul Yönetimi',
+        icon: path.join(app.getAppPath(), 'src', 'icons', 'dark-logo.png'),
+        ...(owner && !owner.isDestroyed() ? { parent: owner } : {}),
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false,
+            webSecurity: true,
+            sandbox: false,
+            spellcheck: false
+        }
+    });
+    const panel = schoolManagementWindow;
+    panel.once('ready-to-show', () => {
+        if (!panel.isDestroyed()) panel.show();
+    });
+    panel.on('closed', () => {
+        if (schoolManagementWindow === panel) schoolManagementWindow = null;
+    });
+    try {
+        await panel.loadFile(path.join(app.getAppPath(), 'src', 'renderer', 'school-management.html'));
+    } catch (err) {
+        if (!panel.isDestroyed()) panel.destroy();
+        throw err;
+    }
 }
 
 function destroyTray() {
@@ -1329,11 +2429,13 @@ function createTray() {
             { label: 'Anka Web ' + app.getVersion(), enabled: false },
             { type: 'separator' },
             { label: 'Anka Web’i Aç', click: showWindow },
-            { label: 'Pencereyi Gizle', click: () => { if (win && !win.isDestroyed()) win.hide(); } },
+            { label: 'Pencereyi Kapat', click: () => { if (win && !win.isDestroyed()) win.hide(); } },
             { label: 'Yeni Sekme Aç', click: () => {
                 showWindow();
                 if (win && !win.isDestroyed()) win.webContents.send('open-new-tab', 'newtab.html');
             } },
+            { label: 'Yeni Pencere Aç', click: () => createSecondaryWindow({ profileId: 'default' }) },
+            { label: 'Yeni Gizli Pencere Aç', click: () => createSecondaryWindow({ incognito: true }) },
             { label: 'Güncellemeleri Kontrol Et', click: () => { showWindow(); checkUpdates(win); } },
             { type: 'separator' },
             { label: 'Uygulamadan Çık', click: () => { appQuitting = true; app.quit(); } }
@@ -1379,8 +2481,9 @@ function applyStartupOnLogin(enabled) {
     }
 }
 
-function setFullscreen(val) {
-    if (win && !win.isDestroyed()) win.setFullScreen(!!val);
+function setFullscreen(val, event) {
+    const owner = getSenderWindow(event);
+    if (owner && !owner.isDestroyed()) owner.setFullScreen(!!val);
 }
 
 function ensureLinuxDesktopShortcut() {
@@ -1397,12 +2500,69 @@ function ensureLinuxDesktopShortcut() {
 }
 
 app.whenReady().then(async () => {
+    const runningMarker = getAppDataFile(RUNNING_MARKER_FILE);
+    uncleanShutdownDetected = fs.existsSync(runningMarker) &&
+        settingEnabled('restore-session') && readCrashRecoveryWindows().length > 0;
+    try {
+        fs.mkdirSync(getUserDataPath(), { recursive: true });
+        fs.writeFileSync(runningMarker, String(process.pid), { encoding: 'utf8', mode: 0o600 });
+    } catch (err) {
+        console.error('Application shutdown state could not be recorded:', err);
+        uncleanShutdownDetected = false;
+    }
+
+    if (process.platform === 'win32' && typeof app.setUserTasks === 'function') {
+        app.setAppUserModelId('com.wraitgame.ankaweb');
+        const appIconPath = path.join(app.getAppPath(), 'src', 'icons', 'logo.ico');
+        const appArguments = (command) => process.defaultApp
+            ? `"${app.getAppPath().replace(/"/g, '\\"')}" ${command}`
+            : command;
+        try {
+            app.setUserTasks([
+                {
+                    program: app.getPath('exe'),
+                    arguments: appArguments('--new-tab'),
+                    title: 'Yeni Sekme',
+                    description: 'Anka Web’de yeni sekme aç',
+                    iconPath: appIconPath,
+                    iconIndex: 0
+                },
+                {
+                    program: app.getPath('exe'),
+                    arguments: appArguments('--new-incognito-tab'),
+                    title: 'Yeni Gizli Sekme',
+                    description: 'Anka Web’de yeni gizli sekme aç',
+                    iconPath: appIconPath,
+                    iconIndex: 0
+                },
+                {
+                    program: app.getPath('exe'),
+                    arguments: appArguments('--new-window'),
+                    title: 'Yeni Pencere',
+                    description: 'Anka Web’de yeni pencere aç',
+                    iconPath: appIconPath,
+                    iconIndex: 0
+                },
+                {
+                    program: app.getPath('exe'),
+                    arguments: appArguments('--new-incognito-window'),
+                    title: 'Yeni Gizli Pencere',
+                    description: 'Anka Web’de yeni gizli pencere aç',
+                    iconPath: appIconPath,
+                    iconIndex: 0
+                }
+            ]);
+        } catch (err) {
+            console.error('Görev çubuğu kısayolları kaydedilemedi:', err);
+        }
+    }
     setupSessionHandlers();
     setupDownloadManager();
     registerDefaultBrowserHandlers();
     ensureLinuxDesktopShortcut();
     createTray();
-    if (settingEnabled('start-on-login')) applyStartupOnLogin(true);
+    const startupResult = applyStartupOnLogin(settingEnabled('start-on-login'));
+    if (!startupResult.ok) console.error('Sistem başlangıç ayarı eşitlenemedi:', startupResult.error);
 
     let flow = { proceed: true, release() {} };
     try { flow = await runFirstLaunch(); }
@@ -1454,6 +2614,8 @@ app.on('will-quit', () => {
     flushI18nCache();
     if (i18nCacheTimer) { clearTimeout(i18nCacheTimer); i18nCacheTimer = 0; }
     if (_downloadCleanupTimer) { clearInterval(_downloadCleanupTimer); _downloadCleanupTimer = null; }
+    try { fs.rmSync(getAppDataFile(RUNNING_MARKER_FILE), { force: true }); }
+    catch (err) { console.error('Application shutdown state could not be cleared:', err); }
 });
 
 ipcMain.handle('find-in-page', (event, text, options) => {
@@ -1473,6 +2635,7 @@ app.on('window-all-closed', () => {
 process.on('uncaughtException', (error) => {
     if (error && error.message && (error.message.includes('Render frame was disposed') || error.message.includes('Object has been destroyed'))) return;
     console.error(error);
+    showCrashWindow(error);
 });
 
 process.on('unhandledRejection', (reason) => {

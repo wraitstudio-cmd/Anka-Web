@@ -11,7 +11,6 @@ function applyBrowserSecurity(options = {}) {
         const type = contents.getType();
 
         if (type === 'webview') {
-            contents.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
             contents.setWindowOpenHandler(() => ({ action: 'deny' }));
             contents.on('will-navigate', (event, url) => {
                 if (!SAFE_PROTOCOL.test(url)) event.preventDefault();
@@ -45,7 +44,6 @@ function applyBrowserSecurity(options = {}) {
             return;
         }
 
-        contents.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         contents.on('will-navigate', (event) => event.preventDefault());
         contents.setWindowOpenHandler(() => ({ action: 'deny' }));
 

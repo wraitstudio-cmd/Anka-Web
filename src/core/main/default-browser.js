@@ -61,6 +61,7 @@ function setupDefaultBrowser(options = {}) {
     const winProgId = options.winProgId || 'AnkaBrowserURL';
     const desktopFile = options.desktopFile || (String(app.getName()).toLowerCase().replace(/\s+/g, '-') + '.desktop');
     const pending = [];
+    const pendingCommands = [];
     let rendererReady = false;
 
     if (options.performance !== false) applyPerformanceSwitches();
@@ -80,15 +81,28 @@ function setupDefaultBrowser(options = {}) {
         return win;
     };
 
-    const deliver = (targets) => {
+    const deliver = (targets, command = null) => {
         const win = focusWindow();
-        if (!targets.length) return;
+        if (!targets.length && !command) return;
         const contents = win && !win.webContents.isDestroyed() ? win.webContents : null;
-        if (rendererReady && contents && !contents.isLoading()) contents.send('open-external-url', targets);
-        else pending.push(...targets);
+        if (rendererReady && contents && !contents.isLoading()) {
+            if (targets.length) contents.send('open-external-url', targets);
+            if (command) contents.send('launch-command', command);
+        } else {
+            pending.push(...targets);
+            if (command) pendingCommands.push(command);
+        }
     };
 
-    app.on('second-instance', (event, argv) => deliver(pickTargets(argv)));
+    const pickCommand = (argv) => {
+        if (argv.includes('--new-incognito-window')) return 'incognito-window';
+        if (argv.includes('--new-window')) return 'window';
+        if (argv.includes('--new-incognito-tab')) return 'incognito-tab';
+        if (argv.includes('--new-tab')) return 'tab';
+        return null;
+    };
+
+    app.on('second-instance', (event, argv) => deliver(pickTargets(argv), pickCommand(argv)));
 
     app.on('open-url', (event, url) => {
         event.preventDefault();
@@ -103,6 +117,9 @@ function setupDefaultBrowser(options = {}) {
     ipcMain.on('anka-renderer-ready', (event) => {
         rendererReady = true;
         if (pending.length && !event.sender.isDestroyed()) event.sender.send('open-external-url', pending.splice(0));
+        if (pendingCommands.length && !event.sender.isDestroyed()) {
+            pendingCommands.splice(0).forEach((command) => event.sender.send('launch-command', command));
+        }
     });
 
     const checkDefault = async () => {
@@ -139,6 +156,8 @@ function setupDefaultBrowser(options = {}) {
     ipcMain.handle('anka-set-default-browser', () => makeDefault());
 
     pending.push(...pickTargets(process.argv));
+    const initialCommand = pickCommand(process.argv);
+    if (initialCommand) pendingCommands.push(initialCommand);
 
     return { primary: true, deliver, checkDefault, makeDefault };
 }

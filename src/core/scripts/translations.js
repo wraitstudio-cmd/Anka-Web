@@ -19,6 +19,9 @@ window.AnkaI18n = (function () {
 
     var currentLang = 'tr';
     var inflight = new Map();
+    var pageTranslationQueue = new Map();
+    var pageTranslationTimer = 0;
+    var pageTranslationBusy = false;
     var saveTimer = 0;
 
     function persist() {
@@ -37,6 +40,8 @@ window.AnkaI18n = (function () {
         if (saveTimer) { clearTimeout(saveTimer); saveTimer = 0; }
         persist();
     }
+
+    window.addEventListener('beforeunload', flushCache);
 
     function sleep(ms) {
         return new Promise(function (r) { setTimeout(r, ms); });
@@ -182,16 +187,152 @@ window.AnkaI18n = (function () {
     function setLang(lang) {
         currentLang = SUPPORTED.indexOf(lang) >= 0 ? lang : 'tr';
         document.documentElement.setAttribute('lang', currentLang);
+        document.documentElement.setAttribute('dir', currentLang === 'ar' ? 'rtl' : 'ltr');
+        applyPageLanguage(document);
     }
 
     function getLang() { return currentLang; }
     function getCache() { return cache; }
 
+    function queuePageTranslation(element, attribute, source, lang) {
+        var key = lang + '|' + source;
+        var request = pageTranslationQueue.get(key);
+        if (!request) {
+            request = { source: source, lang: lang, targets: [] };
+            pageTranslationQueue.set(key, request);
+        }
+        request.targets.push({ element: element, attribute: attribute });
+        if (!pageTranslationTimer && !pageTranslationBusy) pageTranslationTimer = setTimeout(flushPageTranslations, 0);
+    }
+
+    async function flushPageTranslations() {
+        if (pageTranslationBusy) return;
+        pageTranslationTimer = 0;
+        pageTranslationBusy = true;
+        var requests = Array.from(pageTranslationQueue.values());
+        pageTranslationQueue.clear();
+        try {
+            var groups = new Map();
+            for (var i = 0; i < requests.length; i++) {
+                var group = groups.get(requests[i].lang);
+                if (!group) {
+                    group = [];
+                    groups.set(requests[i].lang, group);
+                }
+                group.push(requests[i]);
+            }
+            for (var entry of groups) {
+                var lang = entry[0];
+                var batch = entry[1];
+                if (currentLang !== lang) continue;
+                var outputs = await translateBatch(batch.map(function (item) { return item.source; }), lang);
+                for (var j = 0; j < batch.length; j++) {
+                    if (outputs[j] === batch[j].source) continue;
+                    for (var k = 0; k < batch[j].targets.length; k++) {
+                        var target = batch[j].targets[k];
+                        var element = target.element;
+                        var attribute = target.attribute;
+                        var sourceKey = 'data-anka-i18n-source' + (attribute ? '-' + attribute : '');
+                        var translatedKey = 'data-anka-i18n-translated' + (attribute ? '-' + attribute : '');
+                        var langKey = 'data-anka-i18n-lang' + (attribute ? '-' + attribute : '');
+                        var current = attribute ? element.getAttribute(attribute) || '' : element.textContent.trim();
+                        if (!element.isConnected || currentLang !== lang || element.getAttribute(sourceKey) !== batch[j].source || current !== batch[j].source) continue;
+                        if (attribute) element.setAttribute(attribute, outputs[j]);
+                        else element.textContent = outputs[j];
+                        element.setAttribute(translatedKey, outputs[j]);
+                        element.setAttribute(langKey, lang);
+                    }
+                }
+            }
+        } finally {
+            pageTranslationBusy = false;
+            if (pageTranslationQueue.size && !pageTranslationTimer) pageTranslationTimer = setTimeout(flushPageTranslations, 0);
+        }
+    }
+
+    function translateMarkedValue(element, attribute) {
+        var sourceKey = 'data-anka-i18n-source' + (attribute ? '-' + attribute : '');
+        var translatedKey = 'data-anka-i18n-translated' + (attribute ? '-' + attribute : '');
+        var langKey = 'data-anka-i18n-lang' + (attribute ? '-' + attribute : '');
+        var current = attribute ? element.getAttribute(attribute) || '' : element.textContent.trim();
+        var translated = element.getAttribute(translatedKey);
+        var translatedLang = element.getAttribute(langKey);
+        if (translated && current === translated) {
+            if (translatedLang === currentLang) return;
+            var original = element.getAttribute(sourceKey);
+            if (original !== null) {
+                if (attribute) element.setAttribute(attribute, original);
+                else element.textContent = original;
+                current = original;
+            }
+        }
+        var source = element.getAttribute(sourceKey);
+        if (!source || current !== source) {
+            source = current;
+            element.setAttribute(sourceKey, source);
+            element.removeAttribute(translatedKey);
+        }
+        if (!source) return;
+        if (currentLang === SOURCE_LANG) {
+            if (current !== source) {
+                if (attribute) element.setAttribute(attribute, source);
+                else element.textContent = source;
+            }
+            element.removeAttribute(translatedKey);
+            return;
+        }
+        var lang = currentLang;
+        queuePageTranslation(element, attribute, source, lang);
+    }
+
+    function translateMarkedElement(element) {
+        if (!element || !element.isConnected) return;
+        if (element.hasAttribute('data-anka-i18n')) translateMarkedValue(element, '');
+        var attributes = (element.getAttribute('data-anka-i18n-attrs') || '').split(',').map(function (value) { return value.trim(); }).filter(Boolean);
+        for (var i = 0; i < attributes.length; i++) translateMarkedValue(element, attributes[i]);
+    }
+
+    function applyPageLanguage(root) {
+        if (!root) return;
+        if (root.nodeType === 1 && root.matches('[data-anka-i18n],[data-anka-i18n-attrs]')) translateMarkedElement(root);
+        var elements = root.querySelectorAll ? root.querySelectorAll('[data-anka-i18n],[data-anka-i18n-attrs]') : [];
+        for (var i = 0; i < elements.length; i++) translateMarkedElement(elements[i]);
+    }
+
+    function initializePageLanguage(root) {
+        try {
+            var storedLang = localStorage.getItem('set_language');
+            if (storedLang) currentLang = SUPPORTED.indexOf(storedLang) >= 0 ? storedLang : SOURCE_LANG;
+        } catch (e) {}
+        document.documentElement.setAttribute('lang', currentLang);
+        document.documentElement.setAttribute('dir', currentLang === 'ar' ? 'rtl' : 'ltr');
+        applyPageLanguage(root || document);
+        if (!pageLanguageObserver && document.documentElement) {
+            pageLanguageObserver = new MutationObserver(function (records) {
+                for (var i = 0; i < records.length; i++) {
+                    var record = records[i];
+                    if (record.target.nodeType === 1) {
+                        var markedParent = record.target.closest('[data-anka-i18n],[data-anka-i18n-attrs]');
+                        if (markedParent) translateMarkedElement(markedParent);
+                    }
+                    for (var j = 0; j < record.addedNodes.length; j++) {
+                        var node = record.addedNodes[j];
+                        if (node.nodeType === 1) applyPageLanguage(node);
+                    }
+                }
+            });
+            pageLanguageObserver.observe(document.documentElement, { childList: true, subtree: true });
+        }
+    }
+
     function hydrateCacheFromMain(data) {
         if (!data || typeof data !== 'object') return;
-        for (var k in data) if (Object.prototype.hasOwnProperty.call(data, k)) cache[k] = data[k];
+        for (var k in data) if (Object.prototype.hasOwnProperty.call(data, k) && !Object.prototype.hasOwnProperty.call(cache, k)) cache[k] = data[k];
         try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch (e) {}
     }
+
+    var pageLanguageObserver = null;
+    initializePageLanguage(document);
 
     return {
         translateOne: translateOne,
@@ -203,6 +344,8 @@ window.AnkaI18n = (function () {
         setLang: setLang,
         getLang: getLang,
         getCache: getCache,
+        applyPageLanguage: applyPageLanguage,
+        initializePageLanguage: initializePageLanguage,
         hydrateCacheFromMain: hydrateCacheFromMain,
         SUPPORTED: SUPPORTED
     };

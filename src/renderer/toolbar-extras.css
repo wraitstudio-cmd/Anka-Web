@@ -230,7 +230,26 @@ body.bm-visible #draw-layer {
 }
 
 .xt-pop.xt-overflow {
-    width: min(260px, calc(100vw - 16px));
+    width: min(320px, calc(100vw - 16px));
+    padding: 10px;
+}
+
+.xt-overflow .xt-row {
+    min-height: 52px;
+}
+
+.xt-profile .xt-actions {
+    justify-content: stretch;
+}
+
+.xt-profile .xt-actions > .xt-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 8px;
+}
+
+.xt-profile .xt-del {
+    opacity: .72;
 }
 
 @keyframes xtPop {
@@ -485,8 +504,10 @@ body.bm-visible #draw-layer {
 
 #xt-side {
     display: flex;
-    flex: 0 1 clamp(260px, 30vw, 380px);
-    min-width: 0;
+    flex: 0 0 clamp(300px, 32vw, 440px);
+    width: clamp(300px, 32vw, 440px);
+    min-width: min(300px, 100vw);
+    max-width: min(440px, 48vw);
     flex-direction: column;
     background: var(--sidebar);
     border-left: 1px solid var(--border);
@@ -513,6 +534,22 @@ body.bm-visible #draw-layer {
     background: var(--panel);
     border-bottom: 1px solid var(--border);
     font-size: 12px;
+}
+
+.xt-side-heading {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 2px;
+}
+
+.xt-side-heading strong {
+    font-size: 13px;
+}
+
+.xt-side-heading small {
+    color: var(--text-secondary);
+    font-size: 10px;
 }
 
 #xt-side-close {
@@ -611,8 +648,20 @@ body.bm-visible #draw-layer {
 
 .xt-side-tools {
     display: flex;
+    align-items: center;
     gap: 8px;
     padding: 10px;
+}
+
+.xt-side-search-wrap {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    padding-right: 4px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--input-bg);
 }
 
 #xt-side-search {
@@ -620,9 +669,9 @@ body.bm-visible #draw-layer {
     min-width: 0;
     height: 34px;
     padding: 0 10px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--input-bg);
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
     color: var(--text);
     font: inherit;
     font-size: 12px;
@@ -631,8 +680,46 @@ body.bm-visible #draw-layer {
 }
 
 #xt-side-search:focus {
+    outline: none;
+}
+
+.xt-side-search-wrap:focus-within {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+#xt-side-search-clear {
+    width: 26px;
+    height: 26px;
+    min-height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 18px;
+    cursor: pointer;
+}
+
+#xt-side-search-clear[hidden] {
+    display: none;
+}
+
+#xt-history-filter {
+    width: calc(100% - 20px);
+    height: 34px;
+    margin: 10px 10px 0;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+}
+
+#xt-history-filter[hidden] {
+    display: none;
 }
 
 #xt-side-action {
@@ -654,6 +741,34 @@ body.bm-visible #draw-layer {
     overscroll-behavior: contain;
     padding: 0 6px 10px;
     scrollbar-width: thin;
+}
+
+#xt-side .xt-side-list .xt-row {
+    min-height: 54px;
+    margin: 3px 2px;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: var(--bg-secondary);
+    transition: border-color .14s ease, background-color .14s ease, transform .14s ease;
+}
+
+#xt-side .xt-side-list .xt-row:hover,
+#xt-side .xt-side-list .xt-row:focus-visible {
+    border-color: var(--border);
+    background: var(--hover);
+}
+
+#xt-side .xt-side-list .xt-row:active {
+    transform: scale(.99);
+}
+
+#xt-side .xt-group {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 12px 10px 6px;
+    background: var(--sidebar);
 }
 
 .xt-group {
@@ -716,12 +831,13 @@ html.perf-lite #star-btn.star-pop .xi {
 
 @media (max-width: 760px) {
     #xt-side:not([hidden]) {
-        position: absolute;
-        z-index: 1500;
-        top: 0;
+        position: fixed;
+        z-index: 3000004;
+        top: 50px;
         right: 0;
         bottom: 0;
-        width: min(86vw, 380px);
+        width: min(100vw, 420px);
+        max-width: 100vw;
         flex: none;
         box-shadow: -16px 0 36px rgba(0, 0, 0, 0.3);
     }

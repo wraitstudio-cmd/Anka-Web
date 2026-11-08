@@ -287,6 +287,7 @@
     let overflowStart = 0;
     let sideOpen = false;
     let sideTab = 'bookmarks';
+    let historyFilter = 'all';
     let sortMode = 'date';
     let popup = null;
     let popupOwner = null;
@@ -340,6 +341,7 @@
         if (popupOwner) popupOwner.classList.remove('active');
         popup = null;
         popupOwner = null;
+        if (window.AnkaRightClick) window.AnkaRightClick.deactivate('toolbar-popup');
     }
 
     function openPopup(anchor, cls, build, align, force) {
@@ -371,6 +373,18 @@
         anchor.classList.add('active');
         popup = node;
         popupOwner = anchor;
+        if (window.AnkaRightClick) {
+            window.AnkaRightClick.register('toolbar-popup', {
+                panel: node,
+                trigger: anchor,
+                group: 'toolbar-popups',
+                isOpen: () => popup === node,
+                close: closePopup,
+                dismissOnOutside: true,
+                dismissOnEscape: true
+            });
+            window.AnkaRightClick.activate('toolbar-popup');
+        }
         return node;
     }
 
@@ -394,6 +408,9 @@
         const host = hostOf(item.url);
         wrap.textContent = ((item.title || host || '?').charAt(0) || '?').toUpperCase();
         if (!host || faviconCache.get(host) === false) return wrap;
+        let iconUrl = '';
+        try { iconUrl = new URL(item.url).origin + '/favicon.ico'; } catch (err) {}
+        if (!iconUrl) return wrap;
         const img = new Image();
         img.alt = '';
         img.decoding = 'async';
@@ -407,7 +424,7 @@
             wrap.appendChild(img);
         };
         img.onerror = () => faviconCache.set(host, false);
-        img.src = 'https://www.google.com/s2/favicons?sz=32&domain=' + encodeURIComponent(host);
+        img.src = iconUrl;
         return wrap;
     }
 
@@ -721,10 +738,12 @@
             closePopup();
             return;
         }
-        setCurrent(target);
-        syncProfile();
         closePopup();
-        toast('Profil: ' + (target.name || target.username));
+        if (typeof window.ankaOpenProfileWindow === 'function') {
+            window.ankaOpenProfileWindow(target.username);
+            return;
+        }
+        toast('Profil penceresi açılamadı.', 'error');
     }
 
     function removeProfile(username) {
@@ -751,9 +770,9 @@
         }
         const profile = { username, name: name.slice(0, MAX_NAME), avatar: '' };
         writeRaw('anka_accounts', accounts.concat(profile));
-        setCurrent(profile);
-        syncProfile();
-        toast('Profil: ' + profile.name);
+        closePopup();
+        if (typeof window.ankaOpenProfileWindow === 'function') window.ankaOpenProfileWindow(profile.username);
+        else toast('Profil penceresi açılamadı.', 'error');
     }
 
     function renameProfile(value) {
@@ -1009,6 +1028,16 @@
             row.tabIndex = 0;
             row.appendChild(avatarNode(profile, false));
             row.appendChild(infoNode(profile.name || profile.username, profile.username === activeProfile ? 'Kullanımda' : 'Geçiş yap'));
+            const openWindow = el('button', 'xt-del', '↗');
+            openWindow.type = 'button';
+            openWindow.title = 'Profili ayrı pencerede aç';
+            openWindow.setAttribute('aria-label', 'Profili ayrı pencerede aç');
+            openWindow.addEventListener('click', (event) => {
+                event.stopPropagation();
+                closePopup();
+                if (typeof window.ankaOpenProfileWindow === 'function') window.ankaOpenProfileWindow(profile.username);
+            });
+            row.appendChild(openWindow);
             if (profile.username !== activeProfile && accounts.length > 1) {
                 const del = el('button', 'xt-del');
                 del.type = 'button';
@@ -1052,6 +1081,21 @@
         });
         tools.append(exportBtn, htmlBtn, importBtn);
         frag.appendChild(tools);
+        const windowActions = el('div', 'xt-actions');
+        const newWindow = el('button', 'xt-btn small', 'Yeni Pencere');
+        const privateWindow = el('button', 'xt-btn small', 'Yeni Gizli Pencere');
+        newWindow.type = 'button';
+        privateWindow.type = 'button';
+        newWindow.addEventListener('click', () => {
+            closePopup();
+            if (typeof window.ankaOpenProfileWindow === 'function') window.ankaOpenProfileWindow(current.username);
+        });
+        privateWindow.addEventListener('click', () => {
+            closePopup();
+            if (typeof window.ankaOpenBrowserWindow === 'function') window.ankaOpenBrowserWindow({ incognito: true });
+        });
+        windowActions.append(newWindow, privateWindow);
+        frag.appendChild(windowActions);
         node.appendChild(frag);
 
         node.onclick = (event) => {
@@ -1094,6 +1138,8 @@
             tab.setAttribute('aria-selected', String(on));
         });
         const sortBtn = $('xt-sort-btn');
+        const historySelect = $('xt-history-filter');
+        if (historySelect) historySelect.hidden = sideTab !== 'history';
         if (sortBtn) {
             sortBtn.textContent = SORT_LABELS[sortMode] || 'Tarih';
             sortBtn.title = 'Sıralama: ' + (SORT_LABELS[sortMode] || 'Tarih') + ' (değiştirmek için tıkla)';
@@ -1147,6 +1193,9 @@
         const query = search.value.trim().toLowerCase();
         const source = sideSource();
         const frag = document.createDocumentFragment();
+        const count = $('xt-side-count');
+        const clearSearch = $('xt-side-search-clear');
+        if (clearSearch) clearSearch.hidden = !query;
         action.dataset.armed = '0';
         clearTimeout(armTimer);
         const page = currentPage();
@@ -1156,8 +1205,13 @@
 
         let shown = 0;
         let lastGroup = '';
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const weekStart = todayStart - 6 * 86400000;
         for (let i = 0; i < source.length && shown < 200; i++) {
             const item = source[i];
+            if (sideTab === 'history' && historyFilter === 'today' && item.t < todayStart) continue;
+            if (sideTab === 'history' && historyFilter === 'week' && item.t < weekStart) continue;
             if (query) {
                 const hay = ((item.title || '') + ' ' + item.url).toLowerCase();
                 if (hay.indexOf(query) < 0) continue;
@@ -1172,6 +1226,7 @@
             frag.appendChild(sideRow(item, i, query));
             shown += 1;
         }
+        if (count) count.textContent = shown + ' kayıt';
         if (!shown) {
             const messages = {
                 bookmarks: 'Henüz yer imi yok',
@@ -1310,10 +1365,25 @@
         const action = $('xt-side-action');
         if (action) action.addEventListener('click', sideAction);
         const search = $('xt-side-search');
+        const clearSearch = $('xt-side-search-clear');
+        const historySelect = $('xt-history-filter');
         if (search) {
             search.addEventListener('input', () => {
                 clearTimeout(sideTimer);
                 sideTimer = setTimeout(renderSide, lowEnd() ? 200 : 110);
+            });
+        }
+        if (search && clearSearch) {
+            clearSearch.addEventListener('click', () => {
+                search.value = '';
+                search.dispatchEvent(new Event('input', { bubbles: true }));
+                search.focus();
+            });
+        }
+        if (historySelect) {
+            historySelect.addEventListener('change', () => {
+                historyFilter = ['all', 'today', 'week'].includes(historySelect.value) ? historySelect.value : 'all';
+                renderSide();
             });
         }
         const tabs = document.querySelector('.xt-tabs');
@@ -1454,6 +1524,7 @@
         window.__ankaUpdateBookmarksBar = updateBar;
         const profileBtn = $('profile-btn');
         if (profileBtn) profileBtn.addEventListener('click', openProfile);
+        window.__ankaOpenBookmarks = () => openSide('bookmarks', true);
         const overflow = $('bm-overflow');
         if (overflow) overflow.addEventListener('click', openOverflow);
 

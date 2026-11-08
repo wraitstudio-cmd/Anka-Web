@@ -818,6 +818,23 @@ function desktopEntry(ctx, execLine) {
         `MimeType=${ctx.mimeTypes.join(';')};`,
         'Keywords=browser;web;internet;tarayıcı;',
         'StartupNotify=true',
+        'Actions=NewTab;NewWindow;IncognitoTab;IncognitoWindow;',
+        '',
+        '[Desktop Action NewTab]',
+        'Name=Yeni Sekme',
+        `Exec=${execLine} --new-tab`,
+        '',
+        '[Desktop Action NewWindow]',
+        'Name=Yeni Pencere',
+        `Exec=${execLine} --new-window`,
+        '',
+        '[Desktop Action IncognitoTab]',
+        'Name=Yeni Gizli Sekme',
+        `Exec=${execLine} --new-incognito-tab`,
+        '',
+        '[Desktop Action IncognitoWindow]',
+        'Name=Yeni Gizli Pencere',
+        `Exec=${execLine} --new-incognito-window`,
         ''
     ].join('\n');
 }

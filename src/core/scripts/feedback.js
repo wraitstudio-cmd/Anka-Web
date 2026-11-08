@@ -16,6 +16,8 @@
         #anka-dialog { width:min(440px, 100%); max-height:min(85vh, 620px); overflow:auto; padding:22px; color:var(--text-color, var(--text, #f4f4f5)); background:var(--bg-secondary, var(--panel, #18181b)); border:1px solid var(--border-color, var(--border, #35353b)); border-radius:12px; box-shadow:0 24px 70px rgba(0,0,0,.36); font-family:var(--font, system-ui, sans-serif); }
         #anka-dialog h2 { margin:0 0 10px; font-size:18px; line-height:1.3; }
         #anka-dialog p { margin:0; color:var(--text-secondary, #a1a1aa); font-size:13px; line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; }
+        .anka-dialog-input { display:block; width:100%; min-height:44px; margin-top:16px; padding:0 12px; border:1px solid var(--border-color, var(--border, #35353b)); border-radius:8px; color:var(--text-color, var(--text, #f4f4f5)); background:var(--bg-primary, #121214); font:inherit; font-size:14px; outline:none; }
+        .anka-dialog-input:focus { border-color:var(--accent, #ff4757); box-shadow:0 0 0 3px rgba(255,71,87,.16); }
         #anka-dialog-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; margin-top:22px; }
         #anka-dialog-actions button { min-width:92px; min-height:42px; padding:0 14px; border:1px solid var(--border-color, var(--border, #35353b)); border-radius:8px; color:var(--text-color, var(--text, #f4f4f5)); background:var(--bg-tertiary, var(--hover, #27272a)); font:600 13px var(--font, system-ui, sans-serif); cursor:pointer; touch-action:manipulation; }
         #anka-dialog-actions button.primary { border-color:var(--accent, #ff4757); color:#fff; background:var(--accent, #ff4757); }
@@ -37,7 +39,7 @@
     }
 
     window.showToast = function (message, type = 'info') {
-        if (type !== 'error' && !notificationsEnabled()) return;
+        if (!notificationsEnabled()) return;
         let stack = document.getElementById('anka-feedback-stack');
         if (!stack) {
             stack = document.createElement('div');
@@ -124,6 +126,69 @@
             layer.appendChild(dialog);
             document.body.appendChild(layer);
             document.addEventListener('keydown', onKey, true);
+        });
+        const result = dialogQueue.then(run, run);
+        dialogQueue = result.then(() => undefined, () => undefined);
+        return result;
+    };
+
+    window.ankaPrompt = function (message, options = {}) {
+        const run = () => new Promise((resolve) => {
+            const layer = document.createElement('div');
+            layer.id = 'anka-dialog-layer';
+            const dialog = document.createElement('section');
+            dialog.id = 'anka-dialog';
+            dialog.setAttribute('role', 'dialog');
+            dialog.setAttribute('aria-modal', 'true');
+            const title = document.createElement('h2');
+            title.textContent = options.title || 'Bilgi girin';
+            const body = document.createElement('p');
+            body.textContent = String(message ?? '');
+            const input = document.createElement('input');
+            input.className = 'anka-dialog-input';
+            input.type = options.type === 'password' ? 'password' : 'text';
+            input.value = String(options.value ?? '');
+            input.maxLength = Number.isInteger(options.maxLength) ? Math.max(1, Math.min(1024, options.maxLength)) : 1024;
+            input.autocomplete = options.type === 'password' ? 'new-password' : 'off';
+            input.setAttribute('aria-label', options.inputLabel || options.title || 'Değer');
+            const actions = document.createElement('div');
+            actions.id = 'anka-dialog-actions';
+            const cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.textContent = options.cancelText || 'Vazgeç';
+            const accept = document.createElement('button');
+            accept.type = 'button';
+            accept.className = 'primary';
+            accept.textContent = options.confirmText || 'Tamam';
+            let settled = false;
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                document.removeEventListener('keydown', onKey, true);
+                layer.remove();
+                resolve(value);
+            };
+            const onKey = (event) => {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    finish(null);
+                } else if (event.key === 'Enter' && event.target === input) {
+                    event.preventDefault();
+                    finish(input.value);
+                }
+            };
+            cancel.addEventListener('click', () => finish(null));
+            accept.addEventListener('click', () => finish(input.value));
+            layer.addEventListener('pointerdown', (event) => {
+                if (event.target === layer) finish(null);
+            });
+            actions.append(cancel, accept);
+            dialog.append(title, body, input, actions);
+            layer.appendChild(dialog);
+            document.body.appendChild(layer);
+            document.addEventListener('keydown', onKey, true);
+            input.focus();
+            input.select();
         });
         const result = dialogQueue.then(run, run);
         dialogQueue = result.then(() => undefined, () => undefined);

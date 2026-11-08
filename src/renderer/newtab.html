@@ -8,8 +8,10 @@
 <script>
 (function () {
     const root = document.documentElement;
-    const THEMES = ['system', 'dark', 'light', 'catppuccin', 'cyberpunk', 'dracula', 'nord', 'oled', 'emerald'];
-    const CLASSES = ['light-theme', 'theme-catppuccin', 'theme-cyberpunk', 'theme-dracula', 'theme-nord', 'theme-oled', 'theme-emerald'];
+    const privateMode = new URLSearchParams(location.search).get('incognito') === '1';
+    root.classList.toggle('incognito-newtab', privateMode);
+    const THEMES = ['system', 'dark', 'light', 'catppuccin', 'cyberpunk', 'dracula', 'nord', 'oled', 'emerald', 'sunset', 'forest', 'rose', 'slate'];
+    const CLASSES = ['light-theme', ...THEMES.filter((theme) => theme !== 'system' && theme !== 'dark' && theme !== 'light').map((theme) => 'theme-' + theme)];
     const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : { matches: false };
     const rm = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
     const LOW = (navigator.hardwareConcurrency || 4) <= 2 || (navigator.deviceMemory || 4) <= 2 || rm.matches;
@@ -55,18 +57,21 @@
     }
 
     function applyDisplay() {
-      const uiScale = scaleValue('ui-scale', { compact: 90, normal: 100, large: 110, board: 125 }, 100, 125, 100);
-      const fontScale = scaleValue('font-scale', { small: 90, normal: 100, large: 110 }, 100, 130, 100);
+      const uiScale = scaleValue('ui-scale', { compact: 90, normal: 100, large: 110, board: 125 }, 85, 125, 100);
+      const fontScale = scaleValue('font-scale', { small: 90, normal: 100, large: 110 }, 80, 150, 100);
       root.dataset.uiScale = uiScale;
       root.dataset.fontScale = fontScale;
       root.style.setProperty('--z', String(Number(uiScale) / 100));
+      root.style.setProperty('--anka-ui-scale', String(Number(uiScale) / 100));
       root.style.setProperty('--anka-font-scale', String(Number(fontScale) / 100));
       const logoSize = scaleValue('logo-size', {}, 36, 56, 44);
       root.style.setProperty('--anka-logo-size', logoSize + 'px');
-      root.style.fontSize = 16 * Number(fontScale) / 100 + 'px';
+      root.style.fontSize = 16 * Number(fontScale) / 100 * Number(uiScale) / 100 + 'px';
         root.classList.toggle('touch-mode', get('touch-mode', 'false') === 'true');
         root.classList.toggle('reduce-effects', get('ui-animations', LOW ? 'false' : 'true') !== 'true');
         root.classList.toggle('smooth', get('smooth-scrolling', LOW ? 'false' : 'true') === 'true');
+        root.classList.toggle('night-light', get('night-light', 'false') === 'true');
+        root.style.setProperty('--anka-night-light-strength', String(Math.max(10, Math.min(50, Number(get('night-light-strength', '25')) || 25)) / 100));
         root.dataset.schoolMode = get('school-mode', 'false') === 'true' ? 'on' : 'off';
     }
 
@@ -75,6 +80,32 @@
 
     apply(getMode());
     applyDisplay();
+    window.__ankaSettingsReady = (async () => {
+        if (!window.ankaSettingsBridge) return;
+        try {
+            const state = await window.ankaSettingsBridge.load();
+            const settings = state && state.settings ? state.settings : {};
+            const localTheme = localStorage.getItem('set_theme-preset');
+            const themes = window.AnkaTheme.THEMES;
+            const keepLocalTheme = themes.includes(localTheme) &&
+                (localStorage.getItem('set_theme-preset-selected') === 'true' ||
+                 localTheme !== 'system' ||
+                 !themes.includes(String(settings['theme-preset'])) ||
+                 settings['theme-preset'] === 'system');
+            for (const [id, value] of Object.entries(settings)) {
+                if (id === 'theme-preset' && keepLocalTheme) continue;
+                localStorage.setItem('set_' + id, String(value));
+            }
+            if (keepLocalTheme && settings['theme-preset'] !== localTheme) notifyMain('theme-preset', localTheme);
+            if (keepLocalTheme && localStorage.getItem('set_theme-preset-selected') !== 'true') {
+                localStorage.setItem('set_theme-preset-selected', 'true');
+            }
+            apply(getMode());
+            applyDisplay();
+        } catch (err) {
+            console.error('Kaydedilmiş yeni sekme ayarları yüklenemedi:', err);
+        }
+    })();
 
     if (mq.addEventListener) {
         mq.addEventListener('change', () => {
@@ -84,6 +115,14 @@
 })();
 </script>
 <style>
+    :root.night-light::after {
+        content: '';
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        pointer-events: none;
+        background: rgba(255, 166, 72, var(--anka-night-light-strength, .25));
+    }
     :root {
         color-scheme: dark;
         --z: 1;
@@ -119,7 +158,11 @@
     :root.theme-nord { --accent: #88c0d0; --bg-primary: #2e3440; --bg-secondary: #242933; --bg-tertiary: #3b4252; --bg-elevated: #4c566a; --text-color: #eceff4; --text-secondary: #d8dee9; --border-color: #4c566a; --border-hover: #81a1c1; }
     :root.theme-oled { --accent: #3b82f6; --bg-primary: #000; --bg-secondary: #0a0a0a; --bg-tertiary: #141414; --bg-elevated: #222; --text-color: #fff; --text-secondary: #888; --border-color: #222; --border-hover: #3b82f6; }
     :root.theme-emerald { --accent: #34a853; --bg-primary: #061a14; --bg-secondary: #04120e; --bg-tertiary: #0b2920; --bg-elevated: #134d3b; --text-color: #e6f4ea; --text-secondary: #81c995; --border-color: #134d3b; --border-hover: #34a853; }
-    html { font-size: calc(16px * var(--anka-font-scale, 1)); }
+    :root.theme-sunset { --accent: #ff8a5b; --bg-primary: #211820; --bg-secondary: #2c1e28; --bg-tertiary: #3e2833; --bg-elevated: #503341; --text-color: #fff0e8; --text-secondary: #d8b8aa; --border-color: #503341; --border-hover: #68434d; }
+    :root.theme-forest { --accent: #73d6a0; --bg-primary: #101c18; --bg-secondary: #172720; --bg-tertiary: #21382d; --bg-elevated: #2b4638; --text-color: #e9f4ed; --text-secondary: #a9c5b2; --border-color: #2b4638; --border-hover: #3c5c49; }
+    :root.theme-rose { --accent: #ff7f9d; --bg-primary: #201821; --bg-secondary: #2b202c; --bg-tertiary: #3a2a3c; --bg-elevated: #49344b; --text-color: #f6edf7; --text-secondary: #c8b3cb; --border-color: #49344b; --border-hover: #634b66; }
+    :root.theme-slate { --accent: #8db6ff; --bg-primary: #171c25; --bg-secondary: #1d2632; --bg-tertiary: #293545; --bg-elevated: #354458; --text-color: #edf3fb; --text-secondary: #b4c1d2; --border-color: #354458; --border-hover: #4a5c73; }
+    html { font-size: calc(16px * var(--anka-font-scale, 1) * var(--z, 1)); }
     html.smooth { scroll-behavior: smooth; }
     [hidden] { display: none !important; }
     * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--bg-elevated) transparent; }
@@ -135,12 +178,12 @@
         -webkit-font-smoothing: antialiased;
     }
     html { background-image: radial-gradient(circle at 50% -15%, var(--bg-tertiary) 0%, var(--bg-primary) 75%); background-attachment: fixed; }
-    body { overflow-y: auto; overflow-x: hidden; zoom: var(--z); background: none; }
+    body { overflow-y: auto; overflow-x: hidden; background: none; }
     :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     button { font: inherit; color: inherit; }
     html.reduce-effects *, html.reduce-effects *::before, html.reduce-effects *::after { animation: none !important; transition: none !important; backdrop-filter: none !important; box-shadow: none !important; scroll-behavior: auto !important; }
     html.reduce-effects { background-image: none; }
-    .wrap { max-width: 900px; margin: 0 auto; padding: 70px 20px 40px; display: flex; flex-direction: column; align-items: center; position: relative; min-height: calc(100vh / var(--z)); }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 70px 20px 40px; display: flex; flex-direction: column; align-items: center; position: relative; min-height: 100vh; }
     .top-left { position: absolute; top: 22px; left: 30px; display: flex; flex-direction: column; gap: 2px; user-select: none; }
     .clock-time { font-size: 1.875rem; font-weight: 600; letter-spacing: .5px; font-variant-numeric: tabular-nums; line-height: 1.1; }
     .clock-date { font-size: .8125rem; color: var(--text-secondary); text-transform: capitalize; }
@@ -158,6 +201,21 @@
     .profile-info { display: flex; flex-direction: column; text-align: left; }
     .profile-name { font-size: .875rem; font-weight: 600; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .profile-status { font-size: .6875rem; color: var(--ok); font-weight: 500; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .private-chip { display: none; align-items: center; gap: 9px; min-height: 44px; padding: 0 15px; border: 1px solid rgba(167,139,250,.4); border-radius: 999px; background: rgba(124,58,237,.12); color: var(--text-color); font-size: .82rem; font-weight: 650; }
+    .private-chip svg { width: 18px; height: 18px; color: #a78bfa; flex: 0 0 auto; }
+    html.incognito-newtab .private-chip { display: flex; }
+    html.incognito-newtab #profileBtn, html.incognito-newtab #schoolChip, html.incognito-newtab .grid-tools { display: none !important; }
+    .private-welcome { display: none; width: min(100%, 680px); margin: 24px auto 0; padding: clamp(20px,4vw,32px); border: 1px solid rgba(167,139,250,.34); border-radius: 22px; background: linear-gradient(145deg,rgba(124,58,237,.15),var(--bg-secondary)); box-shadow: var(--shadow); }
+    html.incognito-newtab .private-welcome { display: block; }
+    .private-welcome-head { display: flex; align-items: center; gap: 14px; }
+    .private-mark { display: grid; place-items: center; width: 48px; height: 48px; flex: 0 0 auto; border-radius: 15px; background: rgba(124,58,237,.2); color: #c4b5fd; }
+    .private-mark svg { width: 25px; height: 25px; }
+    .private-welcome h2 { margin: 0; font-size: clamp(1.25rem,3vw,1.7rem); letter-spacing: -.025em; }
+    .private-welcome p { margin: 16px 0 20px; color: var(--text-secondary); font-size: .92rem; line-height: 1.7; }
+    .private-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
+    .private-facts li { display: flex; align-items: flex-start; gap: 9px; min-height: 54px; padding: 12px; border: 1px solid var(--border-color); border-radius: 12px; background: color-mix(in srgb,var(--bg-primary) 55%,transparent); color: var(--text-secondary); font-size: .78rem; line-height: 1.5; }
+    .private-facts li::before { content: '✓'; color: #a78bfa; font-weight: 800; }
+    .private-footnote { margin: 16px 0 0 !important; font-size: .74rem !important; }
     .network-banner { position: fixed; top: 0; left: 0; width: 100%; background: var(--accent); color: #fff; text-align: center; padding: 10px; font-size: .8125rem; font-weight: 600; display: none; z-index: 1000; }
     .network-banner.offline { display: block; }
     .logo { font-size: 2.625rem; font-weight: 700; letter-spacing: 1px; margin: 24px 0 35px; display: flex; align-items: center; gap: 10px; user-select: none; }
@@ -290,10 +348,17 @@
         .school-chip span { display: none; }
         .school-chip { padding: 0 14px; }
     }
+    @media (max-width:520px) {
+        .top-bar { top: 12px; right: 12px; gap: 7px; }
+        .icon-btn { width: 42px; height: 42px; }
+        .private-chip { min-height: 40px; padding: 0 11px; font-size: .74rem; }
+        .private-facts { grid-template-columns: 1fr; }
+        .private-facts li { min-height: 0; }
+    }
 </style>
 </head>
 <body>
-<div id="netBanner" class="network-banner" role="alert">İnternet bağlantınız yok! Lütfen bağlantınızı kontrol edin.</div>
+<div id="netBanner" class="network-banner" role="alert" data-anka-i18n>İnternet bağlantınız yok! Lütfen bağlantınızı kontrol edin.</div>
 <div id="toast-stack" aria-live="polite"></div>
 
 <div class="wrap" id="homeView">
@@ -303,9 +368,13 @@
   </div>
 
   <div class="top-bar">
-    <button class="school-chip" id="schoolChip" type="button" hidden><i></i><span>Okul Modu</span></button>
+    <div class="private-chip" aria-label="Gizli mod etkin">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10c0-4 4-7 9-7s9 3 9 7"/><path d="M4 10h16l-2 9a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2z"/><path d="M8 14h.01M16 14h.01"/></svg>
+      <span data-anka-i18n>Anka Web Gizli Mod</span>
+    </div>
+    <button class="school-chip" id="schoolChip" type="button" hidden><i></i><span data-anka-i18n>Okul Modu</span></button>
     <div class="theme-wrap">
-      <button class="icon-btn" id="themeToggleBtn" type="button" aria-label="Temayı değiştir" aria-haspopup="menu" aria-expanded="false"></button>
+      <button class="icon-btn" id="themeToggleBtn" type="button" aria-label="Temayı değiştir" data-anka-i18n-attrs="aria-label" aria-haspopup="menu" aria-expanded="false"></button>
       <div class="theme-menu" id="themeMenu" role="menu" aria-label="Tema"></div>
     </div>
     <div class="profile-btn" id="profileBtn" role="button" tabindex="0" title="Profil ve ayarlar">
@@ -321,32 +390,44 @@
 
   <div class="searchbar-container">
     <div class="searchbar">
-      <input id="q" type="text" placeholder="Arayın, adres yazın ya da işlem yapın... (odaklamak için &quot;/&quot;)" autofocus autocomplete="off" spellcheck="false" autocapitalize="off" role="combobox" aria-expanded="false" aria-controls="suggestions" aria-autocomplete="list">
-      <div class="ai-toggle" id="aiToggle" role="button" tabindex="0" aria-pressed="false">✦ AI Modu</div>
+      <input id="q" type="text" placeholder="Arayın, adres yazın ya da işlem yapın... (odaklamak için &quot;/&quot;)" data-anka-i18n-attrs="placeholder" autofocus autocomplete="off" spellcheck="false" autocapitalize="off" role="combobox" aria-expanded="false" aria-controls="suggestions" aria-autocomplete="list">
+      <div class="ai-toggle" id="aiToggle" role="button" tabindex="0" aria-pressed="false" data-anka-i18n>✦ AI Modu</div>
     </div>
     <div class="suggestions-dropdown" id="suggestions" role="listbox"></div>
   </div>
-  <div class="engine-pill">Arama motoru: <b id="engineLabel" role="button" tabindex="0" title="Değiştirmek için tıklayın">Google</b></div>
-  <div class="hint">Kısayollar: !yt !w !gh !so !tr !maps !r !img !npm !mdn · Hesap makinesi: 12*(3+4)</div>
+  <div class="engine-pill"><span data-anka-i18n>Arama motoru:</span> <b id="engineLabel" role="button" tabindex="0" title="Değiştirmek için tıklayın" data-anka-i18n-attrs="title">Google</b></div>
+  <div class="hint" data-anka-i18n>Kısayollar: !yt !w !gh !so !tr !maps !r !img !npm !mdn · Hesap makinesi: 12*(3+4)</div>
+  <section class="private-welcome" aria-labelledby="privateWelcomeTitle">
+    <div class="private-welcome-head">
+      <div class="private-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10c0-4 4-7 9-7s9 3 9 7"/><path d="M4 10h16l-2 9a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2z"/><path d="M8 14h.01M16 14h.01"/></svg></div>
+      <h2 id="privateWelcomeTitle" data-anka-i18n>Gizli Moddasınız</h2>
+    </div>
+    <p data-anka-i18n>Anka Web bu gizli pencerenin gezinti geçmişini, çerezlerini ve site verilerini kalıcı olarak saklamaz. Bu pencere kapatıldığında geçici oturum verileri silinir.</p>
+    <ul class="private-facts">
+      <li data-anka-i18n>Bu oturumun sayfaları ve aramaları normal profilinizin geçmişine eklenmez.</li>
+      <li data-anka-i18n>İndirdiğiniz dosyalar ile eklediğiniz yer imleri cihazınızda kalabilir.</li>
+    </ul>
+    <p class="private-footnote" data-anka-i18n>Gizli gezinme, ziyaret ettiğiniz sitelere veya ağ yöneticilerine karşı anonimlik sağlamaz.</p>
+  </section>
 
   <div class="grid" id="grid"></div>
   <div class="grid-tools">
-    <button class="ghost-btn" id="exportBtn" type="button">Dışa Aktar</button>
-    <button class="ghost-btn" id="importBtn" type="button">İçe Aktar</button>
+    <button class="ghost-btn" id="exportBtn" type="button" data-anka-i18n>Dışa Aktar</button>
+    <button class="ghost-btn" id="importBtn" type="button" data-anka-i18n>İçe Aktar</button>
     <input type="file" id="importFile" accept="application/json" hidden>
   </div>
 </div>
 
 <div class="view-container" id="authView">
   <div class="view-header">
-    <h2>Profil ve Ayarlar</h2>
-    <button class="back-btn" id="backBtn" type="button">Geri Dön</button>
+    <h2 data-anka-i18n>Profil ve Ayarlar</h2>
+    <button class="back-btn" id="backBtn" type="button" data-anka-i18n>Geri Dön</button>
   </div>
 
   <div class="settings-card">
-    <h4>Arama Motoru</h4>
-    <p class="sub">Adres çubuğuna yazdığınız aramaların gönderileceği motor.</p>
-    <p class="school-note" id="schoolNote" hidden>Okul Modu açık: AI Modu ve arama önerileri Okul Modu tarafından yönetiliyor.</p>
+    <h4 data-anka-i18n>Arama Motoru</h4>
+    <p class="sub" data-anka-i18n>Adres çubuğuna yazdığınız aramaların gönderileceği motor.</p>
+    <p class="school-note" id="schoolNote" data-anka-i18n hidden>Okul Modu açık: AI Modu ve arama önerileri Okul Modu tarafından yönetiliyor.</p>
     <select id="engineSelect" aria-label="Arama motoru">
       <option value="google">Google</option>
       <option value="yandex">Yandex</option>
@@ -354,13 +435,13 @@
       <option value="duckduckgo">DuckDuckGo</option>
       <option value="ecosia">Ecosia</option>
       <option value="brave">Brave Search</option>
-      <option value="custom">Özel</option>
+      <option value="custom" data-anka-i18n>Özel</option>
     </select>
     <div id="customEngineRow" hidden>
-      <label for="customEngineUrl">Özel arama adresi (arama sözcüğü için %s kullanın)</label>
+      <label for="customEngineUrl" data-anka-i18n>Özel arama adresi (arama sözcüğü için %s kullanın)</label>
       <input type="text" id="customEngineUrl" placeholder="https://www.google.com/search?q=%s" spellcheck="false" autocapitalize="off">
     </div>
-    <label for="aiProviderSelect">AI Modu sağlayıcısı</label>
+    <label for="aiProviderSelect" data-anka-i18n>AI Modu sağlayıcısı</label>
     <select id="aiProviderSelect" aria-label="AI sağlayıcısı">
       <option value="google-ai">Google AI Modu</option>
       <option value="chatgpt">ChatGPT</option>
@@ -371,13 +452,13 @@
   </div>
 
   <div class="settings-card">
-    <h4>Görünüm</h4>
-    <p class="sub">Bu ayarlar uygulama ayarlarıyla ortaktır; birinde yapılan değişiklik diğerine anında yansır.</p>
-    <label for="themeSelect">Tema</label>
+    <h4 data-anka-i18n>Görünüm</h4>
+    <p class="sub" data-anka-i18n>Bu ayarlar uygulama ayarlarıyla ortaktır; birinde yapılan değişiklik diğerine anında yansır.</p>
+    <label for="themeSelect" data-anka-i18n>Tema</label>
     <select id="themeSelect" aria-label="Tema">
-      <option value="system">Sistem (Varsayılan)</option>
-      <option value="dark">Modern Koyu (Zinc)</option>
-      <option value="light">Aydınlık Ferah</option>
+      <option value="system" data-anka-i18n>Sistem (Varsayılan)</option>
+      <option value="dark" data-anka-i18n>Modern Koyu (Zinc)</option>
+      <option value="light" data-anka-i18n>Aydınlık Ferah</option>
       <option value="catppuccin">Catppuccin Mocha</option>
       <option value="cyberpunk">Cyberpunk Neon</option>
       <option value="dracula">Dracula Pro</option>
@@ -386,55 +467,55 @@
       <option value="emerald">Emerald Forest</option>
     </select>
     <label for="fontScaleSelect">Yazı boyutu <output id="fontScaleValue">100%</output></label>
-    <input type="range" id="fontScaleSelect" aria-label="Yazı boyutu" min="100" max="130" step="5" value="100">
+    <input type="range" id="fontScaleSelect" aria-label="Yazı boyutu" min="80" max="150" step="5" value="100">
     <label for="uiScaleSelect">Arayüz ölçeği <output id="uiScaleValue">100%</output></label>
-    <input type="range" id="uiScaleSelect" aria-label="Arayüz ölçeği" min="100" max="125" step="5" value="100">
-    <label class="check"><input type="checkbox" id="animToggle"><span>Arayüz animasyonları ve gölgeler</span></label>
-    <label class="check"><input type="checkbox" id="touchToggle"><span>Dokunmatik tahta modu</span></label>
+    <input type="range" id="uiScaleSelect" aria-label="Arayüz ölçeği" min="85" max="125" step="5" value="100">
+    <label class="check"><input type="checkbox" id="animToggle"><span data-anka-i18n>Arayüz animasyonları ve gölgeler</span></label>
+    <label class="check"><input type="checkbox" id="touchToggle"><span data-anka-i18n>Dokunmatik tahta modu</span></label>
   </div>
 
   <div class="settings-card">
-    <h4>Kayıtlı Profiller</h4>
-    <p class="sub">Bunlar sadece bu cihazda, tarayıcı içinde tutulan yerel profillerdir — herhangi bir hesaba giriş yapılmaz.</p>
+    <h4 data-anka-i18n>Kayıtlı Profiller</h4>
+    <p class="sub" data-anka-i18n>Bunlar sadece bu cihazda, tarayıcı içinde tutulan yerel profillerdir — herhangi bir hesaba giriş yapılmaz.</p>
     <div class="account-list" id="accountList"></div>
-    <button class="auth-btn secondary" id="newProfileBtn" type="button">+ Yeni Yerel Profil Oluştur</button>
+    <button class="auth-btn secondary" id="newProfileBtn" type="button" data-anka-i18n>+ Yeni Yerel Profil Oluştur</button>
   </div>
 
   <div class="settings-card">
-    <h4>Aktif Profili Düzenle</h4>
-    <p class="sub">Kullanıcı adınızı, görünen adınızı ve profil fotoğrafınızı değiştirin.</p>
+    <h4 data-anka-i18n>Aktif Profili Düzenle</h4>
+    <p class="sub" data-anka-i18n>Kullanıcı adınızı, görünen adınızı ve profil fotoğrafınızı değiştirin.</p>
 
     <div class="avatar-drop" id="avatarDrop">
       <div class="avatar-preview" id="avatarPreview" role="button" tabindex="0">+</div>
       <div class="avatar-actions">
-        <button type="button" id="avatarPickBtn">Fotoğraf Yükle</button>
-        <button type="button" id="avatarClearBtn">Kaldır</button>
+        <button type="button" id="avatarPickBtn" data-anka-i18n>Fotoğraf Yükle</button>
+        <button type="button" id="avatarClearBtn" data-anka-i18n>Kaldır</button>
       </div>
       <input type="file" id="localAvatarFile" accept="image/png,image/jpeg,image/webp" hidden>
     </div>
-    <p class="hint">Sürükleyip bırakabilir ya da tıklayıp seçebilirsiniz. Görsel otomatik olarak küçültülür.</p>
+    <p class="hint" data-anka-i18n>Sürükleyip bırakabilir ya da tıklayıp seçebilirsiniz. Görsel otomatik olarak küçültülür.</p>
 
-    <input type="text" id="editUsername" placeholder="Kullanıcı Adı (ör. anka_kullanici)" maxlength="24" autocomplete="off" spellcheck="false">
-    <input type="text" id="editName" placeholder="Görünen Ad" maxlength="40" autocomplete="off">
-    <button class="auth-btn" id="saveProfileBtn" type="button">Değişiklikleri Kaydet</button>
+    <input type="text" id="editUsername" placeholder="Kullanıcı Adı (ör. anka_kullanici)" data-anka-i18n-attrs="placeholder" maxlength="24" autocomplete="off" spellcheck="false">
+    <input type="text" id="editName" placeholder="Görünen Ad" data-anka-i18n-attrs="placeholder" maxlength="40" autocomplete="off">
+    <button class="auth-btn" id="saveProfileBtn" type="button" data-anka-i18n>Değişiklikleri Kaydet</button>
   </div>
 </div>
 
 <div class="modal-bg" id="modal-bg">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-    <h3 id="modalTitle">Kısayol Ekle</h3>
-    <input id="m-name" type="text" placeholder="Ad (ör. YouTube)" maxlength="60" autocomplete="off">
+    <h3 id="modalTitle" data-anka-i18n>Kısayol Ekle</h3>
+    <input id="m-name" type="text" placeholder="Ad (ör. YouTube)" data-anka-i18n-attrs="placeholder" maxlength="60" autocomplete="off">
     <input id="m-url" type="text" placeholder="Adres (ör. https://youtube.com)" autocomplete="off" spellcheck="false" autocapitalize="off">
     <div class="row">
-      <button class="cancel" id="modalCancel" type="button">Vazgeç</button>
-      <button class="save" id="modalSave" type="button">Kaydet</button>
+      <button class="cancel" id="modalCancel" type="button" data-anka-i18n>Vazgeç</button>
+      <button class="save" id="modalSave" type="button" data-anka-i18n>Kaydet</button>
     </div>
   </div>
 </div>
 
 <div class="modal-bg" id="cropModal">
   <div class="modal crop-modal" role="dialog" aria-modal="true" aria-labelledby="cropTitle">
-    <h3 id="cropTitle">Profil Fotoğrafını Ayarla</h3>
+    <h3 id="cropTitle" data-anka-i18n>Profil Fotoğrafını Ayarla</h3>
     <div class="crop-stage" id="cropStage" tabindex="0" aria-label="Fotoğraf konumu">
       <canvas id="cropCanvas" width="280" height="280"></canvas>
     </div>
@@ -443,10 +524,10 @@
       <input type="range" id="cropZoom" min="1" max="4" step="0.01" value="1" aria-label="Yakınlaştırma">
       <button type="button" id="cropZoomIn" aria-label="Büyüt">+</button>
     </div>
-    <div class="crop-hint">Sürükleyerek konumlandırın; kaydırıcı, fare tekerleği veya +/- tuşlarıyla yakınlaştırın.</div>
+    <div class="crop-hint" data-anka-i18n>Sürükleyerek konumlandırın; kaydırıcı, fare tekerleği veya +/- tuşlarıyla yakınlaştırın.</div>
     <div class="row">
-      <button class="cancel" id="cropCancel" type="button">Vazgeç</button>
-      <button class="save" id="cropApply" type="button">Uygula</button>
+      <button class="cancel" id="cropCancel" type="button" data-anka-i18n>Vazgeç</button>
+      <button class="save" id="cropApply" type="button" data-anka-i18n>Uygula</button>
     </div>
   </div>
 </div>
@@ -550,11 +631,25 @@ function isSchool() {
 
 function notifyMain(id, val) {
   const out = val === 'true' ? true : val === 'false' ? false : val;
+  if (window.ankaSettingsBridge && typeof window.ankaSettingsBridge.save === 'function') {
+    window.ankaSettingsBridge.save(id, out).then((result) => {
+      if (!result || !result.ok) throw new Error(result && result.error ? result.error : 'Ayar kaydedilemedi.');
+    }).catch((err) => {
+      console.error('Yeni sekme ayarı kalıcı olarak kaydedilemedi:', id, err);
+      notify('Ayar kaydedilemedi. Depolama alanını ve dosya izinlerini kontrol edin.', 'error');
+    });
+    return;
+  }
   try {
     const { ipcRenderer } = require('electron');
     ipcRenderer.send('settings-update', { id, val: out });
     ipcRenderer.send('save-app-setting', { id, val: out });
-  } catch (err) {}
+  } catch (err) {
+    if (!document.documentElement.classList.contains('incognito-newtab')) {
+      console.error('Yeni sekme ayarı uygulamaya iletilemedi:', id, err);
+      notify('Ayar kaydedilemedi: uygulama bağlantısı kullanılamıyor.', 'error');
+    }
+  }
   if (framed) {
     try {
       window.parent.postMessage({ type: 'anka-setting', id, val: out }, '*');
@@ -566,6 +661,7 @@ function setSetting(id, value, force) {
   if (!force && isSchool() && SCHOOL_LOCKED.has(id)) return false;
   try {
     localStorage.setItem('set_' + id, String(value));
+    if (id === 'theme-preset') localStorage.setItem('set_theme-preset-selected', 'true');
   } catch (err) {
     return false;
   }
@@ -670,7 +766,7 @@ function setThemeMode(mode) {
   themeLocalAt = Date.now();
   setSetting('theme-preset', mode, true);
   window.AnkaTheme.apply(mode);
-  themeChannel.postMessage({ id: 'theme-preset', val: window.AnkaTheme.resolve(mode) });
+  themeChannel.postMessage({ id: 'theme-preset', mode, val: window.AnkaTheme.resolve(mode) });
   closeThemeMenu();
 }
 
@@ -686,6 +782,7 @@ function buildThemeMenu() {
     item.setAttribute('aria-checked', 'false');
     item.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[mode] + '</svg><span></span><span class="tick">✓</span>';
     item.children[1].textContent = label;
+    item.children[1].setAttribute('data-anka-i18n', '');
     fragment.appendChild(item);
   }
   $('themeMenu').replaceChildren(fragment);
@@ -737,6 +834,13 @@ function applyHostThemeSettings(settings) {
     if (Number.isFinite(scale)) {
       root.dataset.uiScale = String(Math.round(scale * 100));
       root.style.setProperty('--z', String(scale));
+      root.style.setProperty('--anka-ui-scale', String(scale));
+      root.style.fontSize = 16 * scale * Number(root.dataset.fontScale || 100) / 100 + 'px';
+      const control = document.getElementById('uiScaleSelect');
+      if (control && document.activeElement !== control) {
+        control.value = String(Math.round(scale * 100));
+        document.getElementById('uiScaleValue').value = control.value + '%';
+      }
     }
   }
   if (settings.fontScale) {
@@ -744,12 +848,19 @@ function applyHostThemeSettings(settings) {
     if (Number.isFinite(scale)) {
       root.dataset.fontScale = String(Math.round(scale * 100));
       root.style.setProperty('--anka-font-scale', String(scale));
-      root.style.fontSize = 16 * scale + 'px';
+      root.style.fontSize = 16 * scale * Number(root.dataset.uiScale || 100) / 100 + 'px';
+      const control = document.getElementById('fontScaleSelect');
+      if (control && document.activeElement !== control) {
+        control.value = String(Math.round(scale * 100));
+        document.getElementById('fontScaleValue').value = control.value + '%';
+      }
     }
   }
   if (settings.logoSize) root.style.setProperty('--anka-logo-size', Math.max(36, Math.min(56, Number(settings.logoSize))) + 'px');
   root.classList.toggle('touch-mode', !!settings.touchMode);
   if (settings.uiAnimations !== undefined) root.classList.toggle('reduce-effects', settings.uiAnimations === false);
+  if (settings.nightLight !== undefined) root.classList.toggle('night-light', !!settings.nightLight);
+  if (settings.nightLightStrength !== undefined) root.style.setProperty('--anka-night-light-strength', String(Math.max(10, Math.min(50, Number(settings.nightLightStrength) || 25)) / 100));
 }
 
 themeChannel.onmessage = (event) => {
@@ -758,7 +869,11 @@ themeChannel.onmessage = (event) => {
   if (data.id === 'theme-preset') {
     if (Date.now() - themeLocalAt < 600) return;
     const local = window.AnkaTheme.getMode();
-    window.AnkaTheme.apply(local === 'system' ? 'system' : data.val, data.val);
+    if (window.AnkaTheme.THEMES.includes(data.mode)) {
+      window.AnkaTheme.apply(data.mode, data.val);
+    } else {
+      window.AnkaTheme.apply(local, data.val);
+    }
   } else if (data.id === 'theme-settings-snapshot') {
     applyHostThemeSettings(data.settings);
   }
@@ -825,6 +940,7 @@ function updateAuthUI() {
   const statusEl = $('profileStatusText');
 
   if (user && user.username !== 'misafir') {
+    statusEl.removeAttribute('data-anka-i18n');
     nameEl.textContent = user.name || user.username;
     statusEl.textContent = '@' + user.username;
     statusEl.style.color = 'var(--ok)';
@@ -832,6 +948,7 @@ function updateAuthUI() {
     avatarEl.replaceChildren(avatarContent(user));
   } else {
     nameEl.textContent = 'Misafir';
+    statusEl.setAttribute('data-anka-i18n', '');
     statusEl.textContent = 'Profil Seçilmedi';
     statusEl.style.color = 'var(--text-secondary)';
     avatarEl.style.background = 'var(--bg-elevated)';
@@ -1227,8 +1344,10 @@ function renderGrid() {
       img.decoding = 'async';
       img.referrerPolicy = 'no-referrer';
       img.draggable = false;
-      img.src = 'https://www.google.com/s2/favicons?sz=64&domain=' + encodeURIComponent(host);
-      iconBox.appendChild(img);
+      try {
+        img.src = new URL(shortcut.url).origin + '/favicon.ico';
+        iconBox.appendChild(img);
+      } catch (err) {}
     }
 
     tile.append(actions, iconBox, el('div', 'name', shortcut.name));
@@ -1988,17 +2107,25 @@ window.addEventListener('online', () => { checkNetwork(); refreshGrid(); });
 window.addEventListener('offline', checkNetwork);
 document.addEventListener('visibilitychange', tickClock);
 
-setupControls();
-setupGrid();
-setupSearch();
-setupAvatarDrop();
-setupModal();
-setupCropper();
-checkNetwork();
-renderGrid();
-initUI();
-tickClock();
-themeChannel.postMessage({ id: 'theme-settings-request' });
+function initializeNewTab() {
+  setupControls();
+  setupGrid();
+  setupSearch();
+  setupAvatarDrop();
+  setupModal();
+  setupCropper();
+  checkNetwork();
+  renderGrid();
+  initUI();
+  tickClock();
+  themeChannel.postMessage({ id: 'theme-settings-request' });
+}
+
+Promise.resolve(window.__ankaSettingsReady).then(initializeNewTab).catch((err) => {
+  console.error('Yeni sekme başlatılamadı:', err);
+  initializeNewTab();
+});
 </script>
+<script src="../core/scripts/translations.js"></script>
 </body>
 </html>
